@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>KOKO · MVSEVM｜Koko 美术馆</title>
+<meta name="description" content="一座为 Koko 画的小美术馆：圆厅里挂着十九组三联画屏，对面的门通往书房。">
+<meta name="theme-color" content="#efe6d2">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%235a87ae'/%3E%3Ccircle cx='32' cy='32' r='26' fill='none' stroke='%23e6c98c' stroke-width='3'/%3E%3Ccircle cx='32' cy='35' r='15' fill='%23f6ecdc'/%3E%3Cpath d='M16 31q-3-14 8-17q6-8 15-3q10-2 11 8q5 6 1 13q-5-7-12-4q-6-6-12-1q-6-2-11 4z' fill='%233b332c'/%3E%3Cellipse cx='26' cy='37' rx='2.2' ry='3.6' fill='%233b332c'/%3E%3Cellipse cx='38' cy='37' rx='2.2' ry='3.6' fill='%233b332c'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="./src/style.css">
+</head>
+<body data-mode="loading">
+<canvas id="c" aria-label="Koko 美术馆"></canvas>
+
+<div id="ui" aria-live="polite">
+  <button id="brand" type="button" aria-label="回到圆厅中央"><b>KOKO</b><i></i><span>MVSEVM</span></button>
+
+  <nav id="tools" aria-label="工具">
+    <button id="t-sound" type="button" aria-label="声音" title="声音">
+      <svg viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"/><path class="w" d="M15 9.2a4 4 0 0 1 0 5.6M17.6 6.8a7.4 7.4 0 0 1 0 10.4"/><path class="x" d="M15.5 9.5l5 5M20.5 9.5l-5 5"/></svg>
+    </button>
+    <button id="t-time" type="button" aria-label="光线" title="光线"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M5.6 18.4l1.7-1.7M16.7 7.3l1.7-1.7"/></svg><span id="t-time-l">此刻</span></button>
+    <button id="t-medals" type="button" aria-label="图录与圆章" title="图录与圆章"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><circle cx="12" cy="12" r="5.2"/></svg><span id="t-count">0 / 19</span></button>
+    <button id="t-help" type="button" aria-label="怎么逛" title="怎么逛"><svg viewBox="0 0 24 24"><path d="M9.2 9.4a2.9 2.9 0 1 1 4.3 2.5c-.9.6-1.5 1.1-1.5 2.3"/><circle class="dot" cx="12" cy="17.4" r=".6"/></svg></button>
+  </nav>
+
+  <div id="tag" role="tooltip"></div>
+  <p id="hint"></p>
+  <div id="ring" role="navigation" aria-label="十九组画屏与书房门"></div>
+
+  <aside id="card" aria-label="这一组画屏"></aside>
+  <div id="bar" aria-label="正在细看"></div>
+  <div id="toast" role="status"></div>
+
+  <section id="catalog" class="sheetwrap" aria-label="图录" hidden>
+    <div class="paper">
+      <header><h2>图录</h2><p class="lat">INDEX · XIX</p><p class="sum" id="cat-sum"></p><button type="button" class="x" data-close aria-label="关上">×</button></header>
+      <div class="grid" id="cat-grid"></div>
+      <footer><p>看完一组画屏，得一枚圆章。十九枚集齐，书房里那扇圆门会打开。</p><button type="button" id="cat-study">去书房</button></footer>
+    </div>
+  </section>
+
+  <section id="help" class="sheetwrap" aria-label="怎么逛" hidden>
+    <div class="paper small">
+      <header><h2>怎么逛</h2><p class="lat">VIA</p><button type="button" class="x" data-close aria-label="关上">×</button></header>
+      <ul class="how">
+        <li><b>环视</b>按住拖动，或用左右方向键，在圆厅里转着看。</li>
+        <li><b>走近</b>点任意一组画屏，它会打开，房间跟着换成它的天气与光。</li>
+        <li><b>细看</b>画屏打开后，再点其中一张，正对着看整幅。</li>
+        <li><b>返回</b>点空白处，或按 Esc，一层一层退回来。</li>
+        <li><b>圆章</b>一组看完得一枚，收在右上角的图录里。</li>
+        <li><b>书房</b>圆厅正对面那扇木门后面，有手稿、手抄本和一只圆物柜。</li>
+      </ul>
+      <footer><p>Koko 与全部画作为原创作品。</p></footer>
+    </div>
+  </section>
+</div>
+
+<div id="prologue"></div>
+<div id="nogl"><p>这里需要支持 WebGL2 的浏览器才能进入。<br>请换用较新的 Chrome、Safari、Edge 或 Firefox。</p></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
