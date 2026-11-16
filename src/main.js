@@ -73,13 +73,20 @@ const tex = (url) => { if (!cache.has(url)) cache.set(url, loader.loadAsync(url)
 const image = (url) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
 // the fitting photo at half size is plenty for the chalk study on a closed altarpiece
 function studyTexture(img) { const c = document.createElement('canvas'); c.width = Math.round(img.width/2); c.height = Math.round(img.height/2); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; }
+const loadOne = (url) => tex(url).catch(() => { cache.delete(url); return null; });
 function loadPics(b) {
-  b.picsP ||= Promise.all([...b.s.titles.map((_, i) => tex(asset(b.s, `p${i + 1}.jpg`))), b.s.sets.flat().includes('q') ? tex(asset(b.s, 'q.jpg')) : null]).then((a) => { b.qFull = a.pop(); b.pics = a; return b; });
+  if (!b.picsP) {
+    const wantQ = b.s.sets.flat().includes('q');
+    const jobs = b.s.titles.map((_, i) => loadOne(asset(b.s, `p${i + 1}.jpg`)));
+    if (wantQ) jobs.push(loadOne(asset(b.s, 'q.jpg')));
+    b.picsP = Promise.all(jobs).then((a) => { b.qFull = wantQ ? a.pop() : null; b.pics = a; return b; });
+  }
   return b.picsP;
 }
-function applySet(b, n) {
+function applySet(b, n, instant = false) {
   b.set = n; b.revClock = 0;
-  b.s.sets[n].forEach((idx, i) => { b.tri.setPicture(i, idx === 'q' ? b.qFull : b.pics[idx]); b.rev[i] = isSeen(b.s, idx) ? 1 : 0; b.tri.setReveal(i, b.rev[i]); });
+  const done = instant ? 1 : 0;
+  b.s.sets[n].forEach((idx, i) => { b.tri.setPicture(i, idx === 'q' ? b.qFull : b.pics[idx]); b.rev[i] = done; b.tri.setReveal(i, done); });
   b.applied = true;
 }
 const restOpen = (b) => (b.k === 0 ? 1 : 0);
@@ -90,7 +97,10 @@ async function build(progress) {
   const [qs, front, turn] = await Promise.all([Promise.all(SERIES.map((s) => tickP(image(asset(s, 'q.jpg'))))), tickP(image('./assets/study/front.jpg')), tickP(image('./assets/study/turnaround.jpg')),
     ...['p1.jpg', 'p2.jpg', 'p3.jpg'].map((f) => tickP(tex(asset(SERIES[0], f))))]);
 
-  const fresco = frescoMaterial(friezeTexture());
+  const repeat = (t, srgb) => { t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; return t; };
+  const ph = (name) => loader.loadAsync('./assets/tex/ph/' + name);
+  const [wood, woodN, plaster, plasterN, marble, marbleN, floor, floorN] = await Promise.all([ph('oak_diff.jpg'), ph('oak_nor.jpg'), ph('stucco_diff.jpg'), ph('stucco_nor.jpg'), ph('marble_diff.jpg'), ph('marble_nor.jpg'), ph('terrazzo_diff.jpg'), ph('terrazzo_nor.jpg')]);
+  const fresco = frescoMaterial(friezeTexture(), { wood: repeat(wood, false), woodN: repeat(woodN, false), plaster: repeat(plaster, false), plasterN: repeat(plasterN, false), marble: repeat(marble, false), marbleN: repeat(marbleN, false), floor: repeat(floor, false), floorN: repeat(floorN, false) });
   rot = new THREE.Group(); scene.add(rot);
   rot.add(new THREE.Mesh(buildRotunda(), fresco));
   atlas = tondoAtlas(SERIES.map((s) => s.id));
@@ -104,9 +114,10 @@ async function build(progress) {
     const tondo = new THREE.Mesh(tondoGeo, texMaterial(atlas.texture, 3, { cell: atlas.cell(s.index), glaze: got ? 1 : 0, seed: k + 1.3, aspect: 1 }));
     tondo.applyMatrix4(bayMatrix(th, K.R - 0.022, K.yTondo)); rot.add(tondo);
     const tri = new Triptych(fresco, { wide: !!s.wide, sketch: studyTexture(qs[s.index]), lunette, plate: plateTexture(s.latin, `N° ${s.no} · MMXXVI`), seed: k + 1, floor: 0.07 });
+    tri.panels.forEach((m, i) => { m.material.uniforms.uRevealMode.value = REDUCED ? -1 : (s.mood.light === 'night' ? 3 : (s.index * 3 + i) % 4); });
     tri.group.applyMatrix4(bayMatrix(th, K.R + 0.40, K.ySill + tri.D.originY)); rot.add(tri.group);
     LIGHT.uWideA.value[k] = tri.D.HW;
-    B[k] = { s, k, tri, tondo, open: 0, openT: 0, peek: 0, glaze: got ? 1 : 0, glazeT: got ? 1 : 0, set: 0, rev: [0, 0, 0], dim: [1, 1, 1], revClock: 0, applied: false, pics: null, qFull: null, picsP: null, drawn: [-1, -1] };
+    B[k] = { s, k, tri, tondo, open: 0, openT: 0, peek: 0, glaze: got ? 1 : 0, glazeT: got ? 1 : 0, set: 0, rev: [0, 0, 0], dim: [1, 1, 1], revClock: 0, applied: false, pics: null, qFull: null, picsP: null, drawn: [-1, -1], armReveal: false };
   }
   // the door to the study, with its name cut over the lintel
   doors = buildDoorLeaves(fresco); rot.add(doors.group);
@@ -119,8 +130,10 @@ async function build(progress) {
 
   air = buildAir(); scene.add(air.group);
   // the first altarpiece is ready before anyone walks in
-  const b0 = B[0]; await loadPics(b0); applySet(b0, 0);
-  if (isSeen(b0.s, 0) || SKIP) { b0.open = b0.openT = 1; }
+  const b0 = B[0]; await loadPics(b0);
+  const shown = isSeen(b0.s, 0) || SKIP;
+  applySet(b0, 0, shown);
+  if (shown) { b0.open = b0.openT = 1; b0.armReveal = true; }
   enterRoom('rotunda');
 }
 
@@ -440,6 +453,12 @@ function step(dt) {
     const pk = (S.mode === 'look' && (S.hover === k || S.ringHover === k) && b.openT < 0.5) ? 1 : 0; b.peek += (pk - b.peek)*Math.min(1, dt*5); if (b.peek < 0.002 && !pk) b.peek = 0;
     if (b.open !== b.drawn[0] || b.peek !== b.drawn[1]) { b.tri.peek = b.peek; b.tri.setOpen(b.open); b.drawn[0] = b.open; b.drawn[1] = b.peek; LIGHT.uOpenA.value[k] = Math.min(1, b.open*1.7); }
     if (b.glaze !== b.glazeT) { b.glaze = Math.min(b.glazeT, b.glaze + dt/2.6); b.tondo.material.uniforms.uGlaze.value = b.glaze; }
+    // every unfolding starts the picture again; a seen picture no longer skips the drawing
+    if (b.openT > 0.5 && b.open < 0.2 && !b.armReveal) {
+      b.armReveal = true; b.revClock = 0;
+      for (let i = 0; i < 3; i++) { b.rev[i] = 0; if (!(S.video && i === 1 && S.video.b === b)) b.tri.setReveal(i, 0); }
+    }
+    if (b.open < 0.02 && b.openT < 0.5) b.armReveal = false;
     // the painting comes up: underdrawing first, then colour, a patch at a time
     if (b.applied && b.open > 0.62 && b.openT > 0.5 && (b === fb || k === 0) && S.phase === 'live') {
       b.revClock += dt; const lag = [0.9, 0, 1.8]; let all = true;
@@ -448,14 +467,15 @@ function step(dt) {
     }
     for (let i = 0; i < 3; i++) { const want = b === fb && S.mode === 'inspect' && i !== S.panel ? 0.26 : 1; if (b.dim[i] !== want) { b.dim[i] += (want - b.dim[i])*Math.min(1, dt*3); if (Math.abs(want - b.dim[i]) < 0.004) b.dim[i] = want; b.tri.panels[i].material.uniforms.uFade.value = b.dim[i]; } }
     // let go of what a closed altarpiece no longer shows
-    if (b.open <= 0 && b.applied && k !== 0 && b !== fb) { b.applied = false; b.marked = 0; if (b.pics) b.pics.forEach((t) => t.dispose()); }
+    if (b.open <= 0 && b.applied && k !== 0 && b !== fb) { b.applied = false; b.marked = 0; if (b.pics) b.pics.forEach((t) => { if (t) t.dispose(); }); b.pics = b.qFull = b.picsP = null; }
   }
   S.door += (S.doorT + (S.mode === 'look' && S.hover === K.door ? 0.14 : 0) - S.door)*Math.min(1, dt*1.6); if (inRot) doors.setOpen(clamp(S.door, 0, 1));
 
   // the room takes on the weather of whatever is open
   const moodOn = !!fb && fb.open > 0.3 && fb.openT > 0.5;
   if (moodOn) daylight.mood = fb.s.mood.light;
-  daylight.update(dt, moodOn); air.setWeather(moodOn ? fb.s.mood.weather : null); air.update(dt);
+  daylight.update(dt, moodOn); if (daylight.cur) post.u.uExposure.value = daylight.cur.ev;
+  air.setWeather(moodOn ? fb.s.mood.weather : null); air.update(dt);
   sound.scene(moodOn && !S.video ? fb.s.music : null, moodOn && !S.video ? fb.s.amb : null); sound.update(dt);
   if (!inRot) studio.update(dt, T);
 
@@ -470,7 +490,8 @@ const SC = [1, 0.85, 0.7, 0.56]; let lvl = 0, accT = 0, accN = 0, good = 0, lock
 function resize() {
   const w = innerWidth, h = innerHeight; const dpr = CAPTURE ? 1 : Math.min(devicePixelRatio || 1, 2);
   renderer.setPixelRatio(dpr); renderer.setSize(w, h, false); camera.aspect = w/h; camera.updateProjectionMatrix();
-  post.setSize(w*dpr*SC[lvl], h*dpr*SC[lvl]);
+  const scale = S.phase === 'intro' ? Math.min(SC[lvl], 0.72) : SC[lvl];
+  post.setSize(w*dpr*scale, h*dpr*scale); post.u.uBloom.value = w < 800 || S.phase === 'intro' ? 0.06 : 0.10;
 }
 function adapt(raw) {
   if (S.phase !== 'live' || CAPTURE) return; accT += raw; if (++accN < 45) return; const avg = accT/accN; accT = 0; accN = 0; const now = performance.now();
@@ -480,7 +501,7 @@ function adapt(raw) {
 
 // ---------------------------------------------------------------- the way in
 async function enter(prologue) {
-  sound.unlock(); S.phase = 'intro'; body.classList.add('entered');
+  sound.unlock(); S.phase = 'intro'; body.classList.add('entered'); resize();
   post.u.uInk.value = 0; post.u.uWash.value = 0; post.u.uFade.value = 1;
   S.walk = { pos: new V3(0, 1.72, 9.2), tgt: new V3(0, 2.7, -12), fov: 48 }; snapRig();
   if (prologue) prologue.leave(REDUCED ? 500 : 1700);
@@ -489,8 +510,8 @@ async function enter(prologue) {
   await tween(2.7, (e) => { post.u.uInk.value = e; }, (t) => t);
   sound.play('wash');
   await tween(3.3, (e) => { post.u.uWash.value = e; }, (t) => t);
-  post.u.uWash.value = 1; post.u.uInk.value = 1;
-  S.walk = null; rig.rate = 0.35; S.skip = false; S.phase = 'live'; body.classList.add('live'); syncUI();
+  post.u.uWash.value = 1; post.u.uInk.value = 1; S.phase = 'live'; resize();
+  S.walk = null; rig.rate = 0.35; S.skip = false; body.classList.add('live'); syncUI();
   store.d.visits = (store.d.visits || 0) + 1; store.save();
   const b0 = B[0]; if (b0.openT < 1) { await wait(0.5); b0.openT = 1; sound.play('open'); }
   dolly.then(() => {});
@@ -506,18 +527,21 @@ async function main() {
   ui = buildUI({ act });
   ui.ring([K.door, ...Array.from({ length: 9 }, (_, i) => 11 + i), ...Array.from({ length: 10 }, (_, i) => i)].map((k) => (k === K.door ? { bay: k, door: true, label: '书房' } : { bay: k, label: B[k].s.name })));
   ui.sound(sound.muted); ui.time(TIMES[0][1]); syncUI(); bindInput(); resize(); snapRig();
-  step(0); render();     // warm the shaders while the paper still covers the room
-
+  step(0); render();     // compile the shaders once, before the drawing begins to move
   if (CAPTURE) { capture(); return; }
-  let last = performance.now();
-  const tick = (now) => {
-    requestAnimationFrame(tick); const raw = (now - last)/1000; last = now;
-    if (document.hidden || S.phase === 'ready') return;
-    const dt = Math.min(raw, 1/20); T += dt; adapt(raw); step(dt); render();
+  let loopOn = false;
+  const startLoop = () => {
+    if (loopOn) return; loopOn = true; let last = performance.now();
+    const tick = (now) => {
+      requestAnimationFrame(tick); const raw = (now - last)/1000; last = now;
+      if (document.hidden || S.phase === 'ready') return;
+      const dt = Math.min(raw, 1/20); T += dt; adapt(raw); step(dt); render();
+    };
+    requestAnimationFrame(tick);
   };
-  S.phase = 'ready'; requestAnimationFrame(tick);
-  if (SKIP) { post.u.uInk.value = 1; post.u.uWash.value = 1; S.phase = 'live'; body.classList.add('entered', 'live'); addEventListener('pointerdown', () => sound.unlock(), { once: true }); syncUI(); }
-  else prologue.ready(() => enter(prologue));
+  S.phase = 'ready';
+  if (SKIP) { startLoop(); post.u.uInk.value = 1; post.u.uWash.value = 1; S.phase = 'live'; body.classList.add('entered', 'live'); addEventListener('pointerdown', () => sound.unlock(), { once: true }); syncUI(); }
+  else { await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res))); prologue.play(); prologue.ready(() => { startLoop(); enter(prologue); }); }
   body.classList.add('ready');
 }
 
@@ -544,6 +568,7 @@ function capture() {
     const b = B[o.bay ?? S.bay];
     if (o.open !== undefined && b) { b.open = o.open; b.tri.setOpen(o.open); LIGHT.uOpenA.value[b.k] = Math.min(1, o.open*1.7); }
     if (o.reveal !== undefined && b) for (let i = 0; i < 3; i++) b.tri.setReveal(i, o.reveal);
+    if (o.portal !== undefined && doors) { S.door = S.doorT = o.portal; doors.setOpen(o.portal); }
     if (o.glaze !== undefined) for (const x of B) if (x) x.tondo.material.uniforms.uGlaze.value = o.glaze;
     if (o.mood) { daylight.mood = o.mood; daylight.moodK = 1; daylight.snap(); }
     if (o.weather !== undefined) { air.setWeather(o.weather); air.snapWeather(); }
@@ -556,4 +581,4 @@ function capture() {
   window.__set({}).then(() => { window.__ready = true; });
 }
 
-main().catch((e) => { console.error(e); window.__error = String((e && e.stack) || e); const p = document.querySelector('#prologue .enter span'); if (p) p.textContent = '没能打开，请刷新再试'; });
+main().catch((e) => { console.error(e); window.__error = String((e && e.stack) || e); const p = document.querySelector('#prologue .enter span'); if (p) p.textContent = '没能打开，请刷新再试'; const fine = document.querySelector('#prologue .fine'); if (fine) fine.textContent = (e && e.message) || String(e); });

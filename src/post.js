@@ -34,8 +34,14 @@ void main(){
 const BRIGHT_FS = /* glsl */`
 uniform sampler2D tColor; uniform vec2 uTexel; varying vec2 vUv;
 void main(){ vec3 c = vec3(0.);
-  for (int y = 0; y < 2; y++) for (int x = 0; x < 2; x++) c += max(texture2D(tColor, vUv + (vec2(float(x), float(y)) - .5)*2.*uTexel).rgb - .92, 0.);
-  gl_FragColor = vec4(min(c*.25, vec3(6.)), 1.); }`;
+  for (int y = 0; y < 2; y++) for (int x = 0; x < 2; x++) {
+    vec3 s = texture2D(tColor, vUv + (vec2(float(x), float(y)) - .5)*2.*uTexel).rgb;
+    float lum = dot(s, vec3(.2126, .7152, .0722));
+    float soft = clamp(lum - .65, 0., .70); soft = soft*soft/1.40;
+    float amount = max(lum - 1., soft)/max(lum, 1e-5);
+    c += min(s*amount, vec3(3.));
+  }
+  gl_FragColor = vec4(c*.25, 1.); }`;
 
 const BLUR_FS = /* glsl */`
 uniform sampler2D tSrc; uniform vec2 uDir; varying vec2 vUv;
@@ -44,14 +50,22 @@ void main(){ vec3 c = texture2D(tSrc, vUv).rgb*.2270270;
   c += (texture2D(tSrc, vUv + uDir*3.2308).rgb + texture2D(tSrc, vUv - uDir*3.2308).rgb)*.0702703;
   gl_FragColor = vec4(c, 1.); }`;
 
+const ADD_FS = /* glsl */`
+uniform sampler2D tBase; uniform sampler2D tAdd; uniform float uWeight; varying vec2 vUv;
+void main(){ gl_FragColor = vec4(texture2D(tBase, vUv).rgb + texture2D(tAdd, vUv).rgb*uWeight, 1.); }`;
+
 const FINAL_FS = /* glsl */`
-uniform sampler2D tColor; uniform sampler2D tAO; uniform sampler2D tBloom; uniform sampler2D tG; uniform vec2 uTexel; uniform float uBloom; uniform float uAo;
+uniform sampler2D tColor; uniform sampler2D tAO; uniform sampler2D tBloom; uniform sampler2D tG; uniform vec2 uTexel; uniform float uBloom; uniform float uAo; uniform float uExposure;
 uniform float uInk; uniform float uWash; uniform float uAspect; uniform float uFade; uniform vec2 uFocus;
 varying vec2 vUv;
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*.1031); p3 += dot(p3, p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
 float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3. - 2.*f); return mix(mix(hash12(i), hash12(i + vec2(1., 0.)), f.x), mix(hash12(i + vec2(0., 1.)), hash12(i + vec2(1., 1.)), f.x), f.y); }
 float fb(vec2 p){ float a = .5, s = 0.; for (int i = 0; i < 4; i++){ s += a*vn(p); p = p*2.03 + 11.7; a *= .5; } return s; }
-vec3 shoulder(vec3 x){ const float k = .84; vec3 h = k + (1. - k)*(1. - exp(-(x - k)/.55)); return mix(x, h, step(k, x)); }
+vec3 toneMap(vec3 x){
+  x *= exp2(uExposure); float y = dot(x, vec3(.2126, .7152, .0722));
+  float yt = y <= .65 ? y : .65 + .35*(1. - exp(-(y - .65)/3.));
+  return x*yt/max(y, 1e-5);
+}
 float dep(vec2 uv){ float d = texture2D(tG, uv).a; return d <= 0. ? 70. : d; }
 void main(){
   vec3 c = texture2D(tColor, vUv).rgb;
@@ -65,7 +79,7 @@ void main(){
   // occlusion falls off warm, the way shadow does on tinted plaster
   c *= mix(vec3(.46, .37, .34), vec3(1.), ao);
   c += texture2D(tBloom, vUv).rgb*uBloom;
-  c = shoulder(c);
+  c = toneMap(c);
   c = pow(max(c, 0.), vec3(1./2.2));
   if (uWash < .999) {
     vec2 p = (vUv - uFocus)*vec2(uAspect, 1.); float r = length(p);
@@ -104,13 +118,15 @@ export class Post {
     this.color = new THREE.WebGLRenderTarget(4, 4, { ...o, samples: 4 });
     this.ao = new THREE.WebGLRenderTarget(4, 4, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
     this.bA = new THREE.WebGLRenderTarget(4, 4, { ...o, depthBuffer: false }); this.bB = new THREE.WebGLRenderTarget(4, 4, { ...o, depthBuffer: false });
+    this.bC = new THREE.WebGLRenderTarget(4, 4, { ...o, depthBuffer: false }); this.bD = new THREE.WebGLRenderTarget(4, 4, { ...o, depthBuffer: false });
     this.gMat = gMaterial();
     const sm = (fs, uniforms) => new THREE.ShaderMaterial({ vertexShader: FS_VS, fragmentShader: fs, uniforms, depthTest: false, depthWrite: false });
     this.aoMat = sm(AO_FS, { tG: { value: this.g.texture }, uProj: { value: new THREE.Matrix4() }, uTan: { value: new THREE.Vector2() }, uRad: { value: 0.75 } });
     this.brightMat = sm(BRIGHT_FS, { tColor: { value: this.color.texture }, uTexel: { value: new THREE.Vector2() } });
     this.blurMat = sm(BLUR_FS, { tSrc: { value: null }, uDir: { value: new THREE.Vector2() } });
-    this.finalMat = sm(FINAL_FS, { tColor: { value: this.color.texture }, tAO: { value: this.ao.texture }, tBloom: { value: this.bA.texture }, tG: { value: this.g.texture }, uTexel: { value: new THREE.Vector2() },
-      uBloom: { value: 0.36 }, uAo: { value: 1.0 }, uInk: { value: 1 }, uWash: { value: 1 }, uAspect: { value: 1 }, uFade: { value: 1 }, uFocus: { value: new THREE.Vector2(0.5, 0.5) } });
+    this.addMat = sm(ADD_FS, { tBase: { value: null }, tAdd: { value: null }, uWeight: { value: 1 } });
+    this.finalMat = sm(FINAL_FS, { tColor: { value: this.color.texture }, tAO: { value: this.ao.texture }, tBloom: { value: this.bC.texture }, tG: { value: this.g.texture }, uTexel: { value: new THREE.Vector2() },
+      uBloom: { value: 0.10 }, uExposure: { value: 0 }, uAo: { value: 1.0 }, uInk: { value: 1 }, uWash: { value: 1 }, uAspect: { value: 1 }, uFade: { value: 1 }, uFocus: { value: new THREE.Vector2(0.5, 0.5) } });
     this.u = this.finalMat.uniforms;
     this.fsScene = new THREE.Scene(); this.fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.finalMat); this.quad.frustumCulled = false; this.fsScene.add(this.quad);
@@ -120,7 +136,8 @@ export class Post {
     w = Math.max(8, Math.round(w)); h = Math.max(8, Math.round(h));
     if (w === this.w && h === this.h) return; this.w = w; this.h = h;
     this.g.setSize(w, h); this.color.setSize(w, h); this.ao.setSize(Math.max(4, w >> 1), Math.max(4, h >> 1));
-    this.qw = Math.max(2, w >> 2); this.qh = Math.max(2, h >> 2); this.bA.setSize(this.qw, this.qh); this.bB.setSize(this.qw, this.qh);
+    this.qw = Math.max(2, w >> 2); this.qh = Math.max(2, h >> 2);
+    this.bA.setSize(this.qw, this.qh); this.bB.setSize(this.qw, this.qh); this.bC.setSize(this.qw, this.qh); this.bD.setSize(this.qw, this.qh);
     this.brightMat.uniforms.uTexel.value.set(1/w, 1/h); this.u.uTexel.value.set(1/w, 1/h); this.u.uAspect.value = w/h;
   }
   pass(mat, target) { this.quad.material = mat; this.r.setRenderTarget(target); this.r.render(this.fsScene, this.fsCam); }
@@ -134,11 +151,15 @@ export class Post {
     const tn = Math.tan(camera.fov*Math.PI/360); a.uTan.value.set(tn*camera.aspect, tn);
     this.pass(this.aoMat, this.ao);
     this.pass(this.brightMat, this.bA);
-    const b = this.blurMat.uniforms;
-    for (const s of [1, 2.2, 4.5]) {
+    r.setRenderTarget(this.bC); r.setClearColor(0x000000, 0); r.clear();
+    const b = this.blurMat.uniforms; const add = this.addMat.uniforms;
+    [[1, 0.50], [2.2, 0.30], [4.5, 0.20]].forEach(([s, wgt]) => {
       b.tSrc.value = this.bA.texture; b.uDir.value.set(s/this.qw, 0); this.pass(this.blurMat, this.bB);
-      b.tSrc.value = this.bB.texture; b.uDir.value.set(0, s/this.qh); this.pass(this.blurMat, this.bA);
-    }
+      b.tSrc.value = this.bB.texture; b.uDir.value.set(0, s/this.qh); this.pass(this.blurMat, this.bD);
+      add.tBase.value = this.bC.texture; add.tAdd.value = this.bD.texture; add.uWeight.value = wgt; this.pass(this.addMat, this.bB);
+      b.tSrc.value = this.bB.texture; b.uDir.value.set(0, 0); this.pass(this.blurMat, this.bC);
+    });
+    this.u.tBloom.value = this.bC.texture;
     this.pass(this.finalMat, null);
   }
 }

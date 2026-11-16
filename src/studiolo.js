@@ -3,7 +3,7 @@
 // tiny chapel kept for the statue to come. On the left, the proportion sheet; on the
 // right, the codex of who Koko is.
 import * as THREE from '../vendor/three/three.module.js';
-import { Builder, PAL, surf } from './rotunda.js';
+import { Builder, PAL, surf, raisedPanel } from './rotunda.js';
 import { texMaterial, LIGHT } from './materials.js';
 
 const V3 = THREE.Vector3;
@@ -194,11 +194,20 @@ export function buildStudiolo(fresco, atlas, frontImg, turnImg) {
   const ew = 0.8, eh = 2.16;
   wall(b, [hx, hz], [ew, hz], 0, hWall, 0); wall(b, [-ew, hz], [-hx, hz], 0, hWall, hx + ew); wall(b, [ew, hz], [-ew, hz], 2.30, hWall, hx - ew);
   quad(b, [[ew, 2.16, hz], [-ew, 2.16, hz], [-ew, 2.30, hz], [ew, 2.30, hz]], [[0, 2.16], [1.6, 2.16], [1.6, 2.30], [0, 2.30]], PAL.cream, 8);
-  for (const sx of [-1, 1]) { b.add(new THREE.BoxGeometry(0.76, eh - 0.02, 0.05).translate(sx*0.39, eh/2, hz + 0.03), PAL.wood, 7);
-    for (const [yc, h] of [[0.52, 0.72], [1.50, 0.96]]) { b.add(new THREE.BoxGeometry(0.50, h, 0.03).translate(sx*0.39, yc, hz - 0.005), PAL.woodDk, 7); b.add(new THREE.BoxGeometry(0.38, h - 0.12, 0.02).translate(sx*0.39, yc, hz - 0.022), PAL.woodLt, 7); }
-    b.add(new THREE.SphereGeometry(0.035, 14, 10).translate(sx*0.09, 1.08, hz - 0.03), PAL.gold, 5);
-    b.add(new THREE.BoxGeometry(0.09, eh + 0.06, 0.09).translate(sx*(ew + 0.01), eh/2 + 0.03, hz - 0.03), PAL.woodDk, 7); }
-  b.add(new THREE.BoxGeometry(2*ew + 0.20, 0.09, 0.10).translate(0, eh + 0.07, hz - 0.03), PAL.woodDk, 7);
+  for (const sx of [-1, 1]) {
+    const cx = sx*0.39, front = hz - 0.13, depth = 0.075;
+    const stile = (x, w) => b.add(new THREE.BoxGeometry(w, eh, depth).translate(cx + x, eh/2, front + depth/2), PAL.woodDk, 7);
+    stile(-0.325, 0.09); stile(0.325, 0.09);
+    for (const [y, h, w] of [[eh - 0.055, 0.11, 0.56], [eh*0.46, 0.12, 0.56], [0.09, 0.16, 0.56]]) b.add(new THREE.BoxGeometry(w, h, depth).translate(cx, y, front + depth/2), PAL.wood, 7);
+    b.add(new THREE.BoxGeometry(0.52, eh - 0.42, 0.018).translate(cx, eh/2, front + depth - 0.01), PAL.woodDk, 7);
+    for (const [yc, h] of [[eh*0.72, 0.78], [eh*0.24, 0.62]]) {
+      b.add(raisedPanel(0.48, h).rotateY(Math.PI).translate(cx, yc, front + 0.012), PAL.woodLt, 7);
+    }
+    const knob = new THREE.LatheGeometry([new THREE.Vector2(0.001, 0), new THREE.Vector2(0.046, 0), new THREE.Vector2(0.05, 0.008), new THREE.Vector2(0.016, 0.022), new THREE.Vector2(0.012, 0.04), new THREE.Vector2(0.026, 0.055), new THREE.Vector2(0.032, 0.078), new THREE.Vector2(0.012, 0.092)], 20);
+    b.add(knob.rotateX(-Math.PI/2).translate(cx + sx*0.27, 1.05, front - 0.01), PAL.gold, 5);
+    b.add(new THREE.BoxGeometry(0.11, eh + 0.1, 0.13).translate(sx*(ew + 0.03), eh/2 + 0.02, front + 0.04), PAL.woodDk, 7);
+  }
+  b.add(new THREE.BoxGeometry(2*ew + 0.28, 0.12, 0.14).translate(0, eh + 0.08, hz - 0.045), PAL.woodDk, 7);
   b.add(new THREE.BoxGeometry(2*ew + 0.1, eh + 0.2, 0.04).translate(0, eh/2 + 0.05, hz + 0.09), 0x6b5236, 0);
   // lunettes at both ends
   for (const z of [-hz, hz]) { const pts = [new THREE.Vector2(-hx, hWall)]; for (let i = 0; i <= 40; i++) { const xx = -hx + 2*hx*i/40; pts.push(new THREE.Vector2(xx, vaultY(xx))); } pts.push(new THREE.Vector2(hx, hWall));

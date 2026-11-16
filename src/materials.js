@@ -49,7 +49,7 @@ vec3 irradiance(vec3 P, vec3 N){
   E += uSkyCol*max(dot(N, Lo)*.6 + .4, 0.)*max(Lo.y, 0.)*area/(d2 + area)*mix(1., .60, small);
   E += uSunCol*max(dot(N, uSunDir), 0.)*sunVis(P)*.80;
   vec3 Lp = uPool - P; float dp2 = dot(Lp, Lp); Lp *= inversesqrt(dp2);
-  E += uPoolCol*max(dot(N, Lp)*.72 + .28, 0.)/(1. + dp2*0.045)*mix(1., .46, small);
+  E += uPoolCol*max(dot(N, Lp)*.72 + .28, 0.)/(1. + dp2*0.045)*mix(1., .46, small)*.32;
   if (uRoom < .5) {
     if (uCandle > .003) {
       // a candle on every pilaster of the rotunda: the two nearest matter
@@ -76,20 +76,26 @@ void main(){
 }`;
 
 const FRESCO_FS = /* glsl */`
-uniform sampler2D tFrieze; uniform float uOpenA[20]; uniform float uWideA[20];
+uniform sampler2D tFrieze; uniform sampler2D tWood; uniform sampler2D tWoodN; uniform sampler2D tPlaster; uniform sampler2D tPlasterN; uniform sampler2D tMarble; uniform sampler2D tMarbleN; uniform sampler2D tFloor; uniform sampler2D tFloorN; uniform float uOpenA[20]; uniform float uWideA[20];
 varying vec3 vW; varying vec3 vO; varying vec3 vN; varying vec3 vCol; varying float vMode; varying vec2 vUv;
 const float PI = 3.14159265; const float R = 12.; const float BAY = 0.314159265;
 ${NOISE}
 ${LIGHTING}
 vec3 lin(float r, float g, float b){ return pow(vec3(r, g, b), vec3(2.2)); }
+vec3 srgbTex(sampler2D t, vec2 uv){ return pow(texture2D(t, uv).rgb, vec3(2.2)); }
+vec3 surfTex(sampler2D t, vec3 p, vec3 n){
+  vec3 w = max(abs(n), vec3(1e-3)); w /= dot(w, vec3(1.));
+  return srgbTex(t, p.yz)*w.x + srgbTex(t, p.xz)*w.y + srgbTex(t, p.xy)*w.z;
+}
 vec3 grain(vec3 c, vec3 p, float k){
-  float g = fbm(vec3(p.x*16., p.y*1.3, p.z*16.) + k); float f = sin((p.x + p.z)*190. + g*14. + p.y*3.)*.5 + .5;
-  return c*(.86 + .26*g)*(.95 + .07*f);
+  float g = fbm(vec3(p.x*2.4, p.y*.35, p.z*2.4) + k);
+  float line = sin(p.y*70. + g*4.)*.5 + .5;
+  return c*(.94 + .08*g)*(.97 + .04*line);
 }
 void main(){
   vec3 N = normalize(vN); if (!gl_FrontFacing) N = -N;
   vec3 V = normalize(cameraPosition - vW);
-  vec3 alb = vCol; float gold = 0.; float gloss = 0.; float mott = 1.; float occ = 1.; float sheen = 0.; float glaze = 0.;
+  vec3 alb = vCol; float gold = 0.; float gloss = 0.; float mott = 1.; float occ = 1.; float sheen = 0.; float glaze = 0.; float carve = .5;
   float px = length(fwidth(vW)) + 1e-5;
   float ang = atan(vW.x, -vW.z); float y = vW.y;
   float bi = floor(ang/BAY + .5); float s = (ang - bi*BAY)*R;
@@ -144,7 +150,6 @@ void main(){
     else { c = mix(cream, rose, smoothstep(.05 + w, .05, abs(r - 11.4))); }
     alb = c; gloss = 1.; mott = .45;
   } else if (mode == 3) {
-    // the dome: cream ribs and rings, azure coffers, a gold star in each
     vec3 dv = vW - vec3(0., 6.6, 0.);
     float phi = acos(clamp(dv.y/length(dv), -1., 1.));
     float phiO = 0.2185; float span = 1.5708 - phiO;
@@ -153,21 +158,15 @@ void main(){
     float fa = fract(ang/BAY + .5) - .5;
     float cx = fa*BAY*rs; float halfW = .5*BAY*rs;
     float rows = 5.; float fv = fract(v*rows) - .5; float rowH = span*R/rows; float cy = fv*rowH;
-    float hx = halfW - .17, hy = .5*rowH - .15;
-    float d = max(abs(cx) - hx, abs(cy) - hy);
-    vec3 dcream = lin(.955, .935, .885);
-    vec3 field = mix(lin(.78, .885, .945), lin(.63, .80, .91), smoothstep(0., 1., v));
-    float inC = 1. - smoothstep(-px, px, d);
-    float inner = 1. - smoothstep(-px, px, d + .12);
-    float sh = abs(cy) - hy > abs(cx) - hx ? (cy < 0. ? .88 : 1.05) : .95;
-    vec3 bevC = mix(dcream, field, .4)*sh;
-    alb = mix(dcream, bevC, inC); alb = mix(alb, field, inner);
-    float ss = min(hx, hy)*.38;
+    alb = mix(lin(.82, .90, .96), lin(.68, .81, .91), smoothstep(0., 1., v));
+    float hx = halfW - .28, hy = rowH*.5 - .2;
+    float well = smoothstep(.02, -.4, max(abs(cx) - hx, abs(cy) - hy));
+    occ *= mix(1., .62, well);
+    float ss = min(halfW, rowH)*.34;
     float rr = length(vec2(cx, cy)); float an = atan(cy, cx);
     float sr = ss*(.34 + .66*pow(abs(cos(an*4.)), 2.2));
-    float star = (1. - smoothstep(-px, px, rr - sr))*inner;
-    if (star > .5) { gold = 2.; alb = lin(.88, .73, .45); }
-    mott = .6;
+    if (rr < sr) { gold = 2.; alb = lin(.90, .76, .46); }
+    mott = .15;
   } else if (mode == 4) {
     // niche back: antique rose with a faint damask
     vec2 p = vec2(s, y)*vec2(3.0, 2.2); float row = floor(p.y); p.x += .5*mod(row, 2.);
@@ -192,8 +191,14 @@ void main(){
     alb *= 1. - .40*m; alb += .06*clamp(m2 - m, 0., 1.);
     alb = mix(alb, lin(.86, .72, .46), smoothstep(.012 + px, .012, abs(y - 5.66)) + smoothstep(.012 + px, .012, abs(y - 6.14)));
   } else if (mode == 7) {
-    // plain wood, grain running with the piece
-    alb = grain(alb, vO, 0.); mott = 0.; sheen = .5;
+    vec3 nabs = abs(N);
+    vec2 uv = (nabs.z > nabs.x && nabs.z > nabs.y) ? vO.xy : (nabs.x > nabs.y ? vO.zy : vO.xz);
+    uv *= 1.35;
+    alb = srgbTex(tWood, uv);
+    vec3 wn = texture2D(tWoodN, uv).xyz*2. - 1.;
+    vec3 T = dFdx(vO), Bn = dFdy(vO);
+    N = normalize(normalize(T)*wn.x + normalize(Bn)*wn.y + N*wn.z);
+    mott = 0.; sheen = .85;
   } else if (mode == 8) {
     // studiolo panelling in inlaid wood; vUv is metres along the wall and height
     float u = vUv.x, h = vUv.y;
@@ -206,6 +211,8 @@ void main(){
       vec2 ga = mod(p, a) - hf, gb = mod(p - hf, a) - hf; vec2 g = dot(ga, ga) < dot(gb, gb) ? ga : gb;
       float sec = floor(mod(atan(g.y, g.x) - PI/6. + 2.*PI, 2.*PI)/(2.*PI/3.));
       c = sec < .5 ? maple : (sec < 1.5 ? honey : walnut);
+      vec2 fd = sec < .5 ? vec2(1., 0.) : (sec < 1.5 ? vec2(-.5, .866) : vec2(-.5, -.866));
+      carve = .35 + .55*dot(normalize(g + 1e-4), fd);
     }
     else if (h < .90) { c = mix(walnut, lin(.86, .72, .46), smoothstep(.012 + w, .012, abs(h - .85))); }
     else if (h < 2.16) {
@@ -215,17 +222,22 @@ void main(){
       c = mix(honey, maple, 1. - smoothstep(-w, w, dp));
       c = mix(c, walnut, smoothstep(.007 + w, .007, abs(dp + .03)));
       c = mix(c, walnut, smoothstep(.004 + w, .004, abs(dp - .03))*.7);
+      carve = mix(.25, .9, 1. - smoothstep(-.02, .0, dp));
+      carve = mix(carve, .02, smoothstep(.018, 0., abs(dp + .03)));
       float kind = mod(pi, 3.); float r = length(vec2(x, yy)); float an = atan(yy, x);
       if (kind < .5) {
         // mazzocchio: a faceted ring, the favourite puzzle of the inlayers
         float ring = abs(r - .20);
         if (ring < .055) { float fc = floor(an/(2.*PI)*16. + .5); float lit = mod(fc, 2.); float inn = step(r, .20);
-          c = mix(mix(walnut, honey, lit), mix(honey, lin(.97, .92, .80), lit), inn); c = mix(c, sage, .25*inn*(1. - lit)); }
+          c = mix(mix(walnut, honey, lit), mix(honey, lin(.97, .92, .80), lit), inn);           c = mix(c, sage, .25*inn*(1. - lit));
+          carve = mix(.2, 1., smoothstep(.05, .012, ring)); }
         c = mix(c, walnut, smoothstep(.004 + w, .004, abs(ring - .055))*.8);
+        carve = mix(carve, .08, smoothstep(.012, 0., abs(ring - .055)));
       } else if (kind < 1.5) {
         // a round window of lattice
-        if (r < .24) { vec2 d = vec2(x + yy, x - yy)/.085; vec2 f = abs(fract(d) - .5); float bar = step(.36, max(f.x, f.y));
-          c = mix(mix(lin(.52, .62, .66), lin(.70, .80, .84), .5 + .5*yy/.24), honey, bar); }
+        if (r < .24) { vec2 d = vec2(x + yy, x - yy)/.085; vec2 f = abs(fract(d) - .5); float bar = smoothstep(.22, .42, max(f.x, f.y));
+          c = mix(mix(lin(.52, .62, .66), lin(.70, .80, .84), .5 + .5*yy/.24), honey, bar);
+          carve = mix(.12, 1., bar); }
         c = mix(c, walnut, smoothstep(.006 + w, .006, abs(r - .24)));
         c = mix(c, lin(.86, .72, .46), smoothstep(.004 + w, .004, abs(r - .265)));
       } else {
@@ -235,6 +247,7 @@ void main(){
         c = mix(c, f < .5 ? sage : walnut, inS);
         c = mix(c, maple, 1. - smoothstep(.055 - w, .055 + w, r));
         c = mix(c, walnut, smoothstep(.004 + w, .004, abs(r - .275))*.8);
+        carve = mix(carve, .95, inS); carve = mix(carve, .15, smoothstep(.02, 0., abs(r - rho)));
       }
     }
     else if (h < 2.30) { c = mix(walnut, honey, smoothstep(2.20, 2.215, h)*(1. - smoothstep(2.265, 2.28, h))); c = mix(c, lin(.86, .72, .46), smoothstep(.008 + w, .008, abs(h - 2.24))); }
@@ -259,7 +272,7 @@ void main(){
       if (dp < .042) { gold = 2.; c = lin(.88, .73, .45); }
       c = mix(c, lin(.86, .72, .46), smoothstep(.005 + w, .005, abs(h - 3.20)));
     }
-    if (h < 2.30) { alb = grain(c, vec3(u*.6, h, 0.), floor(u/.8)*3.1); mott = 0.; sheen = .6; } else { alb = c; mott = .7; }
+    if (h < 2.30) { alb = grain(c, vec3(u*.6, h, 0.), floor(u/.8)*3.1); alb *= .78 + .36*dot(srgbTex(tWood, vec2(u, h)*2.4), vec3(.3, .59, .11)); mott = 0.; sheen = .6; } else { alb = c; mott = .7; }
   } else if (mode == 9) {
     // studiolo floor: rose and cream tiles on the diagonal, a sage border
     vec2 p = vUv; float w = px*1.2; float bd = max(abs(p.x) - 2.30, abs(p.y) - 3.00);
@@ -296,12 +309,34 @@ void main(){
     gloss = 1.; mott = 0.; sheen = .8; glaze = 1.;
   }
 
+  vec2 uvPl = mode == 3 ? vec2(ang*4.5, y*.55) : vec2(s*1.15, y*1.15);
+  vec2 uvMa = mode == 2 ? vW.xz*.45 : vec2(s, y)*.42;
+  vec3 pPl = srgbTex(tPlaster, uvPl); vec3 nPl = texture2D(tPlasterN, uvPl).xyz*2. - 1.;
+  vec3 pMa = srgbTex(tMarble, uvMa); vec3 nMa = texture2D(tMarbleN, uvMa).xyz*2. - 1.;
+  vec3 pFl = srgbTex(tFloor, vW.xz*.38); vec3 nFl = texture2D(tFloorN, vW.xz*.38).xyz*2. - 1.;
+  if (mode <= 3 && gold < .5) {
+    float usePl = (mode == 3 || (mode == 1 && y >= 1.)) ? 1. : 0.;
+    float useFl = mode == 2 ? 1. : 0.;
+    vec3 tex = mix(mix(pMa, pPl, usePl), pFl, useFl);
+    vec3 wn = mix(mix(nMa, nPl, usePl), nFl, useFl);
+    float show = mode == 2 ? .34 : (mode == 3 ? .22 : (mode == 1 && y >= 1. ? .5 : .62));
+    float kn = mode == 3 ? 1.35 : (mode == 2 ? .55 : 1.15);
+    alb = mix(alb, tex, show);
+    vec3 T = dFdx(vW), Bn = dFdy(vW);
+    N = normalize(normalize(T)*wn.x*kn + normalize(Bn)*wn.y*kn + N*wn.z);
+  }
+
   if (gold < .5 && mott > 0.) {
     float m1 = fbm(vW*.75), m2 = vnoise(vW*13.);
     alb *= mix(1., (.92 + .16*m1)*(.975 + .05*m2), mott);
     alb = mix(alb, alb*vec3(1.03, 1., .965), m1*mott);
   }
   vec3 E = irradiance(vW, N)*occ;
+  if (int(vMode + .5) == 8) {
+    vec3 T = dFdx(vW), Bn = dFdy(vW);
+    N = normalize(cross(T + N*dFdx(carve)*.11, Bn + N*dFdy(carve)*.11));
+    E = irradiance(vW, N)*occ*mix(.8, 1., smoothstep(0., .25, carve));
+  }
   vec3 col = alb*E;
   if (gold > 1.5) {
     // gold leaf laid on the painted vault
@@ -341,7 +376,7 @@ void main(){
 
 const TEX_FS = /* glsl */`
 uniform sampler2D map; uniform float uKind; uniform vec2 uTexel; uniform float uSeed; uniform float uFloor; uniform vec2 uCrop;
-uniform float uReveal; uniform float uSrgb; uniform vec4 uCell; uniform float uGlaze; uniform float uFade;
+uniform float uReveal; uniform float uRevealMode; uniform float uSrgb; uniform vec4 uCell; uniform float uGlaze; uniform float uFade;
 varying vec3 vW; varying vec3 vN; varying vec2 vUv;
 ${NOISE}
 ${LIGHTING}
@@ -353,6 +388,41 @@ float tone(vec2 uv){
   return mix(1. - L, (1. - L)*.10, key);
 }
 float lt(vec2 uv){ return sqrt(lum(texture2D(map, uv).rgb)); }
+float revealMask(vec2 p){
+  float n = fbm(vec3(p*vec2(3.2, 4.4), uSeed));
+  float n2 = fbm(vec3(p*vec2(7.5, 6.), uSeed + 4.));
+  if (uRevealMode < .5) {
+    float field = p.x*.22 + (1. - p.y)*.55 + (n - .5)*.62;
+    return smoothstep(field - .10, field + .10, uReveal*1.35 - .12);
+  }
+  if (uRevealMode < 1.5) {
+    float cover = 0.;
+    for (int i = 0; i < 4; i++) {
+      float fi = float(i);
+      vec2 c = mix(vec2(.16), vec2(.84), vec2(hash12(vec2(uSeed*1.7, fi + 1.3)), hash12(vec2(uSeed + 2.2, fi + 5.1))));
+      float rad = mix(.28, .46, hash12(vec2(fi + 9., uSeed)));
+      float d = length((p - c)*vec2(.9, 1.15));
+      float grow = uReveal*1.45 - fi*.08;
+      cover = max(cover, 1. - smoothstep(grow - .16, grow + .34, d/rad + (n2 - .5)*.35));
+    }
+    return cover;
+  }
+  if (uRevealMode < 2.5) {
+    vec2 dir = normalize(vec2(.85, -.45)); vec2 side = vec2(-dir.y, dir.x);
+    float along = dot(p, dir); float across = dot(p, side); float cover = 0.;
+    for (int i = 0; i < 24; i++) {
+      float fi = float(i);
+      float y0 = hash12(vec2(uSeed, fi))*1.15 - .08;
+      float w = mix(.045, .075, hash12(vec2(fi, uSeed + 2.)));
+      float head = uReveal*1.45 - hash12(vec2(fi + 4., uSeed))*.55;
+      float band = 1. - smoothstep(w*.2, w*1.6, abs(across - (y0 - .5)*.9));
+      cover = max(cover, band*smoothstep(-.12, .22, head - along));
+    }
+    return cover;
+  }
+  float r = length((p - vec2(.48, .62))*vec2(.9, 1.15));
+  return smoothstep(uReveal*1.35 + .05, uReveal*1.35 - .28, r + (n - .5)*.18);
+}
 void main(){
   vec3 N = normalize(vN); if (!gl_FrontFacing) N = -N;
   vec3 E = irradiance(vW, N);
@@ -363,22 +433,19 @@ void main(){
     vec3 t = pic(uv); float k = clamp(lum(E)/.84, .42, 1.06);
     col = t*mix(1., k, .55); hz = .4;
     if (uReveal < .999) {
-      // first the red underdrawing, then the colour, laid in a day's patch at a time
       vec2 e = uTexel*1.6;
       float l0 = lt(uv); float gx = lt(uv + vec2(e.x, 0.)) - lt(uv - vec2(e.x, 0.)); float gy = lt(uv + vec2(0., e.y)) - lt(uv - vec2(0., e.y));
-      float edge = smoothstep(.035, .20, length(vec2(gx, gy)));
-      float draw = clamp(uReveal/.36, 0., 1.);
-      float sweep = vUv.x*.30 + (1. - vUv.y)*.70 + (fbm(vec3(vUv*5., uSeed)) - .5)*.40;
-      float drawn = smoothstep(sweep - .06, sweep + .06, draw*1.5 - .22);
+      float contour = smoothstep(.035, .20, length(vec2(gx, gy)));
+      float draw = clamp(uReveal/.40, 0., 1.);
+      float sweep = vUv.x*.25 + (1. - vUv.y)*.75;
+      float drawn = smoothstep(sweep - .08, sweep + .08, draw*1.25 - .08);
       vec3 ground = vec3(.80, .75, .66)*(.94 + .12*fbm(vec3(vUv*vec2(5., 8.), uSeed + 3.)));
-      vec3 sino = mix(ground, vec3(.45, .16, .09), clamp(edge*.85 + (1. - l0)*.20, 0., 1.)*drawn*.9)*E;
-      vec2 g = vUv*vec2(3., 5.) + (vec2(fbm(vec3(vUv*4., uSeed)), fbm(vec3(vUv*4. + 7., uSeed))) - .5)*.9;
-      vec2 ci = floor(g); vec2 f = fract(g); float inn = min(min(f.x, 1. - f.x), min(f.y, 1. - f.y));
-      float ord = hash12(ci + uSeed*13.)*.50 + (1. - (ci.y + .5)/5.)*.42;
-      float pr = clamp((uReveal - .32)/.68, 0., 1.)*1.22;
-      float m = smoothstep(0., .10, pr - ord + (inn - .3)*.10);
-      float wet = m*(1. - smoothstep(.10, .40, pr - ord));
-      col = mix(sino, col*(1. - .14*wet), m);
+      vec3 sino = mix(ground, vec3(.45, .16, .09), clamp(contour*.85 + (1. - l0)*.20, 0., 1.)*drawn*.9)*E;
+      float mask = uRevealMode < 0. ? smoothstep(0., 1., uReveal) : revealMask(vUv);
+      float front = mask*(1. - smoothstep(.15, .55, mask))*step(0., uRevealMode);
+      col = mix(sino, col, mask);
+      col *= 1. - .035*front;
+      col += vec3(1., .86, .62)*front*.03;
     }
     col *= uFade;
   } else if (uKind < 1.5) {
@@ -418,8 +485,8 @@ void main(){
   gl_FragColor = vec4(col, 1.);
 }`;
 
-export function frescoMaterial(tFrieze) {
-  return new THREE.ShaderMaterial({ vertexShader: WORLD_VS, fragmentShader: FRESCO_FS, side: THREE.DoubleSide, uniforms: { ...LIGHT, tFrieze: { value: tFrieze } } });
+export function frescoMaterial(tFrieze, maps) {
+  return new THREE.ShaderMaterial({ vertexShader: WORLD_VS, fragmentShader: FRESCO_FS, side: THREE.DoubleSide, uniforms: { ...LIGHT, tFrieze: { value: tFrieze }, tWood: { value: maps.wood }, tWoodN: { value: maps.woodN }, tPlaster: { value: maps.plaster }, tPlasterN: { value: maps.plasterN }, tMarble: { value: maps.marble }, tMarbleN: { value: maps.marbleN }, tFloor: { value: maps.floor }, tFloorN: { value: maps.floorN } } });
 }
 
 export function cropFor(map, want) {
@@ -433,7 +500,7 @@ export function texMaterial(map, kind = 0, opts = {}) {
   const m = new THREE.ShaderMaterial({ vertexShader: WORLD_VS, fragmentShader: TEX_FS, side: opts.side ?? THREE.DoubleSide,
     uniforms: { ...LIGHT, map: { value: map }, uKind: { value: kind }, uTexel: { value: new THREE.Vector2(1/(img?.width || 720), 1/(img?.height || 1280)) },
       uSeed: { value: opts.seed ?? 1 }, uFloor: { value: opts.floor ?? 0 }, uCrop: { value: cropFor(map, want) },
-      uReveal: { value: opts.reveal ?? 1 }, uSrgb: { value: 0 }, uCell: { value: opts.cell ?? new THREE.Vector4(0, 0, 1, 1) }, uGlaze: { value: opts.glaze ?? 1 }, uFade: { value: 1 } } });
+      uReveal: { value: opts.reveal ?? 1 }, uRevealMode: { value: opts.revealMode ?? 0 }, uSrgb: { value: 0 }, uCell: { value: opts.cell ?? new THREE.Vector4(0, 0, 1, 1) }, uGlaze: { value: opts.glaze ?? 1 }, uFade: { value: 1 } } });
   m.userData.aspect = want;
   return m;
 }

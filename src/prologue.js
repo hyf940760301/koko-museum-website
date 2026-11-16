@@ -58,11 +58,11 @@ export function buildPrologue(root, { quick = false } = {}) {
     </div>`;
   if (quick) root.classList.add('quick');
   const btn = root.querySelector('.enter'), svg = root.querySelector('svg'), sheet = root.querySelector('.sheet');
-  requestAnimationFrame(() => root.classList.add('go'));
   let enter = null;
   btn.addEventListener('click', () => { if (!btn.disabled && enter) { btn.disabled = true; enter(); } });
   return {
     progress(p) { if (btn.disabled && !root.classList.contains('ok')) btn.firstElementChild.textContent = p < 1 ? `正在备展 · ${Math.round(p*100)}` : '正在备展'; },
+    play() { requestAnimationFrame(() => root.classList.add('go')); },
     ready(cb) { enter = cb; root.classList.add('ok'); btn.disabled = false; btn.firstElementChild.textContent = '入　馆'; },
     fail(msg) { btn.firstElementChild.textContent = msg; },
     // walk into the door: the sheet swells about the doorway and thins away
