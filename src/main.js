@@ -5,7 +5,7 @@
 //   ?all=1       as if every roundel had been earned (nothing is saved)
 import * as THREE from '../vendor/three/three.module.js';
 import { buildRotunda, bayMatrix, K, cyl, sconcePoints, buildDoorLeaves } from './rotunda.js';
-import { frescoMaterial, texMaterial, LIGHT } from './materials.js';
+import { frescoMaterial, texMaterial, LIGHT, setCastle } from './materials.js';
 import { Triptych } from './triptych.js';
 import { buildAir, AIR } from './air.js';
 import { Post } from './post.js';
@@ -20,6 +20,9 @@ import { buildUI, CN } from './ui.js';
 const V3 = THREE.Vector3;
 const Q = new URLSearchParams(location.search);
 const CAPTURE = Q.has('capture'), ALL = Q.has('all'), SKIP = Q.has('skip') || CAPTURE;
+// ?castle=1: the warm castle rework, bay 0 first (src/castle.js). Without it nothing below changes.
+const CASTLE = Q.has('castle'); let castle = null;
+const FIXED = Q.has('fixed');   // qa/bench.mjs: hold full sharpness so frame times compare like for like
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const easeIO = (t) => (t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2)/2);
@@ -100,20 +103,24 @@ async function build(progress) {
   const repeat = (t, srgb) => { t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; return t; };
   const ph = (name) => loader.loadAsync('./assets/tex/ph/' + name);
   const [wood, woodN, plaster, plasterN, marble, marbleN, floor, floorN] = await Promise.all([ph('oak_diff.jpg'), ph('oak_nor.jpg'), ph('stucco_diff.jpg'), ph('stucco_nor.jpg'), ph('marble_diff.jpg'), ph('marble_nor.jpg'), ph('terrazzo_diff.jpg'), ph('terrazzo_nor.jpg')]);
+  let castleMod = null, env = null;
+  if (CASTLE) { castleMod = await import('./castle.js'); setCastle(true); env = await castleMod.loadEnv(renderer); }
   const fresco = frescoMaterial(friezeTexture(), { wood: repeat(wood, false), woodN: repeat(woodN, false), plaster: repeat(plaster, false), plasterN: repeat(plasterN, false), marble: repeat(marble, false), marbleN: repeat(marbleN, false), floor: repeat(floor, false), floorN: repeat(floorN, false) });
   rot = new THREE.Group(); scene.add(rot);
-  rot.add(new THREE.Mesh(buildRotunda(), fresco));
+  rot.add(new THREE.Mesh(CASTLE ? buildRotunda({ skip: [0] }) : buildRotunda(), fresco));
+  // bay 0 in stone: its gilding reflects the room's light instead of a painted gradient
+  const gilt = CASTLE ? frescoMaterial(fresco.uniforms.tFrieze.value, { wood: fresco.uniforms.tWood.value, woodN: fresco.uniforms.tWoodN.value, plaster: fresco.uniforms.tPlaster.value, plasterN: fresco.uniforms.tPlasterN.value, marble: fresco.uniforms.tMarble.value, marbleN: fresco.uniforms.tMarbleN.value, floor: fresco.uniforms.tFloor.value, floorN: fresco.uniforms.tFloorN.value }, { gold: { env, uEnvK: castleMod.PBR.uEnvK } }) : null;
   atlas = tondoAtlas(SERIES.map((s) => s.id));
   const lunette = lunetteTexture(); const tondoGeo = new THREE.CircleGeometry(0.45, 56);
   const grotMat = texMaterial(grotesqueTexture(), 1, { aspect: 0.25/3.8 }); const grotGeo = new THREE.PlaneGeometry(0.25, 3.8);
   for (let k = 0; k < K.NB; k++) {
     const th = k*K.BAY;
-    const gp = new THREE.Mesh(grotGeo, grotMat); gp.applyMatrix4(bayMatrix(th + K.BAY/2, K.R - 0.1155, 3.2)); rot.add(gp);
+    if (!CASTLE || (k !== 0 && k !== K.NB - 1)) { const gp = new THREE.Mesh(grotGeo, grotMat); gp.applyMatrix4(bayMatrix(th + K.BAY/2, K.R - 0.1155, 3.2)); rot.add(gp); }
     const s = byBay(k); if (!s) continue;
     const got = earned.has(s.id);
     const tondo = new THREE.Mesh(tondoGeo, texMaterial(atlas.texture, 3, { cell: atlas.cell(s.index), glaze: got ? 1 : 0, seed: k + 1.3, aspect: 1 }));
     tondo.applyMatrix4(bayMatrix(th, K.R - 0.022, K.yTondo)); rot.add(tondo);
-    const tri = new Triptych(fresco, { wide: !!s.wide, sketch: studyTexture(qs[s.index]), lunette, plate: plateTexture(s.latin, `N° ${s.no} · MMXXVI`), seed: k + 1, floor: 0.07 });
+    const tri = new Triptych(CASTLE && k === 0 ? gilt : fresco, { wide: !!s.wide, sketch: studyTexture(qs[s.index]), lunette, plate: plateTexture(s.latin, `N° ${s.no} · MMXXVI`), seed: k + 1, floor: 0.07 });
     tri.panels.forEach((m, i) => { m.material.uniforms.uRevealMode.value = REDUCED ? -1 : (s.mood.light === 'night' ? 3 : (s.index * 3 + i) % 4); });
     tri.group.applyMatrix4(bayMatrix(th, K.R + 0.40, K.ySill + tri.D.originY)); rot.add(tri.group);
     LIGHT.uWideA.value[k] = tri.D.HW;
@@ -129,6 +136,7 @@ async function build(progress) {
   SERIES.forEach((s) => studio.setEarned(s.index, earned.has(s.id)));
 
   air = buildAir(); scene.add(air.group);
+  if (CASTLE) { castle = await castleMod.buildCastle(renderer, env); rot.add(castle.group); castleMod.alphaDiscipline(scene); const gq = Q.has('grade') ? Q.get('grade').split(',').map(Number) : []; post.castle({ ev: gq[0] ?? castleMod.GRADE.ev, pow: gq[1] || castleMod.GRADE.pow, sat: gq[2] || castleMod.GRADE.sat }); }
   // the first altarpiece is ready before anyone walks in
   const b0 = B[0]; await loadPics(b0);
   const shown = isSeen(b0.s, 0) || SKIP;
@@ -487,6 +495,7 @@ function step(dt) {
   air.setWeather(moodOn ? fb.s.mood.weather : null); air.update(dt);
   sound.scene(moodOn && !S.video ? fb.s.music : null, moodOn && !S.video ? fb.s.amb : null); sound.update(dt);
   if (!inRot) studio.update(dt, T);
+  if (castle) castle.update(dt, T);
 
   moveRig(dt);
   const f = facing(); if (f !== lastFacing && ui) { lastFacing = f; ui.ringState(f, gotBays()); }
@@ -497,13 +506,13 @@ function render() { LIGHT.uTime.value = T; AIR.uPx.value = post.h/(2*Math.tan(ca
 // ---------------------------------------------------------------- size and adaptive sharpness
 const SC = [1, 0.85, 0.7, 0.56]; let lvl = 0, accT = 0, accN = 0, good = 0, lockUp = 0, lockMs = 15000;
 function resize() {
-  const w = innerWidth, h = innerHeight; const dpr = CAPTURE ? 1 : Math.min(devicePixelRatio || 1, 2);
+  const w = innerWidth, h = innerHeight; const dpr = CAPTURE ? (Number(Q.get('dpr')) || 1) : Math.min(devicePixelRatio || 1, 2);
   renderer.setPixelRatio(dpr); renderer.setSize(w, h, false); camera.aspect = w/h; camera.updateProjectionMatrix();
   const scale = S.phase === 'intro' ? Math.min(SC[lvl], 0.72) : SC[lvl];
   post.setSize(w*dpr*scale, h*dpr*scale); post.u.uBloom.value = w < 800 || S.phase === 'intro' ? 0.06 : 0.10;
 }
 function adapt(raw) {
-  if (S.phase !== 'live' || CAPTURE) return; accT += raw; if (++accN < 45) return; const avg = accT/accN; accT = 0; accN = 0; const now = performance.now();
+  if (S.phase !== 'live' || CAPTURE || FIXED) return; accT += raw; if (++accN < 45) return; const avg = accT/accN; accT = 0; accN = 0; const now = performance.now();
   if (avg > 1/43 && lvl < SC.length - 1) { lvl++; good = 0; lockUp = now + lockMs; lockMs = Math.min(120000, lockMs*2); resize(); }
   else if (avg < 1/56 && lvl > 0 && now > lockUp) { if (++good >= 5) { lvl--; good = 0; lockUp = now + lockMs; resize(); } } else good = 0;
 }
@@ -539,6 +548,7 @@ async function main() {
   step(0); render();     // compile the shaders once, before the drawing begins to move
   if (CAPTURE) { capture(); return; }
   let loopOn = false;
+  if (Q.has('bench')) window.__bench = { get lvl() { return SC[lvl]; }, get phase() { return S.phase; } };
   const startLoop = () => {
     if (loopOn) return; loopOn = true; let last = performance.now();
     const tick = (now) => {
@@ -557,6 +567,14 @@ async function main() {
 // ---------------------------------------------------------------- stills
 function capture() {
   S.phase = 'live'; body.classList.add('capture', 'ready');
+  // where a picture panel of the bay in view lands on screen, and which image it shows (qa/deltae.py)
+  window.__panelInfo = (i) => {
+    const b = B[S.bay]; if (!b) return null; const m = b.tri.panels[i]; m.updateWorldMatrix(true, false);
+    const g = m.geometry; if (!g.boundingBox) g.computeBoundingBox(); const bb = g.boundingBox;
+    const rect = [[bb.min.x, bb.min.y], [bb.max.x, bb.min.y], [bb.max.x, bb.max.y], [bb.min.x, bb.max.y]].map(([x, y]) => { const p = new V3(x, y, 0).applyMatrix4(m.matrixWorld).project(camera); return [(p.x*0.5 + 0.5)*innerWidth, (0.5 - p.y*0.5)*innerHeight]; });
+    const u = m.material.uniforms; const img = u.map && u.map.value && u.map.value.image;
+    return { bay: S.bay, rect, crop: u.uCrop ? u.uCrop.value.toArray() : null, src: img ? (img.currentSrc || img.src || null) : null, fade: u.uFade ? u.uFade.value : 1, reveal: u.uReveal ? u.uReveal.value : 1 };
+  };
   window.__set = async (o = {}) => {
     if (o.hour !== undefined) daylight.hour = o.hour;
     if (o.room && o.room !== S.room) enterRoom(o.room);

@@ -110,6 +110,25 @@ void main(){
   gl_FragColor = vec4(c, 1.);
 }`;
 
+// AgX as in three r160 (tonemapping_pars_fragment), then the exact sRGB transfer curve
+const AGX = /* glsl */`
+const mat3 LIN_REC2020_TO_SRGB = mat3(vec3(1.6605, -.1246, -.0182), vec3(-.5876, 1.1329, -.1006), vec3(-.0728, -.0083, 1.1187));
+const mat3 LIN_SRGB_TO_REC2020 = mat3(vec3(.6274, .0691, .0164), vec3(.3293, .9195, .0880), vec3(.0433, .0113, .8956));
+vec3 agxContrast(vec3 x){ vec3 x2 = x*x; vec3 x4 = x2*x2; return 15.5*x4*x2 - 40.14*x4*x + 31.96*x4 - 6.868*x2*x + .4298*x2 + .1191*x - .00232; }
+vec3 agx(vec3 color){
+  const mat3 inset = mat3(vec3(.856627153315983, .137318972929847, .11189821299995), vec3(.0951212405381588, .761241990602591, .0767994186031903), vec3(.0482516061458583, .101439036467562, .811302368396859));
+  const mat3 outset = mat3(vec3(1.1271005818144368, -.1413297634984383, -.14132976349843826), vec3(-.11060664309660323, 1.157823702216272, -.11060664309660294), vec3(-.016493938717834573, -.016493938717834257, 1.2519364065950405));
+  color = LIN_SRGB_TO_REC2020*color; color = inset*color; color = max(color, 1e-10); color = log2(color);
+  color = (color + 12.47393)/(4.026069 + 12.47393); color = clamp(color, 0., 1.);
+  color = agxContrast(color);
+  // a light look on top (as Blender's AgX looks): a little more contrast and colour
+  color = pow(max(color, 0.), vec3(uLookPow)); float lk = dot(color, vec3(.2126, .7152, .0722)); color = max(lk + uLookSat*(color - lk), 0.);
+  color = outset*color; color = pow(max(vec3(0.), color), vec3(2.2));
+  return clamp(LIN_REC2020_TO_SRGB*color, 0., 1.);
+}
+vec3 srgbOut(vec3 c){ c = clamp(c, 0., 1.); return mix(c*12.92, 1.055*pow(c, vec3(1./2.4)) - .055, step(.0031308, c)); }
+`;
+
 export class Post {
   constructor(renderer) {
     this.r = renderer;
@@ -140,13 +159,28 @@ export class Post {
     this.bA.setSize(this.qw, this.qh); this.bB.setSize(this.qw, this.qh); this.bC.setSize(this.qw, this.qh); this.bD.setSize(this.qw, this.qh);
     this.brightMat.uniforms.uTexel.value.set(1/w, 1/h); this.u.uTexel.value.set(1/w, 1/h); this.u.uAspect.value = w/h;
   }
+  // ?castle=1: AgX, an exact sRGB curve, a soft vignette, and posters (alpha 1 in the colour target)
+  // passed through in their own colour, out of reach of glow, occlusion, grain and vignette
+  castle(g = {}) {
+    this.isCastle = true;
+    let fs = FINAL_FS;
+    const r = (a, b) => { if (!fs.includes(a)) throw new Error('final shader moved: ' + a.slice(0, 40)); fs = fs.replace(a, b); };
+    r('varying vec2 vUv;', 'varying vec2 vUv;\nuniform float uGradeEV; uniform float uLookPow; uniform float uLookSat;\n' + AGX);
+    r('vec3 c = texture2D(tColor, vUv).rgb;', 'vec4 c4 = texture2D(tColor, vUv); vec3 c = c4.rgb; float pm = clamp(c4.a, 0., 1.); vec3 raw = max(c, 0.);');
+    r('c = toneMap(c);\n  c = pow(max(c, 0.), vec3(1./2.2));', `c = srgbOut(agx(c*exp2(uExposure + uGradeEV)));
+  { vec2 q = (vUv - .5)*2.; c *= 1. - .22*smoothstep(.45, 1.05, length(q)*.7071); }
+  c = mix(c, srgbOut(raw), pm);`);
+    r('c += (hash12(gl_FragCoord.xy) - .5)*.014;', 'c += (hash12(gl_FragCoord.xy) - .5)*.014*(1. - pm);');
+    this.u.uGradeEV = { value: g.ev ?? 0 }; this.u.uLookPow = { value: g.pow ?? 1 }; this.u.uLookSat = { value: g.sat ?? 1 };
+    this.finalMat.fragmentShader = fs; this.finalMat.needsUpdate = true;
+  }
   pass(mat, target) { this.quad.material = mat; this.r.setRenderTarget(target); this.r.render(this.fsScene, this.fsCam); }
   render(scene, camera) {
     const r = this.r;
     camera.layers.set(0); scene.overrideMaterial = this.gMat;
     r.setRenderTarget(this.g); r.setClearColor(0x000000, 0); r.clear(); r.render(scene, camera);
     scene.overrideMaterial = null; camera.layers.enableAll();
-    r.setRenderTarget(this.color); r.setClearColor(this.bg, 1); r.clear(); r.render(scene, camera);
+    r.setRenderTarget(this.color); r.setClearColor(this.bg, this.isCastle ? 0 : 1); r.clear(); r.render(scene, camera);
     const a = this.aoMat.uniforms; a.uProj.value.copy(camera.projectionMatrix);
     const tn = Math.tan(camera.fov*Math.PI/360); a.uTan.value.set(tn*camera.aspect, tn);
     this.pass(this.aoMat, this.ao);

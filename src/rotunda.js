@@ -65,7 +65,10 @@ export function surf(fn, nu, nv) {
   return g;
 }
 
-export function buildRotunda() {
+// opts.skip: bays whose wall, niche and the two piers beside them are left out (the castle work
+// builds them instead). Without it the drum is exactly as it always was.
+export function buildRotunda(opts = {}) {
+  const skip = new Set(opts.skip || []);
   const b = new Builder();
   const { R, a, ySill, ySpring, d, yTop, BAY, W } = K;
   const hW = W/2;
@@ -127,6 +130,8 @@ export function buildRotunda() {
       b.add(new THREE.CircleGeometry(0.12, 40).translate(0, y0 + 0.20, 0.075), PAL.azure, 0, M);
       b.add(new THREE.SphereGeometry(0.07, 18, 14).translate(0, y0 + ht + 0.16, 0.09), PAL.gold, 5, M);
       for (let i = 0; i < 9; i++) b.box(M, 0.2, 0.09, 0.1, (i - 4)*(W/9), 6.315, 0.15, PAL.stoneLt);
+    } else if (skip.has(k)) {
+      for (let i = 0; i < 9; i++) b.box(bayMatrix(th0), 0.2, 0.09, 0.1, (i - 4)*(W/9), 6.315, 0.15, PAL.stoneLt);
     } else {
       // ---- wall around the niche
       b.add(surf((u, v, t) => P(lerp(-hW, -a, u), lerp(0, yTop, v), R, t), 2, 1), PAL.plaster, 1);
@@ -178,6 +183,7 @@ export function buildRotunda() {
     }
 
     // ---- pilaster: recessed ornamental field, round rolls, and a turned candle arm
+    if (skip.has(k) || skip.has((k + 1) % K.NB)) continue;
     const Mp = bayMatrix(th0 + BAY/2);
     const roll = (x, y, h, r, z, color, mode = 0) => b.add(new THREE.CylinderGeometry(r, r, h, 14).translate(x, y, z), color, mode, Mp);
     const bar = (y, z, len, r, color, mode = 0) => b.add(new THREE.CylinderGeometry(r, r, len, 14).rotateZ(Math.PI/2).translate(0, y, z), color, mode, Mp);

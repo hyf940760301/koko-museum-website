@@ -490,8 +490,50 @@ void main(){
   gl_FragColor = vec4(col, 1.);
 }`;
 
-export function frescoMaterial(tFrieze, maps) {
-  return new THREE.ShaderMaterial({ vertexShader: WORLD_VS, fragmentShader: FRESCO_FS, side: THREE.DoubleSide, uniforms: { ...LIGHT, tFrieze: { value: tFrieze }, tWood: { value: maps.wood }, tWoodN: { value: maps.woodN }, tPlaster: { value: maps.plaster }, tPlasterN: { value: maps.plasterN }, tMarble: { value: maps.marble }, tMarbleN: { value: maps.marbleN }, tFloor: { value: maps.floor }, tFloorN: { value: maps.floorN } } });
+export function frescoMaterial(tFrieze, maps, opts = {}) {
+  const uniforms = { ...LIGHT, tFrieze: { value: tFrieze }, tWood: { value: maps.wood }, tWoodN: { value: maps.woodN }, tPlaster: { value: maps.plaster }, tPlasterN: { value: maps.plasterN }, tMarble: { value: maps.marble }, tMarbleN: { value: maps.marbleN }, tFloor: { value: maps.floor }, tFloorN: { value: maps.floorN } };
+  if (opts.gold) return goldFresco(uniforms, opts.gold);
+  return new THREE.ShaderMaterial({ vertexShader: WORLD_VS, fragmentShader: FRESCO_FS, side: THREE.DoubleSide, uniforms });
+}
+
+// ---------------------------------------------------------------- castle variants (?castle=1 only)
+// They are built from the shaders above by replacement, so the site without the flag runs the
+// exact same programs as before.
+let CASTLE = false;
+export function setCastle(on) { CASTLE = !!on; }
+// defines three adds for its own materials sampling a PMREM target (WebGLPrograms, r160)
+export function cubeUVDefines(tex) {
+  const h = tex.image.height; const maxMip = Math.log2(h) - 2; const texelH = 1/h; const texelW = 1/(3*Math.max(Math.pow(2, maxMip), 7*16));
+  return { ENVMAP_TYPE_CUBE_UV: '', CUBEUV_TEXEL_WIDTH: texelW, CUBEUV_TEXEL_HEIGHT: texelH, CUBEUV_MAX_MIP: maxMip.toFixed(1) };
+}
+// water gilding that reflects a real interior instead of a painted gradient
+function goldFresco(uniforms, gold) {
+  let fs = FRESCO_FS;
+  fs = fs.replace('vec3 lin(float r, float g, float b)', 'uniform sampler2D tEnv; uniform float uEnvK;\n#include <cube_uv_reflection_fragment>\nvec3 lin(float r, float g, float b)');
+  const old = 'col = leaf*b*(.55*smoothstep(0., .5, e) + .62*e)*(1. + .5*fr) + vec3(1.6, 1.35, .95)*sp*smoothstep(.1, .7, e) + leaf*.35*fr*e;';
+  if (!fs.includes(old)) throw new Error('gold shader moved');
+  fs = fs.replace(old, `{
+      vec3 envS = textureCubeUV(tEnv, Rf, .22).rgb*uEnvK; vec3 envD = textureCubeUV(tEnv, Ng, .9).rgb*uEnvK;
+      float F = .55 + .45*fr;
+      col = leaf*envS*1.55*F*mix(.75, 1.15, smoothstep(-.4, .5, Rf.y)) + leaf*(E*.20 + envD*.25) + vec3(1.6, 1.35, .95)*sp*smoothstep(.1, .7, e)*.9 + leaf*uCandleCol*uCandle*.10;
+    }`);
+  const u = { ...uniforms, tEnv: { value: gold.env }, uEnvK: gold.uEnvK };
+  return new THREE.ShaderMaterial({ vertexShader: WORLD_VS, fragmentShader: fs, side: THREE.DoubleSide, uniforms: u, defines: cubeUVDefines(gold.env) });
+}
+// finished posters: their own colour, no light, no haze, and alpha 1 so post.js leaves them ungraded
+let CASTLE_TEX = null;
+function castleTexFS() {
+  if (CASTLE_TEX) return CASTLE_TEX;
+  let fs = TEX_FS;
+  const r = (a, b) => { if (!fs.includes(a)) throw new Error('poster shader moved: ' + a.slice(0, 40)); fs = fs.replace(a, b); };
+  // the exact sRGB curve both ways, so a finished poster comes back out as the file it was
+  r('return uSrgb > .5 ? pow(t, vec3(2.2)) : t;', 'return uSrgb > .5 ? mix(t/12.92, pow((t + .055)/1.055, vec3(2.4)), step(.04045, t)) : t;');
+  r('vec3 col; float hz = 1.;', 'vec3 col; float hz = 1.; float pm = 0.;');
+  r('col = t*mix(1., k, .55); hz = .4;', 'col = t; hz = 0.; pm = 1.;');
+  r('col = mix(sino, col, mask);', 'col = mix(sino, col, mask); pm = mask;');
+  r('if (uReveal < .004) col = ground*E;', 'if (uReveal < .004) { col = ground*E; pm = 0.; }');
+  r('gl_FragColor = vec4(col, 1.);', 'gl_FragColor = vec4(col, pm);');
+  return (CASTLE_TEX = fs);
 }
 
 export function cropFor(map, want) {
@@ -502,7 +544,7 @@ export function cropFor(map, want) {
 // kind: 0 finished poster, 1 painted surface lit by the room, 2 red-chalk study, 3 glazed roundel
 export function texMaterial(map, kind = 0, opts = {}) {
   const img = map && map.image; const want = opts.aspect ?? (img ? img.width/img.height : 0.5625);
-  const m = new THREE.ShaderMaterial({ vertexShader: WORLD_VS, fragmentShader: TEX_FS, side: opts.side ?? THREE.DoubleSide,
+  const m = new THREE.ShaderMaterial({ vertexShader: WORLD_VS, fragmentShader: CASTLE ? castleTexFS() : TEX_FS, side: opts.side ?? THREE.DoubleSide,
     uniforms: { ...LIGHT, map: { value: map }, uKind: { value: kind }, uTexel: { value: new THREE.Vector2(1/(img?.width || 720), 1/(img?.height || 1280)) },
       uSeed: { value: opts.seed ?? 1 }, uFloor: { value: opts.floor ?? 0 }, uCrop: { value: cropFor(map, want) },
       uReveal: { value: opts.reveal ?? 1 }, uRevealMode: { value: opts.revealMode ?? 0 }, uSrgb: { value: 0 }, uCell: { value: opts.cell ?? new THREE.Vector4(0, 0, 1, 1) }, uGlaze: { value: opts.glaze ?? 1 }, uFade: { value: 1 } } });
