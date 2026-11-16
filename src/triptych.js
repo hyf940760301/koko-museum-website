@@ -63,7 +63,7 @@ export class Triptych {
     const yP = -D.HH - 0.012, rL = D.HW - 0.03;
 
     this.group.add(new THREE.Mesh(centreGeo(D, wide), fresco));
-    this.c = pic(0, { reveal: 0, seed: (opts.seed ?? 1) + 0.37 }); this.c.position.z = 0.003; this.group.add(this.c);
+    this.c = pic(0, { reveal: 0, seed: (opts.seed ?? 1) + 0.37, side: THREE.FrontSide }); this.c.position.z = 0.003; this.group.add(this.c);
     if (opts.lunette) { const m = new THREE.Mesh(new THREE.CircleGeometry(rL, 48, 0, Math.PI), texMaterial(opts.lunette, 1, { aspect: 1 })); m.position.set(0, D.HH + 0.05, -0.014); this.group.add(m); }
     if (opts.plate) { const m = new THREE.Mesh(new THREE.PlaneGeometry(0.80, 0.15), texMaterial(opts.plate, 1, { aspect: 0.80/0.15 })); m.position.set(0, yP - 0.115, 0.242); this.group.add(m); }
 
@@ -71,9 +71,9 @@ export class Triptych {
       const pivot = new THREE.Group(); pivot.position.set(side*D.HW, 0, zPivot);
       const w = new THREE.Group(); w.position.set(side*D.HW, 0, -zPivot); pivot.add(w);
       w.add(new THREE.Mesh(wingGeo(D, wide), fresco));
-      const front = pic(0, { reveal: 0, seed: (opts.seed ?? 1) + (side < 0 ? 0.11 : 0.73) }); front.position.z = 0.003; w.add(front);
+      const front = pic(0, { reveal: 0, seed: (opts.seed ?? 1) + (side < 0 ? 0.11 : 0.73), side: THREE.FrontSide }); front.position.z = 0.003; w.add(front);
       let bk = null;
-      if (back) { bk = pic(2, { map: back, seed: opts.seed ?? 1, floor: opts.floor ?? 0.08 }); bk.rotation.y = Math.PI; bk.position.z = -D.t - 0.003; w.add(bk); }
+      if (back) { bk = pic(2, { map: back, seed: opts.seed ?? 1, floor: opts.floor ?? 0.08, side: THREE.FrontSide }); bk.rotation.y = Math.PI; bk.position.z = -D.t - 0.003; w.add(bk); }
       this.group.add(pivot); return { pivot, front, back: bk };
     };
     const L = wing(-1, 0.04, null), R = wing(1, 0.0825, opts.sketch);
@@ -90,6 +90,9 @@ export class Triptych {
     this.pR.rotation.y = -(lerp(Math.PI, this.rest, e1) - this.peek*0.20*(1 - e1));
     this.pL.rotation.y = lerp(Math.PI, this.rest, e2);
     const vis = o > 0.004 || this.peek > 0.01; this.c.visible = vis; this.l.visible = vis; this.r.visible = vis;
+    // the chalk study sits on the back of the last wing; once that wing faces us it is hidden,
+    // otherwise its shader keeps running under the picture and the last reveal stutters
+    if (this.sketch) this.sketch.visible = o < 0.42;
   }
   // where to stand to look at one panel square on: its centre and outward normal, in world space
   panelPose(i) {

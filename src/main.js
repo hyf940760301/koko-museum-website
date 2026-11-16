@@ -461,8 +461,17 @@ function step(dt) {
     if (b.open < 0.02 && b.openT < 0.5) b.armReveal = false;
     // the painting comes up: underdrawing first, then colour, a patch at a time
     if (b.applied && b.open > 0.62 && b.openT > 0.5 && (b === fb || k === 0) && S.phase === 'live') {
-      b.revClock += dt; const lag = [0.9, 0, 1.8]; let all = true;
-      for (let i = 0; i < 3; i++) { if (b.rev[i] < 1) { if (b.revClock > lag[i]) { b.rev[i] = Math.min(1, b.rev[i] + dt/REVEAL); if (!(S.video && i === 1 && S.video.b === b)) b.tri.setReveal(i, b.rev[i]); } if (b.rev[i] < 1) all = false; } }
+      // clock follows real time, so a slow frame does not leave the last panel stepping in lumps
+      b.revClock += Math.min(dt, 0.05); const lag = [0.2, 0, 0.4]; let all = true;
+      for (let i = 0; i < 3; i++) {
+        if (b.rev[i] < 1) {
+          if (b.revClock > lag[i]) {
+            const u = Math.min(1, (b.revClock - lag[i])/REVEAL);
+            if (u !== b.rev[i]) { b.rev[i] = u; if (!(S.video && i === 1 && S.video.b === b)) b.tri.setReveal(i, u); }
+          }
+          if (b.rev[i] < 1) all = false;
+        }
+      }
       if (all && !b.swapping) { if (!b.marked || b.marked !== b.set + 1) { b.marked = b.set + 1; markSeen(b); } if (!CAPTURE && !earned.has(b.s.id) && b.revClock > 1.2) earn(b.s); }
     }
     for (let i = 0; i < 3; i++) { const want = b === fb && S.mode === 'inspect' && i !== S.panel ? 0.26 : 1; if (b.dim[i] !== want) { b.dim[i] += (want - b.dim[i])*Math.min(1, dt*3); if (Math.abs(want - b.dim[i]) < 0.004) b.dim[i] = want; b.tri.panels[i].material.uniforms.uFade.value = b.dim[i]; } }

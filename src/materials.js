@@ -389,39 +389,40 @@ float tone(vec2 uv){
 }
 float lt(vec2 uv){ return sqrt(lum(texture2D(map, uv).rgb)); }
 float revealMask(vec2 p){
-  float n = fbm(vec3(p*vec2(3.2, 4.4), uSeed));
-  float n2 = fbm(vec3(p*vec2(7.5, 6.), uSeed + 4.));
+  float n = vnoise(vec3(p*vec2(3.2, 4.4), uSeed));
+  float cover;
   if (uRevealMode < .5) {
-    float field = p.x*.22 + (1. - p.y)*.55 + (n - .5)*.62;
-    return smoothstep(field - .10, field + .10, uReveal*1.35 - .12);
-  }
-  if (uRevealMode < 1.5) {
-    float cover = 0.;
+    float field = p.x*.22 + (1. - p.y)*.55 + (n - .5)*.28;
+    cover = smoothstep(field - .12, field + .08, uReveal*1.55 - .08);
+  } else if (uRevealMode < 1.5) {
+    cover = 0.;
     for (int i = 0; i < 4; i++) {
       float fi = float(i);
-      vec2 c = mix(vec2(.16), vec2(.84), vec2(hash12(vec2(uSeed*1.7, fi + 1.3)), hash12(vec2(uSeed + 2.2, fi + 5.1))));
-      float rad = mix(.28, .46, hash12(vec2(fi + 9., uSeed)));
-      float d = length((p - c)*vec2(.9, 1.15));
-      float grow = uReveal*1.45 - fi*.08;
-      cover = max(cover, 1. - smoothstep(grow - .16, grow + .34, d/rad + (n2 - .5)*.35));
+      vec2 c = mix(vec2(.22), vec2(.78), vec2(hash12(vec2(uSeed*1.7, fi + 1.3)), hash12(vec2(uSeed + 2.2, fi + 5.1))));
+      float rad = mix(.62, .82, hash12(vec2(fi + 9., uSeed)));
+      float d = length((p - c)*vec2(.85, 1.05));
+      float grow = uReveal*1.65 - fi*.035;
+      cover = max(cover, 1. - smoothstep(grow - .18, grow + .12, d/rad));
     }
-    return cover;
-  }
-  if (uRevealMode < 2.5) {
+  } else if (uRevealMode < 2.5) {
     vec2 dir = normalize(vec2(.85, -.45)); vec2 side = vec2(-dir.y, dir.x);
-    float along = dot(p, dir); float across = dot(p, side); float cover = 0.;
-    for (int i = 0; i < 24; i++) {
+    float along = dot(p, dir); float across = dot(p, side); cover = 0.;
+    for (int i = 0; i < 8; i++) {
       float fi = float(i);
-      float y0 = hash12(vec2(uSeed, fi))*1.15 - .08;
-      float w = mix(.045, .075, hash12(vec2(fi, uSeed + 2.)));
-      float head = uReveal*1.45 - hash12(vec2(fi + 4., uSeed))*.55;
-      float band = 1. - smoothstep(w*.2, w*1.6, abs(across - (y0 - .5)*.9));
-      cover = max(cover, band*smoothstep(-.12, .22, head - along));
+      float y0 = hash12(vec2(uSeed, fi));
+      float w = mix(.10, .15, hash12(vec2(fi, uSeed + 2.)));
+      float head = uReveal*1.8 - hash12(vec2(fi + 4., uSeed))*.18;
+      float band = 1. - smoothstep(w*.3, w*1.25, abs(across - (y0 - .5)*.8));
+      cover = max(cover, band*smoothstep(-.06, .14, head - along));
     }
-    return cover;
+  } else {
+    float r = length((p - vec2(.48, .62))*vec2(.82, 1.02));
+    float edge = uReveal*1.65;
+    cover = 1. - smoothstep(edge - .26, edge + .04, r + (n - .5)*.1);
   }
-  float r = length((p - vec2(.48, .62))*vec2(.9, 1.15));
-  return smoothstep(uReveal*1.35 + .05, uReveal*1.35 - .28, r + (n - .5)*.18);
+  // finish the last unfinished patch before the shader swaps to the plain picture,
+  // otherwise that panel pops on the final frame
+  return mix(cover, 1., smoothstep(.8, .96, uReveal));
 }
 void main(){
   vec3 N = normalize(vN); if (!gl_FrontFacing) N = -N;
@@ -433,19 +434,23 @@ void main(){
     vec3 t = pic(uv); float k = clamp(lum(E)/.84, .42, 1.06);
     col = t*mix(1., k, .55); hz = .4;
     if (uReveal < .999) {
-      vec2 e = uTexel*1.6;
-      float l0 = lt(uv); float gx = lt(uv + vec2(e.x, 0.)) - lt(uv - vec2(e.x, 0.)); float gy = lt(uv + vec2(0., e.y)) - lt(uv - vec2(0., e.y));
-      float contour = smoothstep(.035, .20, length(vec2(gx, gy)));
-      float draw = clamp(uReveal/.40, 0., 1.);
-      float sweep = vUv.x*.25 + (1. - vUv.y)*.75;
-      float drawn = smoothstep(sweep - .08, sweep + .08, draw*1.25 - .08);
-      vec3 ground = vec3(.80, .75, .66)*(.94 + .12*fbm(vec3(vUv*vec2(5., 8.), uSeed + 3.)));
-      vec3 sino = mix(ground, vec3(.45, .16, .09), clamp(contour*.85 + (1. - l0)*.20, 0., 1.)*drawn*.9)*E;
-      float mask = uRevealMode < 0. ? smoothstep(0., 1., uReveal) : revealMask(vUv);
-      float front = mask*(1. - smoothstep(.15, .55, mask))*step(0., uRevealMode);
-      col = mix(sino, col, mask);
-      col *= 1. - .035*front;
-      col += vec3(1., .86, .62)*front*.03;
+      vec3 ground = vec3(.80, .75, .66);
+      if (uReveal < .004) col = ground*E;
+      else {
+        // one sample only: extra taps here used to stall the panel that finishes last
+        float l0 = lum(t);
+        float draw = smoothstep(.02, .32, uReveal);
+        float contour = draw < .97 ? smoothstep(.008, .08, length(vec2(dFdx(l0), dFdy(l0)))) : 0.;
+        float sweep = vUv.x*.25 + (1. - vUv.y)*.75;
+        float drawn = smoothstep(sweep - .08, sweep + .08, draw*1.2 - .04);
+        ground *= .94 + .08*vnoise(vec3(vUv*vec2(4., 6.), uSeed + 3.));
+        vec3 sino = mix(ground, vec3(.45, .16, .09), clamp(contour*.85 + (1. - l0)*.20, 0., 1.)*drawn*.9)*E;
+        float mask = uRevealMode < 0. ? smoothstep(0., 1., uReveal) : revealMask(vUv);
+        float front = mask*(1. - smoothstep(.15, .55, mask))*step(0., uRevealMode);
+        col = mix(sino, col, mask);
+        col *= 1. - .035*front;
+        col += vec3(1., .86, .62)*front*.03;
+      }
     }
     col *= uFade;
   } else if (uKind < 1.5) {
