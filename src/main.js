@@ -100,6 +100,8 @@ async function build(progress) {
   const castleMod = CASTLE ? await import('./castle.js') : null;
   let done = 0; const total = SERIES.length + 5 + (castleMod ? castleMod.FILES : 0); const tickP = (p) => p.then((v) => { progress(++done/total); return v; });
   const castleP = castleMod ? castleMod.preload(renderer, tickP) : null;
+  // the castle hall: the sky comes through the lantern of the vault, the sun through the clerestory
+  if (CASTLE) { Object.assign(ROOM.rotunda, castleMod.HALL); daylight.castle = { chandelier: castleMod.CHANDELIER }; }
   const [qs, front, turn] = await Promise.all([Promise.all(SERIES.map((s) => tickP(image(asset(s, 'q.jpg'))))), tickP(image('./assets/study/front.jpg')), tickP(image('./assets/study/turnaround.jpg')),
     ...['p1.jpg', 'p2.jpg', 'p3.jpg'].map((f) => tickP(tex(asset(SERIES[0], f))))]);
 
@@ -110,7 +112,7 @@ async function build(progress) {
   if (CASTLE) { castleAssets = await castleP; setCastle(true); env = await castleMod.loadEnv(renderer, castleAssets); }
   const fresco = frescoMaterial(friezeTexture(), { wood: repeat(wood, false), woodN: repeat(woodN, false), plaster: repeat(plaster, false), plasterN: repeat(plasterN, false), marble: repeat(marble, false), marbleN: repeat(marbleN, false), floor: repeat(floor, false), floorN: repeat(floorN, false) });
   rot = new THREE.Group(); scene.add(rot);
-  rot.add(new THREE.Mesh(CASTLE ? buildRotunda({ skip: Array.from({ length: K.NB }, (_, k) => k), noFloor: castleMod.FLOOR }) : buildRotunda(), fresco));
+  rot.add(new THREE.Mesh(CASTLE ? buildRotunda({ skip: Array.from({ length: K.NB }, (_, k) => k), noFloor: castleMod.FLOOR, noUpper: true }) : buildRotunda(), fresco));
   // castle bays: the gilding reflects the room's light instead of a painted gradient
   const gilt = CASTLE ? frescoMaterial(fresco.uniforms.tFrieze.value, { wood: fresco.uniforms.tWood.value, woodN: fresco.uniforms.tWoodN.value, plaster: fresco.uniforms.tPlaster.value, plasterN: fresco.uniforms.tPlasterN.value, marble: fresco.uniforms.tMarble.value, marbleN: fresco.uniforms.tMarbleN.value, floor: fresco.uniforms.tFloor.value, floorN: fresco.uniforms.tFloorN.value }, { gold: { env, uEnvK: castleMod.PBR.uEnvK } }) : null;
   atlas = tondoAtlas(SERIES.map((s) => s.id));
@@ -138,7 +140,7 @@ async function build(progress) {
   ROOM.studio = { id: 1, ocu: studio.ocu, ocuR: studio.ocuR, centre: SO.clone(), pool: studio.pool };
   SERIES.forEach((s) => studio.setEarned(s.index, earned.has(s.id)));
 
-  air = buildAir(); scene.add(air.group);
+  air = buildAir(CASTLE ? { castle: true } : undefined); scene.add(air.group);
   if (CASTLE) { castle = await castleMod.buildCastle(renderer, env, castleAssets, { doors }); if (CAPTURE || Q.has('bench')) window.__castle = castle; rot.add(castle.group); castleMod.alphaDiscipline(scene); const gq = Q.has('grade') ? Q.get('grade').split(',').map(Number) : []; post.castle({ ev: gq[0] ?? castleMod.GRADE.ev, pow: gq[1] || castleMod.GRADE.pow, sat: gq[2] || castleMod.GRADE.sat }); }
   // the first altarpiece is ready before anyone walks in
   const b0 = B[0]; await loadPics(b0);
@@ -494,7 +496,7 @@ function step(dt) {
   // the room takes on the weather of whatever is open
   const moodOn = !!fb && fb.open > 0.3 && fb.openT > 0.5;
   if (moodOn) daylight.mood = fb.s.mood.light;
-  daylight.update(dt, moodOn); if (daylight.cur) post.u.uExposure.value = daylight.cur.ev;
+  daylight.update(dt, moodOn); if (daylight.cur) post.u.uExposure.value = CASTLE ? daylight.exposure() : daylight.cur.ev;
   air.setWeather(moodOn ? fb.s.mood.weather : null); air.update(dt);
   sound.scene(moodOn && !S.video ? fb.s.music : null, moodOn && !S.video ? fb.s.amb : null); sound.update(dt);
   if (!inRot) studio.update(dt, T);

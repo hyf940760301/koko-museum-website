@@ -23,6 +23,8 @@ export const LIGHT = {
   uCandle: { value: 0 }, uCandleCol: { value: new V3(1.25, 0.70, 0.30) }, uRoom: { value: 0 },
   uLampA: { value: new THREE.Vector4(0, 0, 0, 0) }, uLampB: { value: new THREE.Vector4(0, 0, 0, 0) },
   uOpenA: { value: new Float32Array(20) }, uWideA: { value: new Float32Array(20).fill(0.46) },
+  // castle only (castleLighting below): sun through the clerestory, sky through it, the chandelier
+  uWin: { value: 1 }, uWinSky: { value: 1 }, uChand: { value: 0 },
 };
 
 export const LIGHTING = /* glsl */`
@@ -493,7 +495,7 @@ void main(){
 export function frescoMaterial(tFrieze, maps, opts = {}) {
   const uniforms = { ...LIGHT, tFrieze: { value: tFrieze }, tWood: { value: maps.wood }, tWoodN: { value: maps.woodN }, tPlaster: { value: maps.plaster }, tPlasterN: { value: maps.plasterN }, tMarble: { value: maps.marble }, tMarbleN: { value: maps.marbleN }, tFloor: { value: maps.floor }, tFloorN: { value: maps.floorN } };
   if (opts.gold) return goldFresco(uniforms, opts.gold);
-  return new THREE.ShaderMaterial({ vertexShader: WORLD_VS, fragmentShader: FRESCO_FS, side: THREE.DoubleSide, uniforms });
+  return new THREE.ShaderMaterial({ vertexShader: WORLD_VS, fragmentShader: CASTLE ? castleLighting(FRESCO_FS) : FRESCO_FS, side: THREE.DoubleSide, uniforms });
 }
 
 // ---------------------------------------------------------------- castle variants (?castle=1 only)
@@ -501,6 +503,41 @@ export function frescoMaterial(tFrieze, maps, opts = {}) {
 // exact same programs as before.
 let CASTLE = false;
 export function setCastle(on) { CASTLE = !!on; }
+
+// The castle hall has no oculus over the room: the sun comes in through the twenty clerestory
+// windows (sunVisWin: follow the sun from P to the cylinder r = 12.45 half way through the wall,
+// then ask whether it lands in a window's glass, 0.45 x 1.2 m at 6.10 - 7.30, penumbra 0.03 + 0.01 t),
+// the sky through those windows and through the lantern at the top (uOcu is the lantern there),
+// (the window sky through amber glass), and the chandelier is a point light at the middle, 6.4 m up. The studiolo (uRoom 1) keeps its oculus.
+const SUNVIS_OLD = LIGHTING.slice(LIGHTING.indexOf('float sunVis(vec3 P){'), LIGHTING.indexOf('float pointLight('));
+const SKY_OLD = '  E += uSkyCol*max(dot(N, Lo)*.6 + .4, 0.)*max(Lo.y, 0.)*area/(d2 + area)*mix(1., .60, small);\n';
+const SUNVIS_CASTLE = SUNVIS_OLD.replace('float sunVis(vec3 P){', 'float sunVisOcu(vec3 P){') + /* glsl */`uniform float uWin; uniform float uWinSky; uniform float uChand;
+float sunVisWin(vec3 P){
+  vec3 D = uSunDir; float a = dot(D.xz, D.xz); if (a < 1e-5 || D.y <= 0.) return 0.;
+  float b = dot(P.xz, D.xz), c = dot(P.xz, P.xz) - 12.45*12.45; float disc = b*b - a*c; if (disc < 0.) return 0.;
+  float t = (-b + sqrt(disc))/a; if (t < 0.) return 0.;
+  vec3 Q = P + D*t; float ang = atan(Q.x, -Q.z); float k = floor(ang/.314159265 + .5); float off = abs(ang - k*.314159265)*12.45;
+  float pen = .03 + .01*t; float hy = Q.y > 7.075 ? .225*sqrt(max(0., 1. - pow((Q.y - 7.075)/.225, 2.))) : .225;
+  return (1. - smoothstep(hy - pen, hy + pen, off))*smoothstep(6.10 - pen, 6.10 + pen, Q.y)*(1. - smoothstep(7.30 - pen, 7.30 + pen, Q.y));
+}
+float sunVis(vec3 P){ return uRoom < .5 ? sunVisWin(P)*uWin*1.8 : sunVisOcu(P); }   // a small aperture: the pools are bright where they land
+`;
+const CASTLE_SKY = /* glsl */`vec3 castleSky(vec3 P, vec3 N){
+  // the ring of windows as a soft band of sky light: the nearest ones strongly, across the hall faintly
+  float r = length(P.xz); vec2 h = r > .01 ? P.xz/r : vec2(0., -1.);
+  vec3 Wn = vec3(h.x*12., 6.7, h.y*12.) - P, Wf = vec3(-h.x*12., 6.7, -h.y*12.) - P;
+  float dn = dot(Wn, Wn); vec3 Ln = Wn*inversesqrt(dn), Lf = normalize(Wf);
+  float s = max(dot(N, Ln)*.6 + .4, 0.)*2.2/(1. + dn*.06) + max(dot(N, Lf)*.6 + .4, 0.)*.12 + .05;
+  vec3 E = uSkyCol*uWinSky*s*.022*vec3(1.05, .82, .58);   // through amber glass
+  if (uChand > .003) E += uCandleCol*uChand*pointLight(P, N, vec3(0., 6.4, 0.), .08)*1.2;
+  return E;
+}
+`;
+export function castleLighting(src) {
+  if (!src.includes(SUNVIS_OLD) || !src.includes(SKY_OLD)) throw new Error('LIGHTING moved');
+  return src.replace(SUNVIS_OLD, SUNVIS_CASTLE).replace('vec3 irradiance(vec3 P, vec3 N){', CASTLE_SKY + 'vec3 irradiance(vec3 P, vec3 N){')
+    .replace(SKY_OLD, SKY_OLD + '  if (uRoom < .5) E += castleSky(P, N);\n');
+}
 // defines three adds for its own materials sampling a PMREM target (WebGLPrograms, r160)
 export function cubeUVDefines(tex) {
   const h = tex.image.height; const maxMip = Math.log2(h) - 2; const texelH = 1/h; const texelW = 1/(3*Math.max(Math.pow(2, maxMip), 7*16));
@@ -508,7 +545,7 @@ export function cubeUVDefines(tex) {
 }
 // water gilding that reflects a real interior instead of a painted gradient
 function goldFresco(uniforms, gold) {
-  let fs = FRESCO_FS;
+  let fs = castleLighting(FRESCO_FS);
   fs = fs.replace('vec3 lin(float r, float g, float b)', 'uniform sampler2D tEnv; uniform float uEnvK;\n#include <cube_uv_reflection_fragment>\nvec3 lin(float r, float g, float b)');
   const old = 'col = leaf*b*(.55*smoothstep(0., .5, e) + .62*e)*(1. + .5*fr) + vec3(1.6, 1.35, .95)*sp*smoothstep(.1, .7, e) + leaf*.35*fr*e;';
   if (!fs.includes(old)) throw new Error('gold shader moved');
@@ -524,7 +561,7 @@ function goldFresco(uniforms, gold) {
 let CASTLE_TEX = null;
 function castleTexFS() {
   if (CASTLE_TEX) return CASTLE_TEX;
-  let fs = TEX_FS;
+  let fs = castleLighting(TEX_FS);
   const r = (a, b) => { if (!fs.includes(a)) throw new Error('poster shader moved: ' + a.slice(0, 40)); fs = fs.replace(a, b); };
   // the exact sRGB curve both ways, so a finished poster comes back out as the file it was
   r('return uSrgb > .5 ? pow(t, vec3(2.2)) : t;', 'return uSrgb > .5 ? mix(t/12.92, pow((t + .055)/1.055, vec3(2.4)), step(.04045, t)) : t;');

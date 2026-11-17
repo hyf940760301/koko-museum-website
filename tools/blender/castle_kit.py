@@ -1,14 +1,22 @@
 # Koko museum - the castle kit of the rotunda, built parametrically (step 3; was castle_bay.py).
 #   blender -b --factory-startup -P tools/blender/castle_kit.py -- --module bay  --out _src/castle/bay.glb
 #   blender -b --factory-startup -P tools/blender/castle_kit.py -- --module door --out _src/castle/door.glb
+#   blender -b --factory-startup -P tools/blender/castle_kit.py -- --module upper --out _src/castle/upper.glb
 # module bay:  one exhibition bay (19 of them round the hall): ashlar wall, niche with voussoir arch,
-#              oak shelf, roundel frame, plinth, string course, the ashlar band up to the cornice,
+#              oak shelf, roundel frame, plinth, string course (the clerestory is module upper),
 #              and ONE engaged column with its torch on the bay's right edge (+s), so the ring of
 #              modules gives exactly 20 columns.
 # module door: bay 10, the way to the studiolo: a 2.0 x 3.2 doorway through the 0.9 m wall with
 #              quoined jambs, a lintel under a round-headed tympanum and its voussoir ring, a stone
 #              passage 1.5 m deep, and the two oak leaves (planks, iron straps) as separate objects
 #              leafL / leafR in the hinge frame of rotunda.js buildDoorLeaves.
+# module upper (step 4, all 20 bays): the clerestory over the string course (5.70 - 7.60) with one
+#              round-headed window per bay, splayed 0.9 m through the wall from a 1.0 x 1.5 inner
+#              opening (5.95 - 7.45) to a 0.45 x 1.2 glass (object 'glass'); the column carried on up
+#              to a cushion capital at 7.25 - 7.60; one stone rib (0.30 x 0.35) springing from it to
+#              the oak ring of the lantern (d 3.2 m, 12.2 m) and the limewashed web of the vault
+#              between this rib and the neighbour's, domed a little in each cell; the ring beam and
+#              lantern drum (open to the sky at 13.5 m) sector.
 # Everything is modelled in the bay's own frame (three.js bayMatrix: x along the wall, y up,
 # z into the room, wall face at z = 0 for s = 0). Parts are laid out "unrolled" in (s, y, d):
 # s = arc length along the wall, y = height, d = depth behind the wall face (negative = into
@@ -20,7 +28,7 @@ from mathutils import Vector, Matrix
 argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 ap = argparse.ArgumentParser()
 ap.add_argument('--bay', type=int, default=0)
-ap.add_argument('--module', default='bay', choices=['bay', 'door'])
+ap.add_argument('--module', default='bay', choices=['bay', 'door', 'upper'])
 ap.add_argument('--out', default='')
 ap.add_argument('--blend', default='')
 args = ap.parse_args(argv)
@@ -36,7 +44,7 @@ PROJ = 0.04                      # how far the ring stands proud of the wall
 COL_R = 0.16                     # engaged column
 FLAME_R, FLAME_Y = R - 0.34, 2.80  # air.js candle points, kept
 BEVEL = 0.012
-rng = random.Random(1000 + args.bay + (500 if MODULE == 'door' else 0))
+rng = random.Random(1000 + args.bay + {'bay': 0, 'door': 500, 'upper': 700}[MODULE])
 DW, DH = 1.0, 3.2                 # doorway half width and height (K.dw, K.dh)
 D_RING_IN, D_RING_OUT = DW, DW + 0.30
 PASSAGE = 1.5                     # depth of the passage behind the wall face (as rotunda.js)
@@ -54,19 +62,20 @@ def from_local3(p):
     """three bay-local (x, y, z) -> blender"""
     return Vector((p[0], -p[2], p[1]))
 
-MATS = ['stone', 'render', 'oak', 'iron', 'pitch']
+MATS = ['stone', 'render', 'oak', 'iron', 'pitch', 'lime']
 
 class Part:
     """vertices are kept unrolled until the end, with uvs per loop"""
     def __init__(self, open_sheet=False):
-        self.v = []; self.f = []; self.g = 0; self.key = {}; self.open = open_sheet  # f: (indices, mat, uvs)
+        self.v = []; self.f = []; self.g = 0; self.key = {}; self.open = open_sheet  # f: (indices, mat, uvs, target)
     def group(self): self.g += 1
     def vert(self, p):
         k = (self.g, round(p[0], 6), round(p[1], 6), round(p[2], 6))
         if k not in self.key: self.v.append(tuple(p)); self.key[k] = len(self.v) - 1
         return self.key[k]
-    def face(self, idx, mat, uvs):
-        self.f.append((list(idx), MATS.index(mat), [tuple(u) for u in uvs]))
+    def face(self, idx, mat, uvs, target=None):
+        """target: an unrolled point the face must look at, or ('away', point) to look away from it"""
+        self.f.append((list(idx), MATS.index(mat), [tuple(u) for u in uvs], target))
 
 def uv_plane(p, axis, off):
     s, y, d = p
@@ -127,12 +136,20 @@ def build_mesh(name, part, extra=None):
     me = bpy.data.meshes.new(name); bm = bmesh.new()
     vs = [bm.verts.new(bend(*p)) for p in part.v]
     uvl = bm.loops.layers.uv.new('UVMap')
-    for idx, mat, uvs in part.f:
+    aimed = []
+    for idx, mat, uvs, target in part.f:
         try: f = bm.faces.new([vs[i] for i in idx])
         except ValueError: continue
         f.material_index = mat
         for loop, uv in zip(f.loops, uvs): loop[uvl].uv = uv
-    if part.f:
+        if target is not None: aimed.append((f, target))
+    if aimed:
+        bm.normal_update()
+        for f, target in aimed:
+            away = isinstance(target[0], str); t = bend(*(target[1] if away else target))
+            d = (f.calc_center_median() - t) if away else (t - f.calc_center_median())
+            if f.normal.dot(d) < 0: f.normal_flip()
+    elif part.f:
         if part.open:
             # open sheets face the room: the drum axis is at blender (0, -R, y)
             bm.normal_update()   # fresh faces carry no normal until asked
@@ -152,7 +169,7 @@ _mats = {}
 def mat_of(n):
     if n not in _mats:
         m = bpy.data.materials.new(n); m.use_nodes = True
-        col = {'stone': (0.58, 0.45, 0.30, 1), 'render': (0.26, 0.07, 0.04, 1), 'oak': (0.19, 0.09, 0.035, 1), 'iron': (0.026, 0.022, 0.02, 1), 'pitch': (0.012, 0.009, 0.007, 1)}[n]
+        col = {'stone': (0.58, 0.45, 0.30, 1), 'render': (0.26, 0.07, 0.04, 1), 'oak': (0.19, 0.09, 0.035, 1), 'iron': (0.026, 0.022, 0.02, 1), 'pitch': (0.012, 0.009, 0.007, 1), 'lime': (0.80, 0.74, 0.62, 1), 'glass': (0.9, 0.6, 0.2, 1)}[n]
         bsdf = m.node_tree.nodes.get('Principled BSDF'); bsdf.inputs['Base Color'].default_value = col
         bsdf.inputs['Roughness'].default_value = 0.85
         _mats[n] = m
@@ -233,16 +250,9 @@ if MODULE == 'bay':
         quad(M, [(e0[0], e0[1], 0.0), (e1[0], e1[1], 0.0), (i1[0], i1[1], 0.0), (i0[0], i0[1], 0.0)], 'stone', 'd', off=(0.3, 0.9))
 
 
-# 3. string course 5.60 - 5.78, 0.12 proud, chamfered underneath
-profile_s(M, [(5.54, 0.0), (5.62, -0.12), (5.78, -0.12), (5.78, -0.015)], -HW, HW, 20, 'stone', off=(1.13, 0.52))
-
-# 3b. the ashlar band over the string course, up to the cornice (5.78 - 6.20), standing 0.04 in
-#     front of the old frieze it hides; the clerestory windows come with the vault in step 4
-BAND = Part(open_sheet=True)
-for i in range(24):
-    sa, sb = -HW + 2*HW*i/24, -HW + 2*HW*(i + 1)/24
-    quad(BAND, [(sa, 5.70, -0.04), (sa, 6.21, -0.04), (sb, 6.21, -0.04), (sb, 5.70, -0.04)], 'stone', 'd', off=(0.0, 0.0))
-band = build_mesh('band', BAND)
+# 3. string course 5.60 - 5.78, 0.12 proud, chamfered underneath (the clerestory of module upper stands on it)
+if MODULE != 'upper':
+    profile_s(M, [(5.54, 0.0), (5.62, -0.12), (5.78, -0.12), (5.78, -0.015)], -HW, HW, 20, 'stone', off=(1.13, 0.52))
 
 # ------------------------------------------------------------------ module door (bay 10)
 def d_ring_top(s, r=D_RING_OUT): return DH + math.sqrt(max(0.0, r*r - s*s))
@@ -331,6 +341,125 @@ def build_leaves():
         for m in MATS: me_.materials.append(mat_of(m))
 
 
+# ------------------------------------------------------------------ module upper (step 4): clerestory, window, rib, web, lantern
+glass_ob = None
+if MODULE == 'upper':
+    Y0, YC = 5.70, 7.60                    # from behind the string course to the springing of the vault
+    WI, YSI, YSPI = 0.50, 5.95, 6.95       # inner opening: half width, sill, springing (round head to 7.45)
+    WO, YSO, YSPO = 0.225, 6.10, 7.075     # the glass: half width, sill, springing (round head to 7.30)
+    SPL = 0.90                             # splay depth through the wall
+    def head(x, w, ysp): return ysp + math.sqrt(max(0.0, w*w - x*x))
+
+    # 1. the clerestory wall, cut round the inner opening
+    WALL = Part(open_sheet=True)
+    knots = sorted(set([-HW + 2*HW*i/16 for i in range(17)] + [-WI + 2*WI*i/16 for i in range(17)]))
+    for sa, sb in zip(knots[:-1], knots[1:]):
+        if sb <= -WI + 1e-6 or sa >= WI - 1e-6:
+            quad(WALL, [(sa, Y0, 0), (sa, YC, 0), (sb, YC, 0), (sb, Y0, 0)], 'stone', 'd', off=(0.4, 0.0))
+        else:
+            quad(WALL, [(sa, Y0, 0), (sa, YSI, 0), (sb, YSI, 0), (sb, Y0, 0)], 'stone', 'd', off=(0.4, 0.0))
+            quad(WALL, [(sa, head(sa, WI, YSPI), 0), (sa, YC, 0), (sb, YC, 0), (sb, head(sb, WI, YSPI), 0)], 'stone', 'd', off=(0.4, 0.0))
+    wall = build_mesh('wall', WALL)
+
+    # 2. the splay: jambs and head lofted from the inner opening to the glass, and a sloping sill
+    def outline(w, ysill, ysp, nj=4, na=18):
+        pts = [(-w, ysill + (ysp - ysill)*i/nj) for i in range(nj)]
+        pts += [(-w*math.cos(math.pi*i/na), ysp + w*math.sin(math.pi*i/na)) for i in range(na + 1)]
+        pts += [(w, ysp - (ysp - ysill)*i/nj) for i in range(1, nj + 1)]
+        return pts
+    oi, oo = outline(WI, YSI, YSPI), outline(WO, YSO, YSPO)
+    SP = Part(); SP.group(); acc = 0.0
+    for i in range(len(oi) - 1):
+        a0, a1, b0, b1 = oi[i], oi[i + 1], oo[i], oo[i + 1]
+        L = math.dist(a0, a1)
+        ym = (a0[1] + a1[1] + b0[1] + b1[1])/4; ysp = (YSPI + YSPO)/2
+        tgt = (0.0, min(ym, ysp), SPL/2)
+        pts = [(a0[0], a0[1], 0.0), (a1[0], a1[1], 0.0), (b1[0], b1[1], SPL), (b0[0], b0[1], SPL)]
+        ids = [SP.vert(p) for p in pts]
+        SP.face(ids, 'stone', [(acc/TILE, 0.0), ((acc + L)/TILE, 0.0), ((acc + L)/TILE, SPL/TILE), (acc/TILE, SPL/TILE)], target=tgt)
+        acc += L
+    sill = [(-WI, YSI, 0.0), (WI, YSI, 0.0), (WO, YSO, SPL), (-WO, YSO, SPL)]
+    SP.face([SP.vert(p) for p in sill], 'stone', [uv_plane(p, 'y', (0.3, 0.1)) for p in sill], target=(0.0, YSI + 1.0, SPL/2))
+    splay = build_mesh('splay', SP)
+
+    # 3. the glass (its own object; castle.js draws the leading and the light through it)
+    bmg = bmesh.new(); uvg = bmg.loops.layers.uv.new('UVMap')
+    ring_ = [p for p in oo] + [(-WO, YSO)]
+    cy = (YSO + head(0, WO, YSPO))/2
+    c = bmg.verts.new(bend(0.0, cy, SPL - 0.015)); vs_ = [bmg.verts.new(bend(x, y, SPL - 0.015)) for (x, y) in oo]
+    for i in range(len(vs_)):
+        j = (i + 1) % len(vs_)
+        f = bmg.faces.new([c, vs_[i], vs_[j]]); f.normal_update()
+        if f.normal.dot(bend(0.0, cy, -3.0) - f.calc_center_median()) < 0: f.normal_flip()
+        for loop in f.loops:
+            q = (0.0, cy) if loop.vert is c else oo[vs_.index(loop.vert)]
+            loop[uvg].uv = (q[0], q[1] - YSO)          # metres across the pane, from its sill
+    meg = bpy.data.meshes.new('glass'); bmg.to_mesh(meg); bmg.free()
+    glass_ob = bpy.data.objects.new('glass', meg); bpy.context.collection.objects.link(glass_ob); meg.materials.append(mat_of('glass'))
+
+    # 4. the vault: one rib on this module's right edge, the web to the left of it
+    RL, YV0, YV1 = 1.60, 7.60, 12.20; HV = YV1 - YV0
+    def mer(phi): return RL + (R - RL)*math.cos(phi), YV0 + HV*math.sin(phi)
+    def mer_n(phi):   # unit normal of the vault surface, pointing into the room
+        tr, ty = -(R - RL)*math.sin(phi), HV*math.cos(phi); l = math.hypot(tr, ty)
+        return -ty/l, tr/l
+    U = lambda th, r, y: (th*R, y, r - R)    # (angle, radius, height) -> unrolled
+    NR = 30; TH_R = BAY/2
+    sec = [(-0.15, 0.0), (0.15, 0.0), (0.15, 0.25), (0.10, 0.35), (-0.10, 0.35), (-0.15, 0.25)]
+    M.group(); rows = []
+    for j in range(NR + 1):
+        ph = (math.pi/2)*j/NR; rm, ym = mer(ph); nr_, ny_ = mer_n(ph)
+        rows.append([U(TH_R + w/max(rm + h*nr_, 0.5), rm + h*nr_, ym + h*ny_) for (w, h) in sec])
+    acc = [0.0]
+    for j in range(1, NR + 1): acc.append(acc[-1] + math.dist(mer((math.pi/2)*(j - 1)/NR), mer((math.pi/2)*j/NR)))
+    for j in range(NR):
+        ph = (math.pi/2)*(j + 0.5)/NR; rm, ym = mer(ph); nr_, ny_ = mer_n(ph)
+        ctr = U(TH_R, rm + 0.17*nr_, ym + 0.17*ny_)
+        for k in range(len(sec)):
+            k2 = (k + 1) % len(sec)
+            pts = [rows[j][k], rows[j][k2], rows[j + 1][k2], rows[j + 1][k]]
+            ua, ub = k*0.06, (k + 1)*0.06
+            M.face([M.vert(p) for p in pts], 'stone', [(ua, acc[j]/TILE), (ub, acc[j]/TILE), (ub, acc[j + 1]/TILE), (ua, acc[j + 1]/TILE)], target=('away', ctr))
+    # web: limewashed, between the neighbour's rib (-BAY/2) and this one, each cell domed up a little
+    WEB = Part(); WEB.group(); nu, nv = 12, 30
+    def web_pt(u, v):
+        th = -BAY/2 + BAY*u; ph = (math.pi/2)*v; rm, ym = mer(ph); nr_, ny_ = mer_n(ph)
+        b = 0.30*math.sin(math.pi*u)*math.sin(math.pi*min(1.0, v*1.08))**0.6
+        return th, rm - b*nr_, ym - b*ny_
+    room = (0.0, 0.0, -R)
+    for j in range(nv):
+        for i in range(nu):
+            q = [web_pt(i/nu, j/nv), web_pt((i + 1)/nu, j/nv), web_pt((i + 1)/nu, (j + 1)/nv), web_pt(i/nu, (j + 1)/nv)]
+            pts = [U(*t) for t in q]
+            uvs = [((t[0]*t[1])/TILE, acc[min(NR, round((jj)*NR/nv))]/TILE) for t, jj in zip(q, (j, j, j + 1, j + 1))]
+            WEB.face([WEB.vert(p) for p in pts], 'lime', uvs, target=room)
+    web = build_mesh('web', WEB)
+
+    # 5. the oak ring beam the ribs run into, and the lantern drum over it (open to the sky at 13.5)
+    OAKP = Part(); OAKP.group()
+    def sweep_th(prof, mat, n=6):
+        """a closed (r, y) outline swept round this module's sector"""
+        cr = sum(p[0] for p in prof)/len(prof); cyy = sum(p[1] for p in prof)/len(prof)
+        for i in range(n):
+            ta, tb = -BAY/2 + BAY*i/n, -BAY/2 + BAY*(i + 1)/n
+            for k in range(len(prof)):
+                (ra, ya), (rb, yb) = prof[k], prof[(k + 1) % len(prof)]
+                pts = [U(ta, ra, ya), U(tb, ra, ya), U(tb, rb, yb), U(ta, rb, yb)]
+                L = math.hypot(rb - ra, yb - ya)
+                OAKP.face([OAKP.vert(p) for p in pts], mat, [(ta*ra/TILE, 0.0), (tb*ra/TILE, 0.0), (tb*ra/TILE, L/TILE), (ta*ra/TILE, L/TILE)], target=('away', U((ta + tb)/2, cr, cyy)))
+    sweep_th([(1.42, 11.78), (1.82, 11.78), (1.82, 12.34), (1.42, 12.34)], 'oak')
+    sweep_th([(1.42, 12.34), (1.50, 12.34), (1.50, 13.50), (1.42, 13.50)], 'oak')
+    sweep_th([(1.40, 13.50), (1.70, 13.50), (1.70, 13.60), (1.40, 13.60)], 'oak')
+    for th in (-BAY/2,):    # one batten per module on the lantern's inner face
+        for (r0, r1, w) in ((1.36, 1.42, 0.06),):
+            pts = [(th - w/2/1.4, r0), (th + w/2/1.4, r0), (th + w/2/1.4, r1), (th - w/2/1.4, r1)]
+            for k in range(4):
+                (ta, ra), (tb, rb) = pts[k], pts[(k + 1) % 4]
+                q = [U(ta, ra, 12.34), U(tb, rb, 12.34), U(tb, rb, 13.50), U(ta, ra, 13.50)]
+                OAKP.face([OAKP.vert(p) for p in q], 'oak', [(0, 0), (0.03, 0), (0.03, 0.5), (0, 0.5)], target=('away', U(th, 1.39, 12.9)))
+    lantern = build_mesh('lantern', OAKP)
+
+
 masonry = build_mesh('masonry', M)
 
 if MODULE == 'bay':
@@ -403,18 +532,22 @@ def column(bm, uvl, sx):
                 ua = ((a0 + (a1 - a0)*k/seg)*COL_R + o)/TILE; ub = ((a0 + (a1 - a0)*(k + 1)/seg)*COL_R + o)/TILE
                 va, vb = (acc[i] + prof[0][1] + o)/TILE, (acc[i + 1] + prof[0][1] + o)/TILE
                 set_uv(f, uvl, [(ua, va), (ub, va), (ub, vb), (ua, vb)][:len(f.loops)])
-    # square plinth, a fat torus, a scotia and a small roll: a Romanesque attic base
-    box(bm, uvl, place, -0.23, 0.23, 0.0, 0.22, -0.06, 0.25, 'stone', o)
-    lathe([(0.205, 0.22), (0.214, 0.235), (0.216, 0.258), (0.21, 0.28), (0.19, 0.296), (0.176, 0.31), (0.172, 0.34), (0.18, 0.355), (0.181, 0.372), (0.172, 0.39), (COL_R, 0.40)], 'stone')
-    lathe([(COL_R, 0.40), (COL_R, 2.0), (COL_R, 3.6), (COL_R, 5.34)], 'stone')
-    lathe([(COL_R, 5.34), (0.171, 5.35), (0.176, 5.365), (0.171, 5.38), (COL_R, 5.39)], 'stone')
-    # cushion capital: the round shaft swells into a square block
-    nr = 7; prof = [(0, 5.39 + 0.13*math.sin(j/nr*math.pi/2)) for j in range(nr + 1)]
+    if MODULE != 'upper':
+        # square plinth, a fat torus, a scotia and a small roll: a Romanesque attic base; the shaft runs
+        # on behind the string course into module upper, which carries it to the capital at 7.25
+        box(bm, uvl, place, -0.23, 0.23, 0.0, 0.22, -0.06, 0.25, 'stone', o)
+        lathe([(0.205, 0.22), (0.214, 0.235), (0.216, 0.258), (0.21, 0.28), (0.19, 0.296), (0.176, 0.31), (0.172, 0.34), (0.18, 0.355), (0.181, 0.372), (0.172, 0.39), (COL_R, 0.40)], 'stone')
+        lathe([(COL_R, 0.40), (COL_R, 2.0), (COL_R, 3.6), (COL_R, 5.80)], 'stone')
+        return
+    lathe([(COL_R, 5.70), (COL_R, 6.50), (COL_R, 7.18)], 'stone')
+    lathe([(COL_R, 7.18), (0.171, 7.19), (0.176, 7.205), (0.171, 7.22), (COL_R, 7.25)], 'stone')
+    # cushion capital (7.25 - 7.52): the round shaft swells into a square block; abacus to 7.60 takes the rib
+    nr = 8; prof = [(0, 7.25 + 0.27*math.sin(j/nr*math.pi/2)) for j in range(nr + 1)]
     def cushion(a, j):
-        t = (j/nr)**0.8; cx, cz = math.sin(a), math.cos(a); k = 0.205/max(abs(cx), abs(cz), 1e-6)
+        t = (j/nr)**0.8; cx, cz = math.sin(a), math.cos(a); k = 0.215/max(abs(cx), abs(cz), 1e-6)
         return ((1 - t)*COL_R*cx + t*k*cx, (1 - t)*COL_R*cz + t*k*cz)
     lathe(prof, 'stone', shape=cushion)
-    box(bm, uvl, place, -0.212, 0.212, 5.52, 5.60, -0.05, 0.212, 'stone', o + 0.3)
+    box(bm, uvl, place, -0.23, 0.23, 7.52, 7.60, -0.05, 0.38, 'stone', o + 0.3)
 
 def columns(bm, uvl):
     for sx in SIDES: column(bm, uvl, sx)
@@ -468,7 +601,7 @@ def fittings(bm, uvl):
         rads = [0.026, 0.033, 0.034, 0.029, 0.035, 0.030, 0.033, 0.022]
         tube([(0, y, zc) for y in (2.60, 2.615, 2.65, 2.66, 2.69, 2.70, 2.73, 2.762)], lambda t: rads[min(7, int(round(t*7)))], 'pitch', seg=14)
 
-fit = build_mesh('fittings', Part(), extra=fittings)
+fit = build_mesh('fittings', Part(), extra=fittings) if MODULE != 'upper' else None
 
 # ------------------------------------------------------------------ bevel the stone and oak, weighted normals, then one object
 def finish(ob, width):
@@ -480,7 +613,10 @@ def finish(ob, width):
     for m in list(ob.modifiers):
         with bpy.context.temp_override(object=ob, active_object=ob): bpy.ops.object.modifier_apply(modifier=m.name)
 
-PARTS = [(masonry, BEVEL), (cols, BEVEL), (wall, 0.0), (band, 0.0), (fit, 0.0)] + ([(shelf, 0.010), (back, 0.0)] if MODULE == 'bay' else [(passage, 0.006)])
+PARTS = [(masonry, BEVEL), (cols, BEVEL), (wall, 0.0)]
+if MODULE == 'bay': PARTS += [(fit, 0.0), (shelf, 0.010), (back, 0.0)]
+if MODULE == 'door': PARTS += [(fit, 0.0), (passage, 0.006)]
+if MODULE == 'upper': PARTS += [(splay, 0.0), (web, 0.0), (lantern, 0.008)]
 for ob, w in PARTS:
     finish(ob, w)
 
@@ -507,6 +643,7 @@ if args.blend: bpy.ops.wm.save_as_mainfile(filepath=args.blend)
 if MODULE == 'door':
     for o in bpy.data.objects:
         if o.name.startswith('leaf'): o.select_set(True)
+if glass_ob: glass_ob.select_set(True)
 bpy.ops.export_scene.gltf(filepath=args.out, export_format='GLB', use_selection=True, export_apply=True, export_texcoords=True, export_normals=True,
                           export_materials='EXPORT', export_yup=True, export_image_format='NONE')
 print('CASTLE_KIT wrote', args.out)

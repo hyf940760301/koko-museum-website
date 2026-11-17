@@ -2,7 +2,7 @@
 // candle flames, and whatever weather the open altarpiece has let in.
 // Everything here follows the shared light rig, so it serves whichever room is lit.
 import * as THREE from '../vendor/three/three.module.js';
-import { NOISE, LIGHT, LIGHTING } from './materials.js';
+import { NOISE, LIGHT, LIGHTING, castleLighting } from './materials.js';
 
 const V3 = THREE.Vector3;
 export const AIR = {
@@ -23,7 +23,10 @@ const WEATHER = {
   fluff:    { shape: 0, n: 110, speed: 0.10, sway: 0.9, size: 1.1, alpha: 0.20, add: 0, cols: [[1, 1, 1]] },
 };
 
-export function buildAir() {
+// opts.castle: the castle hall (?castle=1) - the sky sits over its lantern (uOcu), there is no
+// shaft from an oculus (window shafts are step 7), and the dust hangs in the whole hall, showing
+// where the clerestory sun catches it.
+export function buildAir(opts = {}) {
   const group = new THREE.Group();
   const shared = { ...LIGHT, ...AIR };
 
@@ -55,6 +58,7 @@ export function buildAir() {
         float h = smoothstep(0., .13, vW.y/uOcu.y)*mix(1., .55, smoothstep(.22, .95, vW.y/uOcu.y));
         gl_FragColor = vec4(uSunCol*.085*f*streak*h*uBeam*mix(1., .45, step(.5, uRoom)), 1.); }` }));
   beam.layers.set(1); beam.renderOrder = 5; beam.frustumCulled = false; group.add(beam);
+  if (opts.castle) beam.visible = false;
 
   // ---- dust
   const N = 900; const pos = new Float32Array(N*3), rnd = new Float32Array(N*4);
@@ -62,7 +66,13 @@ export function buildAir() {
   for (let i = 0; i < N*3; i++) pos[i] = rand(); for (let i = 0; i < N*4; i++) rnd[i] = rand();
   const dg = new THREE.BufferGeometry(); dg.setAttribute('position', new THREE.BufferAttribute(pos, 3)); dg.setAttribute('aR', new THREE.BufferAttribute(rnd, 4));
   const dust = new THREE.Points(dg, new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, uniforms: shared,
-    vertexShader: /* glsl */`attribute vec4 aR; uniform float uPx; varying float vA; ${LIGHTING}
+    vertexShader: opts.castle ? /* glsl */`attribute vec4 aR; uniform float uPx; varying float vA; ${castleLighting(LIGHTING)}
+      void main(){ float t = uTime*(.05 + .08*aR.x); float a = position.x*6.2831853, q = sqrt(position.z)*10.8;
+        vec3 p = vec3(cos(a)*q, .3 + position.y*7.2, sin(a)*q);
+        p += vec3(sin(t*1.3 + aR.y*40.), sin(t + aR.z*40.)*.7, cos(t*1.1 + aR.w*40.))*.35; p.y += sin(uTime*.03 + aR.x*6.283)*.4;
+        vec4 mv = viewMatrix*vec4(p, 1.); gl_Position = projectionMatrix*mv;
+        float s = mix(.010, .028, aR.z*aR.z); gl_PointSize = max(1.5, s*uPx/-mv.z);
+        vA = (sunVis(p)*2.2 + .02)*(.4 + .6*aR.w)*smoothstep(.3, 1.5, -mv.z); }` : /* glsl */`attribute vec4 aR; uniform float uPx; varying float vA; ${LIGHTING}
       void main(){ float t = uTime*(.05 + .08*aR.x); float top = min(uOcu.y, 10.); float y = position.y*top; float k = (y - uOcu.y)/uSunDir.y; vec3 p;
         if (aR.y < .72) { float a = position.x*6.2831853, q = sqrt(position.z)*uOcuR*1.15; p = uOcu + uSunDir*k + vec3(cos(a), 0., sin(a))*q; p.y = y; }
         else { p = vec3(uPool.x + (position.x - .5)*uOcuR*5.5, y*.7, uPool.z + (position.z - .5)*uOcuR*5.); }

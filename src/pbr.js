@@ -4,13 +4,13 @@
 // replaces three's lights: diffuse light = irradiance(P, N) x baked AO + the bay's torches, which
 // are baked into the light map (G) and only flicker at run time.
 import * as THREE from '../vendor/three/three.module.js';
-import { LIGHT, LIGHTING, NOISE } from './materials.js';
+import { LIGHT, LIGHTING, NOISE, castleLighting } from './materials.js';
 
 // shared knobs: env strength follows the room (bright by day, low at night)
 export const PBR = { uEnvK: { value: 1 }, uTorchK: { value: 1 } };
 
 // the room light without the analytic candles: in a castle bay the torches come from the bake
-const ROOM_LIGHT = LIGHTING.replace('vec3 irradiance(vec3 P, vec3 N){', 'vec3 roomIrradiance(vec3 P, vec3 N){').replace('if (uCandle > .003) {', 'if (CASTLE_ANALYTIC && uCandle > .003) {');
+const ROOM_LIGHT = castleLighting(LIGHTING).replace('vec3 irradiance(vec3 P, vec3 N){', 'vec3 roomIrradiance(vec3 P, vec3 N){').replace('if (uCandle > .003) {', 'if (CASTLE_ANALYTIC && uCandle > .003) {');
 // surfaces without a bake (floor, door leaves, inscription) keep the analytic candles instead
 
 const PARS = /* glsl */`

@@ -4,7 +4,10 @@
 // packed it as KTX2 + meshopt (tools/pack_assets.sh). Step 3 rings the hall with it: the bay module
 // of tools/blender/castle_kit.py on all 19 exhibition bays (merged into one mesh per material, each
 // bay with its own texture offset so the stone does not repeat), the door module on bay 10 with
-// oak leaves on the old hinges and STVDIOLO cut in its lintel; the stone floor follows.
+// oak leaves on the old hinges and STVDIOLO cut in its lintel, and the stone floor. Step 4 puts the
+// upper module on all 20 bays: the clerestory with its splayed windows and leaded amber glass, the
+// columns up to their capitals, the twenty ribs and limewashed webs of the vault, and the oak lantern
+// ring at 12.2 m; the light comes in through those windows (materials.js castleLighting, light.js).
 import * as THREE from '../vendor/three/three.module.js';
 import { GLTFLoader } from '../vendor/three/addons/loaders/GLTFLoader.js';
 import { RGBELoader } from '../vendor/three/addons/loaders/RGBELoader.js';
@@ -28,8 +31,12 @@ const TEX = [  // file, sRGB, repeat, rotation
   ['slab_diff', true, 1/1.5], ['slab_nor', false, 1/1.5], ['slab_arm', false, 1/1.5],
   ['herring_diff', true], ['herring_nor', false], ['herring_arm', false],
 ];
-// downloads the opening counts in its progress: two modules, their light maps, environment, textures
-export const FILES = 5 + TEX.length;
+// downloads the opening counts in its progress: three modules, their light maps, environment, textures
+export const FILES = 7 + TEX.length;
+// the hall for main.js ROOM: the sky comes through the lantern (its opening r 1.42 at 13.5 m)
+export const HALL = { ocu: new THREE.Vector3(0, 13.4, 0), ocuR: 1.38 };
+// the iron chandelier comes with the props (step 8); until then its light stays off
+export const CHANDELIER = false;
 // the castle lays its own floor (main.js then leaves the old one out of the drum)
 export const FLOOR = true;
 
@@ -47,11 +54,11 @@ export function preload(renderer, tick = (p) => p) {
   });
   const gl = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   return Promise.all([
-    tick(gl.loadAsync(BASE + 'bay.glb')), tick(gl.loadAsync(BASE + 'door.glb')),
-    tick(kl.loadAsync(BASE + 'lm/bay_lm.ktx2')), tick(kl.loadAsync(BASE + 'lm/door_lm.ktx2')),
+    tick(gl.loadAsync(BASE + 'bay.glb')), tick(gl.loadAsync(BASE + 'door.glb')), tick(gl.loadAsync(BASE + 'upper.glb')),
+    tick(kl.loadAsync(BASE + 'lm/bay_lm.ktx2')), tick(kl.loadAsync(BASE + 'lm/door_lm.ktx2')), tick(kl.loadAsync(BASE + 'lm/upper_lm.ktx2')),
     tick(new RGBELoader().loadAsync(BASE + 'env/chapel_512.hdr')),
     ...TEX.map(tex),
-  ]).then(([bay, door, bayLm, doorLm, hdr, ...maps]) => ({ bay, door, bayLm, doorLm, hdr, maps }));
+  ]).then(([bay, door, upper, bayLm, doorLm, upperLm, hdr, ...maps]) => ({ bay, door, upper, bayLm, doorLm, upperLm, hdr, maps }));
 }
 
 export async function loadEnv(renderer, assets) {
@@ -98,7 +105,7 @@ function ringMerge(pieces, bays) {
       const M = bayMatrix(k*K.BAY); const Nm = new THREE.Matrix3().getNormalMatrix(M);
       // each bay draws its stone from a different stretch of the texture (along the courses only,
       // so the beds of the ashlar stay level from bay to bay)
-      const du = ((Math.sin(k*12.9898 + 4.1)*43758.5453) % 1 + 1) % 1;
+      const du = mat === 'glass' ? 0 : ((Math.sin(k*12.9898 + 4.1)*43758.5453) % 1 + 1) % 1;
       for (const p of ps) {
         for (let i = 0; i < p.count; i++) {
           v.fromArray(p.pos, i*3).applyMatrix4(M); v.toArray(pos, (vo + i)*3);
@@ -186,10 +193,33 @@ function buildFloor(M) {
   return g;
 }
 
+// leaded amber glass: lit from behind by the sky, and by the sun when it stands outside this window;
+// lead cames in a diamond lattice (uv in metres across the pane, from its sill)
+function glassMaterial() {
+  return new THREE.ShaderMaterial({ uniforms: { ...LIGHT },
+    vertexShader: /* glsl */`varying vec2 vUv; varying vec3 vW; varying vec3 vN;
+      void main(){ vUv = uv; vec4 w = modelMatrix*vec4(position, 1.); vW = w.xyz; vN = normalize(mat3(modelMatrix)*normal); gl_Position = projectionMatrix*viewMatrix*w; }`,
+    fragmentShader: /* glsl */`uniform vec3 uSunDir; uniform vec3 uSunCol; uniform vec3 uSkyCol; uniform float uWin; uniform vec3 uHazeCol; uniform float uHaze; uniform float uCandle; uniform vec3 uCandleCol;
+      varying vec2 vUv; varying vec3 vW; varying vec3 vN;
+      float h12(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y)*p3.z); }
+      void main(){
+        vec2 q = vec2(vUv.x + vUv.y, vUv.y - vUv.x)*(.70711/.105);
+        vec2 f = abs(fract(q) - .5); float d = .5 - max(f.x, f.y);
+        float lead = 1. - smoothstep(.035, .075, d);
+        float rim = 1. - smoothstep(.0, .028, min(.225 - abs(vUv.x), vUv.y));
+        float cell = h12(floor(q) + 7.3);
+        vec3 amber = mix(vec3(1.0, .60, .20), vec3(1.0, .74, .34), cell)*(.85 + .3*h12(floor(q*3.) + 1.7));
+        float behind = max(dot(-vN, uSunDir), 0.);
+        vec3 light = uSkyCol*.075 + uSunCol*uWin*(.35 + 1.6*pow(behind, 2.)) + uCandleCol*uCandle*.02;
+        vec3 col = amber*light*(1. - max(lead, rim)*.94);
+        col = mix(col, uHazeCol, 1. - exp(-length(cameraPosition - vW)*uHaze));
+        gl_FragColor = vec4(col, 1.); }` });
+}
+
 export async function buildCastle(renderer, env, assets, opts = {}) {
-  const { bay, door, bayLm, doorLm, maps } = assets || await preload(renderer);
+  const { bay, door, upper, bayLm, doorLm, upperLm, maps } = assets || await preload(renderer);
   const [sd, sn, sa, md, mn, ma, od, on, oa, id, inn, fd, fn, fa, hd, hn, ha] = maps;
-  for (const lm of [bayLm, doorLm]) { lm.colorSpace = THREE.NoColorSpace; lm.channel = 1; lm.minFilter = THREE.LinearMipmapLinearFilter; lm.needsUpdate = true; }
+  for (const lm of [bayLm, doorLm, upperLm]) { lm.colorSpace = THREE.NoColorSpace; lm.channel = 1; lm.minFilter = THREE.LinearMipmapLinearFilter; lm.needsUpdate = true; }
   const mats = (lm) => {
     const common = { env, lm }; const sfx = lm ? '' : '';
     return {
@@ -198,15 +228,23 @@ export async function buildCastle(renderer, env, assets, opts = {}) {
       oak: castleMaterial('oak', { ...common, map: od, normalMap: on, arm: oa, color: new THREE.Color(0.78, 0.62, 0.50), roughness: 0.9, normal: 0.6, envK: 0.45 }),
       iron: castleMaterial('iron', { ...common, map: id, normalMap: inn, color: new THREE.Color(0.55, 0.50, 0.47), roughness: 0.55, metalness: 0.85, normal: 0.8, envK: 0.6 }),
       pitch: castleMaterial('pitch', { ...common, color: new THREE.Color(0.030, 0.024, 0.019), roughness: 0.62, metalness: 0, envK: 0.5 }),
+      // limewash on the webs of the vault: the lime render, pulled almost to its mean and whitened
+      lime: castleMaterial('lime', { ...common, map: md, normalMap: mn, arm: ma, color: new THREE.Color(1.45, 1.55, 1.62), roughness: 1, normal: 0.25, envK: 0.30, mapMean: [0.59, 0.444, 0.293], mapK: 0.14 }),
     };
   };
-  const MB = mats(bayLm), MD = mats(doorLm), ML = mats(null);
+  const MB = mats(bayLm), MD = mats(doorLm), MU = mats(upperLm), ML = mats(null);
   const group = new THREE.Group(); group.name = 'castle';
 
   // 19 exhibition bays
   const bays = []; for (let k = 0; k < K.NB; k++) if (k !== K.door) bays.push(k);
   const ring = ringMerge(modulePieces(bay.scene), bays);
   for (const [name, g] of Object.entries(ring)) group.add(new THREE.Mesh(g, MB[name] || MB.stone));
+
+  // the clerestory, vault and lantern over all 20 bays, and the window glass
+  const uring = ringMerge(modulePieces(upper.scene), Array.from({ length: K.NB }, (_, k) => k));
+  for (const [name, g] of Object.entries(uring)) {
+    const mesh = new THREE.Mesh(g, name === 'glass' ? glassMaterial() : (MU[name] || MU.stone)); mesh.name = 'castle-upper-' + name; group.add(mesh);
+  }
 
   // the door bay; its leaves go onto the hinges of rotunda.js (pivots keep the opening animation)
   const leaves = {};
@@ -230,7 +268,7 @@ export async function buildCastle(renderer, env, assets, opts = {}) {
     brass: castleMaterial('brass', { env, color: new THREE.Color(0.95, 0.70, 0.36), roughness: 0.32, metalness: 1, envK: 1.1 }),
   }));
 
-  const gpu = [bayLm, doorLm, ...maps].map((t) => ({ format: t.format, w: t.image.width, h: t.image.height, levels: (t.mipmaps || []).length, bytes: texBytes(t) }));
+  const gpu = [bayLm, doorLm, upperLm, ...maps].map((t) => ({ format: t.format, w: t.image.width, h: t.image.height, levels: (t.mipmaps || []).length, bytes: texBytes(t) }));
   return {
     group, gpu,
     // env and torch strength follow the light of the hour

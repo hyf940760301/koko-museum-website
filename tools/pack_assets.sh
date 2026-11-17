@@ -58,13 +58,13 @@ for f in "$WORK"/*.png; do
   esac
 done
 # light maps: R = AO, G = torch light; data, so linear, clamped at the edges
-for m in bay door; do
+for m in bay door upper; do
   [ "$OUT/lm/${m}_lm.ktx2" -nt "$RAW/${m}_lm.png" ] && [ -z "${FORCE:-}" ] && continue
   ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none $UASTC --generate-mipmap --mipmap-wrap clamp "$RAW/${m}_lm.png" "$OUT/lm/${m}_lm.ktx2"
 done
 
 # 3. geometry: the kit modules (tools/blender/castle_kit.py)
-for m in bay door; do
+for m in bay door upper; do
   gltf-transform meshopt "$RAW/$m.glb" "$OUT/$m.glb" --level medium --quantize-position 16 --quantize-normal 12 --quantize-texcoord 16 >/dev/null
 done
 ls -l "$OUT"/tex/*.ktx2 "$OUT"/lm/*.ktx2 "$OUT"/*.glb | awk '{printf "%8.1f KB  %s\n", $5/1024, $9}'

@@ -1,5 +1,5 @@
 // Fixed cameras for the castle work, through the ?capture interface.
-//   node qa/castle_shots.mjs [--size 1440x900] [--dpr 2] [--query "castle=1"] [--out qa/out/after] [--only C01,C07] [--set castle|base|de|hall]
+//   node qa/castle_shots.mjs [--size 1440x900] [--dpr 2] [--query "castle=1"] [--out qa/out/after] [--only C01,C07] [--set castle|base|de|hall|vault]
 // --dpr is passed to the page as ?dpr= (capture mode only); omit it to shoot exactly what the
 // unchanged site renders (that is how the flag-off identity is checked against HEAD).
 import { createRequire } from 'module';
@@ -53,13 +53,26 @@ HALL.H6 = { hour: 17.8, walk: { pos: [0.4, 1.65, 7.6], tgt: [0, 2.2, 12], fov: 4
 HALL.H7 = { hour: 12.5, walk: { pos: [0, 1.7, 3.0], tgt: [0, 0, -0.2], fov: 50 } };          // the stone rose
 HALL.H8 = { hour: 12.5, walk: { pos: [0.5, 1.7, -7.0], tgt: [1.4, 0, -10.4], fov: 52 } };    // the herringbone walkway
 
+// step 4 (vault and window light): looking up, the clerestory close, the eight presets, and the sun
+// pools moving over the floor through the day
+const P_CAM = { walk: { pos: [0, 1.7, 8.6], tgt: [0, 4.6, -12], fov: 76 } };
+export const VAULT = {
+  V1: { hour: 12.5, walk: { pos: [0, 1.7, 0.3], tgt: [0, 12, -2.2], fov: 80 } },        // straight up into the vault
+  V2: { hour: 17.8, walk: { pos: [0, 1.7, 7.5], tgt: [0, 9.5, -7.5], fov: 72 } },       // up across the hall
+  V3: { hour: 12.5, walk: { pos: [0.3, 4.6, -6.2], tgt: [0, 6.7, -12], fov: 48 } },     // a clerestory window close
+  P_night: { hour: 2, ...P_CAM }, P_dawn: { hour: 6.8, ...P_CAM }, P_day: { hour: 9.5, ...P_CAM }, P_noon: { hour: 12.5, ...P_CAM },
+  P_golden: { hour: 17.6, ...P_CAM }, P_dusk: { hour: 19.2, ...P_CAM }, P_overcast: { hour: 12.5, mood: 'overcast', ...P_CAM }, P_snow: { hour: 12.5, mood: 'snow', ...P_CAM },
+};
+VAULT.X1 = { hour: 12.5, walk: { pos: [0, 3.2, -1.5], tgt: [0, 0, -7.8], fov: 60 } };   // the noon pool close
+for (const h of [7.4, 9, 10.5, 12.5, 14, 15.5, 17, 17.8]) VAULT[`S_${String(h).replace('.', '_')}`] = { hour: h, walk: { pos: [0, 9.5, 9.0], tgt: [0, 0, -2.0], fov: 74 } };
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const args = process.argv.slice(2); const opt = { size: '1440x900', dpr: '', query: '', out: path.join(here, 'out', 'shots'), only: '', set: 'castle', port: '8951' };
   for (let i = 0; i < args.length; i++) { const k = args[i].replace(/^--/, ''); opt[k] = args[++i]; }
   const out = path.resolve(opt.out); fs.mkdirSync(out, { recursive: true });
   const [w, h] = opt.size.split('x').map(Number);
-  const sets = { castle: CAMS, base: { ...CAMS, ...EXTRA }, de: DE, hall: HALL, all: { ...CAMS, ...EXTRA, ...DE } };
+  const sets = { castle: CAMS, base: { ...CAMS, ...EXTRA }, de: DE, hall: HALL, vault: VAULT, all: { ...CAMS, ...EXTRA, ...DE } };
   let jobs = Object.entries(sets[opt.set] || CAMS); if (opt.only) { const o = opt.only.split(','); jobs = jobs.filter(([n]) => o.includes(n)); }
   const exe = process.env.CHROME || `${process.env.HOME}/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`;
   const launch = () => chromium.launch({ headless: true, executablePath: exe, args: ['--use-angle=metal', '--enable-webgl', '--ignore-gpu-blocklist'] });

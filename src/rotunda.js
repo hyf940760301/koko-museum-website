@@ -66,7 +66,8 @@ export function surf(fn, nu, nv) {
 }
 
 // opts.skip: bays whose wall, niche and the two piers beside them are left out (the castle work
-// builds them instead; the door bay too, when it is listed). opts.noFloor leaves out the floor.
+// builds them instead; the door bay too, when it is listed). opts.noFloor leaves out the floor,
+// opts.noUpper everything over the walls (entablature, dome, oculus).
 // Without options the drum is exactly as it always was.
 export function buildRotunda(opts = {}) {
   const skip = new Set(opts.skip || []);
@@ -132,7 +133,7 @@ export function buildRotunda(opts = {}) {
       b.add(new THREE.SphereGeometry(0.07, 18, 14).translate(0, y0 + ht + 0.16, 0.09), PAL.gold, 5, M);
       for (let i = 0; i < 9; i++) b.box(M, 0.2, 0.09, 0.1, (i - 4)*(W/9), 6.315, 0.15, PAL.stoneLt);
     } else if (skip.has(k)) {
-      for (let i = 0; i < 9; i++) b.box(bayMatrix(th0), 0.2, 0.09, 0.1, (i - 4)*(W/9), 6.315, 0.15, PAL.stoneLt);
+      if (!opts.noUpper) for (let i = 0; i < 9; i++) b.box(bayMatrix(th0), 0.2, 0.09, 0.1, (i - 4)*(W/9), 6.315, 0.15, PAL.stoneLt);
     } else {
       // ---- wall around the niche
       b.add(surf((u, v, t) => P(lerp(-hW, -a, u), lerp(0, yTop, v), R, t), 2, 1), PAL.plaster, 1);
@@ -212,42 +213,45 @@ export function buildRotunda(opts = {}) {
     b.add(new THREE.CylinderGeometry(0.016, 0.018, 0.16, 12).translate(0, 2.75, 0.34), PAL.wax, 0, Mp);
   }
 
-  // ---- entablature
-  ring(R + 0.02, 5.50, R - 0.05, 5.50, PAL.stoneLt); ring(R - 0.05, 5.50, R - 0.05, 5.60, PAL.stone); ring(R - 0.05, 5.60, R - 0.02, 5.60, PAL.stoneLt);
-  ring(R - 0.02, 5.60, R - 0.02, 6.20, PAL.cream, 6);
-  const prof = [[0.02, 6.20], [0.07, 6.20], [0.07, 6.26], [0.10, 6.26], [0.10, 6.36], [0.24, 6.36], [0.24, 6.46], [0.31, 6.50], [0.31, 6.56], [0.0, 6.60]];
-  const pc = [PAL.stoneLt, PAL.stone, PAL.stoneLt, PAL.stoneLt, PAL.stoneLt, PAL.stone, PAL.gold, PAL.stoneLt, PAL.cream];
-  for (let i = 0; i < prof.length - 1; i++) ring(R - prof[i][0], prof[i][1], R - prof[i + 1][0], prof[i + 1][1], pc[i], pc[i] === PAL.gold ? 5 : 0);
-  for (let i = 0; i < 220; i++) {
-    const th = i/220*Math.PI*2; const M = bayMatrix(th, R - 0.16, 6.29);
-    b.box(M, 0.08, 0.12, 0.07, 0, 0, 0, i % 2 ? PAL.stoneLt : PAL.stone);
-  }
+  if (!opts.noUpper) {
+    // ---- entablature
+    ring(R + 0.02, 5.50, R - 0.05, 5.50, PAL.stoneLt); ring(R - 0.05, 5.50, R - 0.05, 5.60, PAL.stone); ring(R - 0.05, 5.60, R - 0.02, 5.60, PAL.stoneLt);
+    ring(R - 0.02, 5.60, R - 0.02, 6.20, PAL.cream, 6);
+    const prof = [[0.02, 6.20], [0.07, 6.20], [0.07, 6.26], [0.10, 6.26], [0.10, 6.36], [0.24, 6.36], [0.24, 6.46], [0.31, 6.50], [0.31, 6.56], [0.0, 6.60]];
+    const pc = [PAL.stoneLt, PAL.stone, PAL.stoneLt, PAL.stoneLt, PAL.stoneLt, PAL.stone, PAL.gold, PAL.stoneLt, PAL.cream];
+    for (let i = 0; i < prof.length - 1; i++) ring(R - prof[i][0], prof[i][1], R - prof[i + 1][0], prof[i + 1][1], pc[i], pc[i] === PAL.gold ? 5 : 0);
+    for (let i = 0; i < 220; i++) {
+      const th = i/220*Math.PI*2; const M = bayMatrix(th, R - 0.16, 6.29);
+      b.box(M, 0.08, 0.12, 0.07, 0, 0, 0, i % 2 ? PAL.stoneLt : PAL.stone);
+    }
 
-  // ---- dome: the coffers are cut into the shell, the ribs stand proud of them
-  const span = Math.PI/2 - K.phiO;
-  b.add(surf((u, v, t) => {
-    const ph = Math.PI/2 - v*span; const ang = u*Math.PI*2; const rs = Math.max(R*Math.sin(ph), 0.35);
-    const fa = ((ang/K.BAY + 0.5) % 1) - 0.5; const cx = fa*K.BAY*rs; const halfW = 0.5*K.BAY*rs;
-    const sv = (ph - K.phiO)/span; const rows = 5; const fv = ((sv*rows) % 1) - 0.5; const rowH = span*R/rows;
-    const sd = Math.max(Math.abs(cx) - Math.max(halfW - 0.28, 0.05), Math.abs(fv*rowH) - Math.max(rowH*0.5 - 0.2, 0.05));
-    const recess = sd < 0 ? 0.85*Math.min(1, -sd/0.55) : 0; const rr = R + recess;
-    return cyl(ang, K.yDome + rr*Math.cos(ph), rr*Math.sin(ph), t);
-  }, 220, 90), PAL.azure, 3);
-  for (let k = 0; k < K.NB; k++) {
-    const th = k*K.BAY;
+    // ---- dome: the coffers are cut into the shell, the ribs stand proud of them
+    const span = Math.PI/2 - K.phiO;
     b.add(surf((u, v, t) => {
-      const ph = K.phiO + u*span; const rr = Math.max((R - 0.06)*Math.sin(ph), 0.3);
-      return cyl(th + (v - 0.5)*0.32/rr, K.yDome + (R - 0.08)*Math.cos(ph), rr, t);
-    }, 36, 1), PAL.stoneLt, 0);
+      const ph = Math.PI/2 - v*span; const ang = u*Math.PI*2; const rs = Math.max(R*Math.sin(ph), 0.35);
+      const fa = ((ang/K.BAY + 0.5) % 1) - 0.5; const cx = fa*K.BAY*rs; const halfW = 0.5*K.BAY*rs;
+      const sv = (ph - K.phiO)/span; const rows = 5; const fv = ((sv*rows) % 1) - 0.5; const rowH = span*R/rows;
+      const sd = Math.max(Math.abs(cx) - Math.max(halfW - 0.28, 0.05), Math.abs(fv*rowH) - Math.max(rowH*0.5 - 0.2, 0.05));
+      const recess = sd < 0 ? 0.85*Math.min(1, -sd/0.55) : 0; const rr = R + recess;
+      return cyl(ang, K.yDome + rr*Math.cos(ph), rr*Math.sin(ph), t);
+    }, 220, 90), PAL.azure, 3);
+    for (let k = 0; k < K.NB; k++) {
+      const th = k*K.BAY;
+      b.add(surf((u, v, t) => {
+        const ph = K.phiO + u*span; const rr = Math.max((R - 0.06)*Math.sin(ph), 0.3);
+        return cyl(th + (v - 0.5)*0.32/rr, K.yDome + (R - 0.08)*Math.cos(ph), rr, t);
+      }, 36, 1), PAL.stoneLt, 0);
+    }
+    for (let i = 1; i <= 4; i++) {
+      const ph = K.phiO + span*i/5; const rr = (R - 0.02)*Math.sin(ph); const yy = K.yDome + (R - 0.02)*Math.cos(ph);
+      b.add(new THREE.TorusGeometry(rr, 0.09, 12, 140).rotateX(Math.PI/2).translate(0, yy, 0), PAL.stoneLt, 0);
+      b.add(new THREE.TorusGeometry(rr, 0.018, 6, 140).rotateX(Math.PI/2).translate(0, yy - 0.03, 0), PAL.gold, 5);
+    }
+    ring(K.ro, K.yOc, K.ro, K.yOc + 1.0, PAL.cream, 0, 96);
+    b.add(new THREE.TorusGeometry(K.ro + 0.02, 0.085, 12, 96).rotateX(Math.PI/2).translate(0, K.yOc - 0.02, 0), PAL.gold, 5);
+    b.add(new THREE.TorusGeometry(K.ro + 0.22, 0.03, 8, 96).rotateX(Math.PI/2).translate(0, K.yOc - 0.075, 0), PAL.gold, 5);
+
   }
-  for (let i = 1; i <= 4; i++) {
-    const ph = K.phiO + span*i/5; const rr = (R - 0.02)*Math.sin(ph); const yy = K.yDome + (R - 0.02)*Math.cos(ph);
-    b.add(new THREE.TorusGeometry(rr, 0.09, 12, 140).rotateX(Math.PI/2).translate(0, yy, 0), PAL.stoneLt, 0);
-    b.add(new THREE.TorusGeometry(rr, 0.018, 6, 140).rotateX(Math.PI/2).translate(0, yy - 0.03, 0), PAL.gold, 5);
-  }
-  ring(K.ro, K.yOc, K.ro, K.yOc + 1.0, PAL.cream, 0, 96);
-  b.add(new THREE.TorusGeometry(K.ro + 0.02, 0.085, 12, 96).rotateX(Math.PI/2).translate(0, K.yOc - 0.02, 0), PAL.gold, 5);
-  b.add(new THREE.TorusGeometry(K.ro + 0.22, 0.03, 8, 96).rotateX(Math.PI/2).translate(0, K.yOc - 0.075, 0), PAL.gold, 5);
 
   // ---- floor
   if (!opts.noFloor) b.add(new THREE.CircleGeometry(R + 0.7, 128).rotateX(-Math.PI/2), PAL.cream, 2);
