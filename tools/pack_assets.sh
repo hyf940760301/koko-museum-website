@@ -101,8 +101,45 @@ PY3
 gltf-transform meshopt _src/polyhaven/kite_shield/shield_notex.gltf "$OUT/props/shield.glb" --level medium --quantize-position 16 --quantize-normal 12 --quantize-texcoord 14 >/dev/null
 gltf-transform meshopt "$RAW/props.glb" "$OUT/props/props.glb" --level medium --quantize-position 16 --quantize-normal 12 --quantize-texcoord 16 >/dev/null
 
+# the studiolo (step 9): the worn oak floor (wood_floor_worn) and three Poly Haven pieces of furniture
+# (GothicCabinet_01, GothicCommode_01, wooden_lantern_01). Colour at 1K, normal and ARM at 512 (they
+# stand in a 5.6 m room, seen from 2-4 m); the lantern's glass gets a plain material, no maps
+python3 - "$SRC" "$WORK" <<'PY4'
+import sys, os
+from PIL import Image
+src, out = sys.argv[1], sys.argv[2]
+J = [('wood_floor_worn_diff_1k.jpg', 'floor_diff', 1024), ('wood_floor_worn_nor_gl_1k.jpg', 'floor_nor', 1024), ('wood_floor_worn_arm_1k.jpg', 'floor_arm', 512)]
+for a, n in [('GothicCabinet_01', 'cabinet'), ('GothicCommode_01', 'commode'), ('wooden_lantern_01', 'lantern')]:
+    J += [(f'{a}/textures/{a}_diff_1k.jpg', n + '_diff', 512 if n == 'lantern' else 1024), (f'{a}/textures/{a}_nor_gl_1k.jpg', n + '_nor', 512), (f'{a}/textures/{a}_arm_1k.jpg', n + '_arm', 512)]
+os.makedirs(os.path.join(out, 'study'), exist_ok=True)
+for s, d, size in J:
+    p = os.path.join(out, 'study', d + '.png')
+    if os.path.exists(p): continue
+    Image.open(os.path.join(src, s)).convert('RGB').resize((size, size), Image.LANCZOS).save(p)
+for a, n in [('GothicCabinet_01', 'cabinet'), ('GothicCommode_01', 'commode'), ('wooden_lantern_01', 'lantern')]:
+    import json
+    g = json.load(open(f'{src}/{a}/{a}_1k.gltf'))
+    for m in g['materials']:
+        pm = m.get('pbrMetallicRoughness', {}); [pm.pop(x, None) for x in ['baseColorTexture', 'metallicRoughnessTexture']]
+        m.pop('normalTexture', None); m.pop('occlusionTexture', None)
+    for k in ['images', 'textures', 'samplers']: g.pop(k, None)
+    json.dump(g, open(f'{src}/{a}/{n}_notex.gltf', 'w'))
+PY4
+mkdir -p "$OUT/study"
+for f in "$WORK"/study/*.png; do
+  n=$(basename "$f" .png); [ "$OUT/study/$n.ktx2" -nt "$f" ] && [ -z "${FORCE:-}" ] && continue
+  case "$n" in
+    *_diff) ktx create --format R8G8B8_SRGB --assign-tf srgb --assign-primaries bt709 $UASTC $RDO $MIP "$f" "$OUT/study/$n.ktx2" ;;
+    *_arm)  ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none $ETC1S $MIP "$f" "$OUT/study/$n.ktx2" ;;
+    *_nor)  ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none --normalize $UASTC $RDO $MIP "$f" "$OUT/study/$n.ktx2" ;;
+  esac
+done
+for p in GothicCabinet_01/cabinet GothicCommode_01/commode wooden_lantern_01/lantern; do
+  gltf-transform meshopt "$SRC/${p}_notex.gltf" "$OUT/study/$(basename $p).glb" --level medium --quantize-position 16 --quantize-normal 12 --quantize-texcoord 14 >/dev/null
+done
+
 # 3. geometry: the kit modules (tools/blender/castle_kit.py)
 for m in bay door upper; do
   gltf-transform meshopt "$RAW/$m.glb" "$OUT/$m.glb" --level medium --quantize-position 16 --quantize-normal 12 --quantize-texcoord 16 >/dev/null
 done
-ls -l "$OUT"/tex/*.ktx2 "$OUT"/lm/*.ktx2 "$OUT"/*.glb "$OUT"/props/* | awk '{printf "%8.1f KB  %s\n", $5/1024, $9}'
+ls -l "$OUT"/tex/*.ktx2 "$OUT"/lm/*.ktx2 "$OUT"/*.glb "$OUT"/props/* "$OUT"/study/* | awk '{printf "%8.1f KB  %s\n", $5/1024, $9}'

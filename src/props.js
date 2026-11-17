@@ -18,10 +18,10 @@ import { castleMaterial } from './pbr.js';
 
 const BASE = './assets/castle/props/';
 const BENCH_BAYS = [3, 7, 13, 17], R_BENCH = 6.4, R_POST = 11.2, POST_S = 1.45;
-const MADDER = '#7c2219', WOAD = '#29466e', GOLD = '#d9b25e';
+export const MADDER = '#7c2219', WOAD = '#29466e', GOLD = '#d9b25e';
 
 // a geometry from the glTF, in world (hall) space, per material name
-function pieces(root) {
+export function pieces(root) {
   root.updateMatrixWorld(true); const out = {};
   root.traverse((o) => {
     if (!o.isMesh) return;
@@ -41,7 +41,7 @@ const copies = (geos, mats) => mergeGeometries(mats.flatMap((M) => geos.map((g) 
 // ---------------------------------------------------------------- woven things, drawn on canvases
 function canvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return [c, c.getContext('2d')]; }
 const tex = (c, srgb = true) => { const t = new THREE.CanvasTexture(c); t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = 8; return t; };
-function weaveNormal() {   // a tiled tabby weave, as a tangent-space normal map (128 px = 16 threads)
+export function weaveNormal() {   // a tiled tabby weave, as a tangent-space normal map (128 px = 16 threads)
   const N = 128, d = new Uint8Array(N*N*4);
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
     const tx = Math.floor(x/8), ty = Math.floor(y/8), over = (tx + ty) % 2 === 0;
@@ -52,7 +52,7 @@ function weaveNormal() {   // a tiled tabby weave, as a tangent-space normal map
   const t = new THREE.DataTexture(d, N, N); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.NoColorSpace; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.needsUpdate = true;
   return t;
 }
-function roundel(x, atlas, i, cx, cy, r) {
+export function roundel(x, atlas, i, cx, cy, r) {
   const S = 400, cols = 5;
   x.save(); x.beginPath(); x.arc(cx, cy, r, 0, Math.PI*2); x.clip();
   x.drawImage(atlas.canvas, (i % cols)*S, Math.floor(i/cols)*S, S, S, cx - r, cy - r, 2*r, 2*r); x.restore();

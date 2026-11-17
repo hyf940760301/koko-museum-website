@@ -177,7 +177,30 @@ export function slotPositions() {
   return out;
 }
 
-export function buildStudiolo(fresco, atlas, frontImg, turnImg) {
+// the triangles of the built room sorted for the castle: walls (mode 8), floor (9), vault (10), the two
+// lunettes, and the skylight's cream ring, shaft and gilt rims; each part keeps position, normal and uv
+function splitShell(g, { hz, hWall, top }) {
+  const P = g.attributes.position.array, M = g.attributes.aMode.array, C = g.attributes.aCol.array, n = g.attributes.position.count;
+  const lun = new THREE.Color(PAL.plaster);
+  const kind = (i) => {
+    const m = Math.round(M[i]); if (m === 8) return 'wall'; if (m === 9) return 'floor'; if (m === 10) return 'vault';
+    const cx = (P[i*3] + P[i*3 + 3] + P[i*3 + 6])/3, cy = (P[i*3 + 1] + P[i*3 + 4] + P[i*3 + 7])/3, cz = (P[i*3 + 2] + P[i*3 + 5] + P[i*3 + 8])/3;
+    if (m === 0 && cy > hWall - 1e-3 && Math.abs(Math.abs(cz) - hz) < 0.01 && Math.abs(C[i*3] - lun.r) < 1e-4 && Math.abs(C[i*3 + 2] - lun.b) < 1e-4) return 'lun';
+    if ((m === 0 || m === 5) && cy > top - 0.12 && Math.hypot(cx, cz) < 1.08) return 'ocu';
+    return 'rest';
+  };
+  const idx = { wall: [], floor: [], vault: [], lun: [], ocu: [], rest: [] };
+  for (let i = 0; i < n; i += 3) idx[kind(i)].push(i);
+  const take = (list, names) => { const o = new THREE.BufferGeometry();
+    for (const a of names) { const src = g.attributes[a], k = src.itemSize, d = new Float32Array(list.length*3*k); let w = 0;
+      for (const i of list) for (let j = 0; j < 3*k; j++) d[w++] = src.array[i*k + j]; o.setAttribute(a, new THREE.BufferAttribute(d, k)); }
+    return o; };
+  const ALL = ['position', 'normal', 'aCol', 'aMode', 'uv'], PNU = ['position', 'normal', 'uv'];
+  return { rest: take(idx.rest, ALL), legacy: take([...idx.wall, ...idx.floor, ...idx.vault, ...idx.lun, ...idx.ocu], ALL),
+    wall: take(idx.wall, PNU), floor: take(idx.floor, PNU), vault: take(idx.vault, PNU), lun: take(idx.lun, PNU) };
+}
+
+export function buildStudiolo(fresco, atlas, frontImg, turnImg, opts = {}) {
   const group = new THREE.Group(); group.position.copy(SO);
   const { hx, hz, hWall, rise } = SD; const b = new Builder();
   const vaultY = (x) => hWall + rise*Math.sqrt(Math.max(0, 1 - (x/hx)*(x/hx)));
@@ -391,7 +414,11 @@ export function buildStudiolo(fresco, atlas, frontImg, turnImg) {
   b.add(rbox(0.48, 0.09, 1.60, 0.035).translate(BX, 0.51, BZ), 0xD9A79B, 11);
   b.add(new THREE.SphereGeometry(0.17, 24, 16).scale(1, 0.42, 1).rotateZ(-0.95).translate(BX - 0.12, 0.69, BZ - 0.56), 0x9DBAD3, 11);
   b.add(new THREE.SphereGeometry(0.15, 24, 16).scale(1, 0.42, 1).rotateZ(-0.8).rotateY(0.25).translate(BX - 0.10, 0.67, BZ - 0.27), 0xF0E6D2, 11);
-  group.add(new THREE.Mesh(b.build(), fresco));
+  // with the castle (?castle=1) the walls, floor, vault, lunettes and skylight go in a mesh of their own:
+  // src/study.js re-clads them (oak, limewash, sandstone, worn boards) and hides this one once it is in
+  let shell = null;
+  if (opts.castle) { const sp = splitShell(b.build(), { hz, hWall, top: hWall + rise }); group.add(new THREE.Mesh(sp.rest, fresco)); shell = sp; shell.legacy = new THREE.Mesh(sp.legacy, fresco); group.add(shell.legacy); }
+  else group.add(new THREE.Mesh(b.build(), fresco));
 
   // the round things in the dish are loose: a poke makes them hop
   const balls = [[0.00, 0.012, 0.046, 0xE8823C, 12], [0.078, -0.042, 0.036, 0xA9CDE2, 12], [-0.072, -0.046, 0.030, 0xE8C0B3, 12], [0.046, 0.078, 0.026, PAL.gold, 5], [-0.056, 0.072, 0.032, 0xB9CDB4, 12]].map(([ox, oz, r, c, m]) => {
@@ -497,7 +524,7 @@ export function buildStudiolo(fresco, atlas, frontImg, turnImg) {
   const W = (x, y, z) => new V3(x, y, z).add(SO);
   const state = { open: 0, openT: 0, t: 0 };
   const api = {
-    group, hits, codex, medals, onBounce: null,
+    group, hits, codex, medals, onBounce: null, shell, SD,
     ocu: W(0, hWall + rise + 0.35, 0), ocuR: SD.ocuR, pool: W(-1.05, 0, -1.25), flame: W(CX, DT + 0.365, CZ), lampB: W(0, 2.2, SD.apseZ + 0.3),
     shots: {
       home: { pivot: W(0, 1.52, 1.5), yaw: 0, pitch: 0.02, fov: 58 },

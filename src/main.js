@@ -136,7 +136,7 @@ async function build(progress) {
   const fz = new THREE.Mesh(new THREE.PlaneGeometry(2*K.dw + 0.36, 0.25), texMaterial(doorFriezeTexture('STVDIOLO'), 1, { aspect: (2*K.dw + 0.36)/0.25 }));
   fz.applyMatrix4(bayMatrix(K.door*K.BAY, K.R - 0.083, K.dh + 0.37)); if (!CASTLE) rot.add(fz);   // the castle cuts it into the lintel
 
-  studio = buildStudiolo(fresco, atlas, front, turn); studio.onBounce = () => sound.play('tock'); studio.group.visible = false; scene.add(studio.group);
+  studio = buildStudiolo(fresco, atlas, front, turn, { castle: CASTLE }); studio.onBounce = () => sound.play('tock'); studio.group.visible = false; scene.add(studio.group);
   ROOM.studio = { id: 1, ocu: studio.ocu, ocuR: studio.ocuR, centre: SO.clone(), pool: studio.pool };
   SERIES.forEach((s) => studio.setEarned(s.index, earned.has(s.id)));
 
@@ -158,7 +158,8 @@ async function build(progress) {
       castleMod.alphaDiscipline(rot);
       if (S.room === 'rotunda') setHallFlames();
     }).catch((e) => console.error('castle props', e));
-    if (CAPTURE || Q.has('bench')) await pp;
+    const ps = Q.has('nostudy') ? null : castle.loadStudy({ studio, atlas }).catch((e) => console.error('castle study', e));
+    if (CAPTURE || Q.has('bench')) await Promise.all([pp, ps]);
   }
 }
 // the torches, and the castle chandelier's candles once it hangs

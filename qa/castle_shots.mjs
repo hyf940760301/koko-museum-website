@@ -90,6 +90,14 @@ Object.assign(VAULT, {
   R8: { hour: 12.5, walk: { pos: [0.25, 1.35, -9.7], tgt: [0, 0.95, -11.6], fov: 40 } },
   R9: { hour: 12.5, walk: { pos: [-0.6, 3.0, 8.3], tgt: [-1.8, 3.85, 11.5], fov: 34 } },   // a shield and the tapestry
 });
+// step 9 (studiolo): the plan's home, cabinet and codex stills (flag off = before), and in the castle the
+// entrance wall with the furniture, the vault and the room by night
+export const STUDY = {
+  T_home: { hour: 12.5, room: 'studio' }, T_cabinet: { hour: 12.5, room: 'studio', shot: 'cabinet' }, T_codex: { hour: 12.5, room: 'studio', shot: 'codex' },
+  T_back: { hour: 12.5, room: 'studio', walk: { pos: [80, 1.6, -2.2], tgt: [80, 1.5, 3.6], fov: 60 } },
+  T_vault: { hour: 12.5, room: 'studio', walk: { pos: [80, 1.5, 2.2], tgt: [80, 4.6, -1.2], fov: 70 } },
+  T_night: { hour: 22, room: 'studio' }, T_sheet: { hour: 12.5, room: 'studio', shot: 'sheet' },
+};
 for (const h of [7.4, 9, 10.5, 12.5, 14, 15.5, 17, 17.8]) VAULT[`S_${String(h).replace('.', '_')}`] = { hour: h, walk: { pos: [0, 9.5, 9.0], tgt: [0, 0, -2.0], fov: 74 } };
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -98,7 +106,7 @@ if (isMain) {
   for (let i = 0; i < args.length; i++) { const k = args[i].replace(/^--/, ''); opt[k] = args[++i]; }
   const out = path.resolve(opt.out); fs.mkdirSync(out, { recursive: true });
   const [w, h] = opt.size.split('x').map(Number);
-  const sets = { castle: CAMS, base: { ...CAMS, ...EXTRA }, de: DE, hall: HALL, vault: VAULT, all: { ...CAMS, ...EXTRA, ...DE } };
+  const sets = { castle: CAMS, base: { ...CAMS, ...EXTRA }, de: DE, hall: HALL, vault: VAULT, study: STUDY, all: { ...CAMS, ...EXTRA, ...DE } };
   let jobs = Object.entries(sets[opt.set] || CAMS); if (opt.only) { const o = opt.only.split(','); jobs = jobs.filter(([n]) => o.includes(n)); }
   const exe = process.env.CHROME || `${process.env.HOME}/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`;
   const launch = () => chromium.launch({ headless: true, executablePath: exe, args: ['--use-angle=metal', '--enable-webgl', '--ignore-gpu-blocklist'] });

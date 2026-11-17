@@ -22,6 +22,7 @@ import { bayMatrix, K } from './rotunda.js';
 import { LIGHT, cubeUVDefines } from './materials.js';
 import { castleMaterial, PBR } from './pbr.js';
 import { loadProps } from './props.js';
+import { loadStudy } from './study.js';
 
 export { PBR };
 // AgX puts mid-grey lower than the old curve: lift the grade so the room keeps its brightness
@@ -300,6 +301,14 @@ export async function buildCastle(renderer, env, assets, opts = {}) {
       alphaDiscipline(pr.group); group.add(pr.group);
       if (dayProbe) pr.group.traverse((o) => { if (o.isMesh && o.material.envMap) { o.material.envMap = dayProbe; o.material.needsUpdate = true; } });
       api.props = pr; api.propsMs = performance.now() - t0; return pr;
+    },
+    // the studiolo re-clad (src/study.js), fetched with the props; its castle meshes replace the old
+    // walls, floor and vault (src/studiolo.js keeps them in a mesh of their own for this)
+    async loadStudy(ctx) {
+      const t0 = performance.now();
+      const st = await loadStudy({ ...ctx, ktx: ktxLoader(renderer), env: dayProbe || env, maps: { sd, sn, sa, md, mn, ma, od, on, oa, id, inn } });
+      alphaDiscipline(st.group); ctx.studio.group.add(st.group); ctx.studio.shell.legacy.visible = false;
+      api.study = st; api.studyMs = performance.now() - t0; return st;
     },
     // env strength follows the light of the hour: before the probes, the chapel HDR scaled by the
     // ambient; after, the day probe scaled by how much of the day's ambient there is, plus the night
