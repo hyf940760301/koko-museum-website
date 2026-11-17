@@ -66,7 +66,8 @@ export function surf(fn, nu, nv) {
 }
 
 // opts.skip: bays whose wall, niche and the two piers beside them are left out (the castle work
-// builds them instead). Without it the drum is exactly as it always was.
+// builds them instead; the door bay too, when it is listed). opts.noFloor leaves out the floor.
+// Without options the drum is exactly as it always was.
 export function buildRotunda(opts = {}) {
   const skip = new Set(opts.skip || []);
   const b = new Builder();
@@ -77,7 +78,7 @@ export function buildRotunda(opts = {}) {
   for (let k = 0; k < K.NB; k++) {
     const th0 = k*BAY;
     const P = (s, y, r, t) => cyl(th0 + s/R, y, r, t);
-    if (k === K.door) {
+    if (k === K.door && !skip.has(k)) {
       // ---- the doorway to the studiolo: stone frame, inscribed frieze, pediment
       const { dw, dh } = K; const M = bayMatrix(th0);
       b.add(surf((u, v, t) => P(lerp(-hW, -dw, u), lerp(0, yTop, v), R, t), 6, 1), PAL.plaster, 1);
@@ -249,7 +250,7 @@ export function buildRotunda(opts = {}) {
   b.add(new THREE.TorusGeometry(K.ro + 0.22, 0.03, 8, 96).rotateX(Math.PI/2).translate(0, K.yOc - 0.075, 0), PAL.gold, 5);
 
   // ---- floor
-  b.add(new THREE.CircleGeometry(R + 0.7, 128).rotateX(-Math.PI/2), PAL.cream, 2);
+  if (!opts.noFloor) b.add(new THREE.CircleGeometry(R + 0.7, 128).rotateX(-Math.PI/2), PAL.cream, 2);
   return b.build();
 }
 
@@ -276,5 +277,5 @@ export function buildDoorLeaves(material) {
     const pivot = new THREE.Group(); pivot.position.set(sx*dw, 0, -0.10); pivot.add(new THREE.Mesh(b.build(), material)); group.add(pivot); return pivot;
   };
   const L = leaf(-1), Rr = leaf(1);
-  return { group, setOpen(o) { L.rotation.y = o*1.72; Rr.rotation.y = -o*1.72; } };
+  return { group, pivots: [L, Rr], setOpen(o) { L.rotation.y = o*1.72; Rr.rotation.y = -o*1.72; } };
 }

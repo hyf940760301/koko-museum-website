@@ -20,7 +20,7 @@ import { buildUI, CN } from './ui.js';
 const V3 = THREE.Vector3;
 const Q = new URLSearchParams(location.search);
 const CAPTURE = Q.has('capture'), ALL = Q.has('all'), SKIP = Q.has('skip') || CAPTURE;
-// ?castle=1: the warm castle rework, bay 0 first (src/castle.js). Without it nothing below changes.
+// ?castle=1: the warm castle rework (src/castle.js): stone bays round the hall and the castle door. Without it nothing below changes.
 const CASTLE = Q.has('castle'); let castle = null;
 const FIXED = Q.has('fixed');   // qa/bench.mjs: hold full sharpness so frame times compare like for like
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -110,20 +110,20 @@ async function build(progress) {
   if (CASTLE) { castleAssets = await castleP; setCastle(true); env = await castleMod.loadEnv(renderer, castleAssets); }
   const fresco = frescoMaterial(friezeTexture(), { wood: repeat(wood, false), woodN: repeat(woodN, false), plaster: repeat(plaster, false), plasterN: repeat(plasterN, false), marble: repeat(marble, false), marbleN: repeat(marbleN, false), floor: repeat(floor, false), floorN: repeat(floorN, false) });
   rot = new THREE.Group(); scene.add(rot);
-  rot.add(new THREE.Mesh(CASTLE ? buildRotunda({ skip: [0] }) : buildRotunda(), fresco));
-  // bay 0 in stone: its gilding reflects the room's light instead of a painted gradient
+  rot.add(new THREE.Mesh(CASTLE ? buildRotunda({ skip: Array.from({ length: K.NB }, (_, k) => k), noFloor: castleMod.FLOOR }) : buildRotunda(), fresco));
+  // castle bays: the gilding reflects the room's light instead of a painted gradient
   const gilt = CASTLE ? frescoMaterial(fresco.uniforms.tFrieze.value, { wood: fresco.uniforms.tWood.value, woodN: fresco.uniforms.tWoodN.value, plaster: fresco.uniforms.tPlaster.value, plasterN: fresco.uniforms.tPlasterN.value, marble: fresco.uniforms.tMarble.value, marbleN: fresco.uniforms.tMarbleN.value, floor: fresco.uniforms.tFloor.value, floorN: fresco.uniforms.tFloorN.value }, { gold: { env, uEnvK: castleMod.PBR.uEnvK } }) : null;
   atlas = tondoAtlas(SERIES.map((s) => s.id));
   const lunette = lunetteTexture(); const tondoGeo = new THREE.CircleGeometry(0.45, 56);
   const grotMat = texMaterial(grotesqueTexture(), 1, { aspect: 0.25/3.8 }); const grotGeo = new THREE.PlaneGeometry(0.25, 3.8);
   for (let k = 0; k < K.NB; k++) {
     const th = k*K.BAY;
-    if (!CASTLE || (k !== 0 && k !== K.NB - 1)) { const gp = new THREE.Mesh(grotGeo, grotMat); gp.applyMatrix4(bayMatrix(th + K.BAY/2, K.R - 0.1155, 3.2)); rot.add(gp); }
+    if (!CASTLE) { const gp = new THREE.Mesh(grotGeo, grotMat); gp.applyMatrix4(bayMatrix(th + K.BAY/2, K.R - 0.1155, 3.2)); rot.add(gp); }
     const s = byBay(k); if (!s) continue;
     const got = earned.has(s.id);
     const tondo = new THREE.Mesh(tondoGeo, texMaterial(atlas.texture, 3, { cell: atlas.cell(s.index), glaze: got ? 1 : 0, seed: k + 1.3, aspect: 1 }));
     tondo.applyMatrix4(bayMatrix(th, K.R - 0.022, K.yTondo)); rot.add(tondo);
-    const tri = new Triptych(CASTLE && k === 0 ? gilt : fresco, { wide: !!s.wide, sketch: studyTexture(qs[s.index]), lunette, plate: plateTexture(s.latin, `N° ${s.no} · MMXXVI`), seed: k + 1, floor: 0.07 });
+    const tri = new Triptych(CASTLE ? gilt : fresco, { wide: !!s.wide, sketch: studyTexture(qs[s.index]), lunette, plate: plateTexture(s.latin, `N° ${s.no} · MMXXVI`), seed: k + 1, floor: 0.07 });
     tri.panels.forEach((m, i) => { m.material.uniforms.uRevealMode.value = REDUCED ? -1 : (s.mood.light === 'night' ? 3 : (s.index * 3 + i) % 4); });
     tri.group.applyMatrix4(bayMatrix(th, K.R + 0.40, K.ySill + tri.D.originY)); rot.add(tri.group);
     LIGHT.uWideA.value[k] = tri.D.HW;
@@ -132,14 +132,14 @@ async function build(progress) {
   // the door to the study, with its name cut over the lintel
   doors = buildDoorLeaves(fresco); rot.add(doors.group);
   const fz = new THREE.Mesh(new THREE.PlaneGeometry(2*K.dw + 0.36, 0.25), texMaterial(doorFriezeTexture('STVDIOLO'), 1, { aspect: (2*K.dw + 0.36)/0.25 }));
-  fz.applyMatrix4(bayMatrix(K.door*K.BAY, K.R - 0.083, K.dh + 0.37)); rot.add(fz);
+  fz.applyMatrix4(bayMatrix(K.door*K.BAY, K.R - 0.083, K.dh + 0.37)); if (!CASTLE) rot.add(fz);   // the castle cuts it into the lintel
 
   studio = buildStudiolo(fresco, atlas, front, turn); studio.onBounce = () => sound.play('tock'); studio.group.visible = false; scene.add(studio.group);
   ROOM.studio = { id: 1, ocu: studio.ocu, ocuR: studio.ocuR, centre: SO.clone(), pool: studio.pool };
   SERIES.forEach((s) => studio.setEarned(s.index, earned.has(s.id)));
 
   air = buildAir(); scene.add(air.group);
-  if (CASTLE) { castle = await castleMod.buildCastle(renderer, env, castleAssets); if (CAPTURE || Q.has('bench')) window.__castle = castle; rot.add(castle.group); castleMod.alphaDiscipline(scene); const gq = Q.has('grade') ? Q.get('grade').split(',').map(Number) : []; post.castle({ ev: gq[0] ?? castleMod.GRADE.ev, pow: gq[1] || castleMod.GRADE.pow, sat: gq[2] || castleMod.GRADE.sat }); }
+  if (CASTLE) { castle = await castleMod.buildCastle(renderer, env, castleAssets, { doors }); if (CAPTURE || Q.has('bench')) window.__castle = castle; rot.add(castle.group); castleMod.alphaDiscipline(scene); const gq = Q.has('grade') ? Q.get('grade').split(',').map(Number) : []; post.castle({ ev: gq[0] ?? castleMod.GRADE.ev, pow: gq[1] || castleMod.GRADE.pow, sat: gq[2] || castleMod.GRADE.sat }); }
   // the first altarpiece is ready before anyone walks in
   const b0 = B[0]; await loadPics(b0);
   const shown = isSeen(b0.s, 0) || SKIP;

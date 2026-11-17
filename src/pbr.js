@@ -10,7 +10,8 @@ import { LIGHT, LIGHTING, NOISE } from './materials.js';
 export const PBR = { uEnvK: { value: 1 }, uTorchK: { value: 1 } };
 
 // the room light without the analytic candles: in a castle bay the torches come from the bake
-const ROOM_LIGHT = LIGHTING.replace('vec3 irradiance(vec3 P, vec3 N){', 'vec3 roomIrradiance(vec3 P, vec3 N){').replace('if (uCandle > .003) {', 'if (false) {');
+const ROOM_LIGHT = LIGHTING.replace('vec3 irradiance(vec3 P, vec3 N){', 'vec3 roomIrradiance(vec3 P, vec3 N){').replace('if (uCandle > .003) {', 'if (CASTLE_ANALYTIC && uCandle > .003) {');
+// surfaces without a bake (floor, door leaves, inscription) keep the analytic candles instead
 
 const PARS = /* glsl */`
 uniform float uEnvK; uniform float uTorchK; uniform float uOpenA[20]; uniform float uWideA[20];
@@ -43,7 +44,9 @@ export function castleMaterial(kind, o) {
     map: o.map || null, normalMap: o.normalMap || null, normalScale: new THREE.Vector2(o.normal ?? 1, -(o.normal ?? 1)),
     aoMap: o.arm || null, aoMapIntensity: o.aoK ?? 1, roughnessMap: o.arm || null, metalnessMap: o.metalMap ? o.arm : null,
     envMap: o.env || null, envMapIntensity: o.envK ?? 0.35, lightMap: o.lm || null, lightMapIntensity: 0,
+    alphaTest: o.alphaTest ?? 0,
   });
+  m.defines = { CASTLE_ANALYTIC: o.lm ? 'false' : 'true' };
   m.name = 'castle-' + kind;
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, LIGHT, PBR);
@@ -58,10 +61,17 @@ export function castleMaterial(kind, o) {
       .replace('#include <lights_fragment_maps>', /* glsl */`#include <lights_fragment_maps>
   {
     vec3 Nw = inverseTransformDirection(normal, viewMatrix);
+    #ifdef USE_LIGHTMAP
     vec3 lmS = lightMapTexel.rgb;
+    #else
+    vec3 lmS = vec3(1., 0., 0.);
+    #endif
     float flick = 1. + .06*(vnoise(vec3(uTime*7.3, 2.1, 0.)) - .5)*2.;
     float bakedAO = pow(lmS.r, .65);   // the bake sees proxies, not the whole room: soften it
-    vec3 castleE = roomIrradiance(vCW, Nw)*bakedAO + uCandleCol*uCandle*uTorchK*(lmS.g*4.*flick + .03);
+    vec3 castleE = roomIrradiance(vCW, Nw)*bakedAO;
+    #ifdef USE_LIGHTMAP
+    castleE += uCandleCol*uCandle*uTorchK*(lmS.g*4.*flick + .03);
+    #endif
     ${kind === 'render' ? NICHE : ''}
     iblIrradiance = castleE*PI;    // feeds the energy-conserving diffuse of RE_IndirectSpecular
     irradiance = vec3(0.);
@@ -71,7 +81,7 @@ export function castleMaterial(kind, o) {
   outgoingLight = mix(outgoingLight, uHazeCol, 1. - exp(-length(cameraPosition - vCW)*uHaze));
   #include <opaque_fragment>`);
   };
-  m.customProgramCacheKey = () => 'castle-' + kind;
+  m.customProgramCacheKey = () => 'castle-' + kind + (o.lm ? '' : '-nolm') + (o.alphaTest ? '-at' : '');
   return m;
 }
 

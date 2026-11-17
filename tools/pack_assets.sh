@@ -8,8 +8,8 @@
 # - light map: UASTC + zstd without RDO (data, it feeds the AO and torch light)
 # - every texture carries a full mip chain built offline, transfer function set explicitly
 # - bay glb: meshopt (EXT_meshopt_compression + quantization), precision kept above what shows
-# The Blender output lives in _src/castle/ (castle_bay.py writes bay0.glb, bake_bay.py bay0_lm.png);
-# the step-1 copies can be restored with git show 72fec79:assets/castle/bay0.glb (and lm/bay0_lm.png).
+# The Blender output lives in _src/castle/: castle_kit.py writes bay.glb and door.glb, bake_bay.py
+# bay_lm.png and door_lm.png (see the commands at the top of those scripts).
 # Needs ktx (KTX-Software 4.4, ~/.local/bin), gltf-transform (npm), python3 + Pillow.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -46,15 +46,21 @@ UASTC="--encode uastc --uastc-quality 3 --zstd 19"
 RDO="--uastc-rdo --uastc-rdo-l 1.0"   # rate-distortion pass: about -35% after zstd, error stays near plain UASTC
 for f in "$WORK"/*.png; do
   n=$(basename "$f" .png)
+  [ "$OUT/tex/$n.ktx2" -nt "$f" ] && [ -z "${FORCE:-}" ] && continue   # up to date (FORCE=1 re-encodes)
   case "$n" in
     *_diff) ktx create --format R8G8B8_SRGB --assign-tf srgb --assign-primaries bt709 $UASTC $RDO $MIP "$f" "$OUT/tex/$n.ktx2" ;;
     *_arm)  ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none $ETC1S $MIP "$f" "$OUT/tex/$n.ktx2" ;;
     *_nor)  ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none --normalize $UASTC $RDO $MIP "$f" "$OUT/tex/$n.ktx2" ;;
   esac
 done
-# light map: R = AO, G = torch light; data, so linear, clamped at the edges
-ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none $UASTC --generate-mipmap --mipmap-wrap clamp "$RAW/bay0_lm.png" "$OUT/lm/bay0_lm.ktx2"
+# light maps: R = AO, G = torch light; data, so linear, clamped at the edges
+for m in bay door; do
+  [ "$OUT/lm/${m}_lm.ktx2" -nt "$RAW/${m}_lm.png" ] && [ -z "${FORCE:-}" ] && continue
+  ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none $UASTC --generate-mipmap --mipmap-wrap clamp "$RAW/${m}_lm.png" "$OUT/lm/${m}_lm.ktx2"
+done
 
-# 3. geometry
-gltf-transform meshopt "$RAW/bay0.glb" "$OUT/bay0.glb" --level medium --quantize-position 16 --quantize-normal 12 --quantize-texcoord 16 >/dev/null
-ls -l "$OUT"/tex/*.ktx2 "$OUT"/lm/*.ktx2 "$OUT"/bay0.glb | awk '{printf "%8.1f KB  %s\n", $5/1024, $9}'
+# 3. geometry: the kit modules (tools/blender/castle_kit.py)
+for m in bay door; do
+  gltf-transform meshopt "$RAW/$m.glb" "$OUT/$m.glb" --level medium --quantize-position 16 --quantize-normal 12 --quantize-texcoord 16 >/dev/null
+done
+ls -l "$OUT"/tex/*.ktx2 "$OUT"/lm/*.ktx2 "$OUT"/*.glb | awk '{printf "%8.1f KB  %s\n", $5/1024, $9}'

@@ -1,5 +1,9 @@
 # Bake the light map of a castle bay with Cycles (GPU / Metal on the Mac).
-#   blender -b --factory-startup -P tools/blender/bake_bay.py -- --in _src/castle/bay0.glb --size 1024 --samples 256 --out _src/castle/bay0_lm.png
+#   blender -b --factory-startup -P tools/blender/bake_bay.py -- --in _src/castle/bay.glb  --out _src/castle/bay_lm.png
+#   blender -b --factory-startup -P tools/blender/bake_bay.py -- --in _src/castle/door.glb --out _src/castle/door_lm.png
+# Step 3: the module is baked between two real neighbours (bay.glb turned one bay either way), so
+# the occlusion and the torch light across the bay edges (each module carries only its right
+# column and torch) read as they do in the ring. Door leaves are left out of the bake.
 # R = ambient occlusion (1.5 m), G = irradiance from the bay's two torches / 4 (so 1.0 in the
 # texture is 4x the candle-formula unit used by LIGHTING in src/materials.js). The rotunda's
 # neighbours, floor and cornice are stood in by plain proxies so the occlusion reads right
@@ -10,8 +14,9 @@ from mathutils import Vector
 
 argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 ap = argparse.ArgumentParser()
-ap.add_argument('--in', dest='inp', default='_src/castle/bay0.glb')
-ap.add_argument('--out', default='_src/castle/bay0_lm.png')
+ap.add_argument('--in', dest='inp', default='_src/castle/bay.glb')
+ap.add_argument('--nb', default='_src/castle/bay.glb')
+ap.add_argument('--out', default='_src/castle/bay_lm.png')
 ap.add_argument('--size', type=int, default=1024)
 ap.add_argument('--samples', type=int, default=256)
 ap.add_argument('--tsamples', type=int, default=512)
@@ -31,6 +36,7 @@ sc.cycles.use_denoising = False
 sc.render.bake.margin = 6; sc.render.bake.margin_type = 'EXTEND'
 
 bpy.ops.import_scene.gltf(filepath=args.inp)
+for o in [o for o in bpy.context.scene.objects if o.type == 'MESH' and o.name.startswith('leaf')]: bpy.data.objects.remove(o, do_unlink=True)
 bay = [o for o in bpy.context.scene.objects if o.type == 'MESH'][0]
 me = bay.data
 print('BAKE uv layers', [u.name for u in me.uv_layers])
@@ -52,8 +58,16 @@ def sheet(name, fn, nu, nv):
     o = bpy.data.objects.new(name, m); sc.collection.objects.link(o); return o
 # floor, the neighbouring old walls, the frieze band and the cornice soffit over it
 sheet('floor', lambda u, v: t2b(-8 + 16*u, 0.0, -14 + 10*v), 4, 4)
+# the two neighbouring modules, turned about the drum axis (blender (0, -R)); +s is -z rotation
+from mathutils import Matrix
 for sx in (-1, 1):
-    sheet(f'nb{sx}', lambda u, v, sx=sx: cylw(sx*(BAY/2 + u*BAY*1.5), 5.6*v, R), 16, 2)
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=args.nb)
+    rot = Matrix.Translation((0, -R, 0)) @ Matrix.Rotation(-sx*BAY, 4, 'Z') @ Matrix.Translation((0, R, 0))
+    for o in set(bpy.data.objects) - before:
+        if o.parent is None: o.matrix_world = rot @ o.matrix_world
+        if o.type == 'MESH':
+            o.data.materials.clear(); o.data.materials.append(grey)
 sheet('frieze', lambda u, v: cylw((u - 0.5)*BAY*4, 5.6 + 0.6*v, R - 0.02), 48, 2)
 sheet('cornice', lambda u, v: cylw((u - 0.5)*BAY*4, 6.36, R - 0.02 - 0.29*v), 48, 2)
 

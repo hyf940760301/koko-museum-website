@@ -1,5 +1,5 @@
 // Fixed cameras for the castle work, through the ?capture interface.
-//   node qa/castle_shots.mjs [--size 1440x900] [--dpr 2] [--query "castle=1"] [--out qa/out/after] [--only C01,C07] [--set castle|base]
+//   node qa/castle_shots.mjs [--size 1440x900] [--dpr 2] [--query "castle=1"] [--out qa/out/after] [--only C01,C07] [--set castle|base|de|hall]
 // --dpr is passed to the page as ?dpr= (capture mode only); omit it to shoot exactly what the
 // unchanged site renders (that is how the flag-off identity is checked against HEAD).
 import { createRequire } from 'module';
@@ -39,13 +39,25 @@ export const DE = {
   DSN: { hour: 22, focus: 0, inspect: 1, reveal: 1, mood: 'snow' },
 };
 
+// step 3 (whole hall): three cameras at four hours (H<cam>_<hour>), plus a bay pair and the door up close
+const HCAM = {
+  H1: { walk: { pos: [0, 1.7, 8.6], tgt: [0, 2.7, -12], fov: 72 } },     // across the hall to bay 0
+  H2: { walk: { pos: [0, 1.7, 1.5], tgt: [0, 2.3, 12], fov: 58 } },      // the door (bay 10)
+  H3: { walk: { pos: [0, 7.2, 7.0], tgt: [0, 0, -3.5], fov: 66 } },      // down onto the floor
+};
+export const HALL = {};
+for (const [c, o] of Object.entries(HCAM)) for (const h of [7.4, 12.5, 17.8, 22]) HALL[`${c}_${String(Math.floor(h)).padStart(2, '0')}`] = { hour: h, ...o };
+HALL.H4 = { hour: 12.5, walk: { pos: [2.6, 1.7, -3.6], tgt: [7.4, 2.6, -9.6], fov: 52 } };   // bays 1-3 along the wall
+HALL.H5 = { hour: 17.8, walk: { pos: [0.4, 1.65, 7.6], tgt: [0, 2.2, 12], fov: 46 } };       // the doorway, close
+HALL.H6 = { hour: 17.8, walk: { pos: [0.4, 1.65, 7.6], tgt: [0, 2.2, 12], fov: 46 }, portal: 1 };  // ... opened
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const args = process.argv.slice(2); const opt = { size: '1440x900', dpr: '', query: '', out: path.join(here, 'out', 'shots'), only: '', set: 'castle', port: '8951' };
   for (let i = 0; i < args.length; i++) { const k = args[i].replace(/^--/, ''); opt[k] = args[++i]; }
   const out = path.resolve(opt.out); fs.mkdirSync(out, { recursive: true });
   const [w, h] = opt.size.split('x').map(Number);
-  const sets = { castle: CAMS, base: { ...CAMS, ...EXTRA }, de: DE, all: { ...CAMS, ...EXTRA, ...DE } };
+  const sets = { castle: CAMS, base: { ...CAMS, ...EXTRA }, de: DE, hall: HALL, all: { ...CAMS, ...EXTRA, ...DE } };
   let jobs = Object.entries(sets[opt.set] || CAMS); if (opt.only) { const o = opt.only.split(','); jobs = jobs.filter(([n]) => o.includes(n)); }
   const exe = process.env.CHROME || `${process.env.HOME}/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`;
   const launch = () => chromium.launch({ headless: true, executablePath: exe, args: ['--use-angle=metal', '--enable-webgl', '--ignore-gpu-blocklist'] });
