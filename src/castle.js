@@ -27,6 +27,8 @@ import { loadStudy } from './study.js';
 export { PBR };
 // AgX puts mid-grey lower than the old curve: lift the grade so the room keeps its brightness
 export const GRADE = { ev: 1.5, pow: 1.6, sat: 1.3 };
+// the frame (step 11, qa/bench.mjs): MSAA samples of the colour target, levels of the glow
+export const FRAME = { samples: 2, bloom: 3 };
 
 const BASE = './assets/castle/';
 const TEX = [  // file, sRGB, repeat, rotation

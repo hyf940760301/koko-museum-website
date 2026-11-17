@@ -45,19 +45,19 @@ if (ENV_PARS === THREE.ShaderChunk.envmap_physical_pars_fragment) throw new Erro
 // curvature baked into the light map (A). ?nowear turns it off, for before/after comparisons.
 const NOWEAR = typeof location !== 'undefined' && new URLSearchParams(location.search).has('nowear');
 const WEAR = /* glsl */`
-// rising damp at the foot of the wall: up to 0.55 m, the edge broken by noise at 1.5 per metre
+// rising damp at the foot of the wall: up to 0.68 m (0.55 before step 11), the edge broken by noise at 1.5 per metre
 float wDamp(vec3 P){
   if (length(P.xz) < 11.0) return 0.;
-  float e = .55 + .09*(vnoise(P*1.5) - .5)*2.;
-  return 1. - smoothstep(e - .20, e, P.y);
+  float e = .68 + .10*(vnoise(P*1.5) - .5)*2.;
+  return 1. - smoothstep(e - .24, e, P.y);
 }
-// soot over each torch (y 3.0-4.4, 0.35 wide) and a breath of it under the string course
+// soot over each torch (y 2.9-4.6, 0.42 wide; step 11 widened it a little) and a breath of it under the string course
 float wSoot(vec3 P){
   if (length(P.xz) < 10.8) return 0.;
   float ang = atan(P.x, -P.z); float a0 = (floor(ang/0.314159265) + .5)*0.314159265; float s = (ang - a0)*12.;
-  float dy = P.y - 3.7; float g = exp(-.5*(s*s/(.12*.12) + dy*dy/(.33*.33)))*(.8 + .2*vnoise(P*6.));
+  float dy = P.y - 3.75; float g = exp(-.5*(s*s/(.145*.145) + dy*dy/(.38*.38)))*(.8 + .2*vnoise(P*6.));
   float band = exp(-.5*s*s/(.28*.28))*smoothstep(5.15, 5.58, P.y)*step(P.y, 5.62);
-  return max(g, band*.35);
+  return max(g, band*.45);
 }
 // feet: the walkway ring (r 9.2-11.0) and the way from the middle to the door (bay 10, +z)
 float wPolish(vec3 P){

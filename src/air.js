@@ -111,11 +111,14 @@ export function buildAir(opts = {}) {
             // two layers of dust, drifting slowly
             float d1 = vnoise(P*1.1 + vec3(uTime*.035, uTime*.012, 0.)), d2 = vnoise(P*3.7 + vec3(0., -uTime*.05, uTime*.02));
             float dust = .45 + .75*d1*d1 + .35*d2;
-            I += m*dust*mix(.25, 1., smoothstep(0., 3.2, P.y));
+            I += m*dust*mix(.25, 1., smoothstep(0., 3.2, P.y))*exp(-q.z*.06);   // the dust thins away from the window
           }
-          I *= ds;
-          float phase = 1. + 1.6*pow(max(dot(V, D), 0.), 5.);   // brighter looking up towards the window
-          vec3 col = uSunCol*vec3(1.0, .80, .55)*I*phase*uBeam*uWin*vWt*.13*uBeamK;
+          // looked at along its length a beam integrates many metres of dust into one bright streak (the
+          // dawn shot): compress long paths, so a crossing beam keeps nearly all of its light
+          I *= ds; I = 1.12*I/(1. + .2*I);
+          float phase = 1. + 1.0*pow(max(dot(V, D), 0.), 5.);   // brighter looking up towards the window
+          I *= mix(1., .3, smoothstep(.80, .97, abs(dot(V, D))));   // ... but never a bright rod seen end-on
+          vec3 col = uSunCol*vec3(1.0, .80, .55)*I*phase*uBeam*uWin*vWt*.155*uBeamK;
           gl_FragColor = vec4(col, 1.); }` }));
     beams.layers.set(1); beams.renderOrder = 4; beams.frustumCulled = false; group.add(beams);
   }

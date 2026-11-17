@@ -159,6 +159,7 @@ export class Post {
     this.fsScene = new THREE.Scene(); this.fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.finalMat); this.quad.frustumCulled = false; this.fsScene.add(this.quad);
     this.bg = new THREE.Color(0.9, 0.88, 0.84);
+    this.levels = [[1, 0.50], [2.2, 0.30], [4.5, 0.20]];   // the glow: blur radius, weight
   }
   setSize(w, h) {
     w = Math.max(8, Math.round(w)); h = Math.max(8, Math.round(h));
@@ -188,6 +189,10 @@ export class Post {
     this.u.uPSat = { value: 1 }; this.u.uPCon = { value: 1 }; this.u.uPWarm = { value: 0 };
     this.u.tLut = { value: g.lut || null }; this.u.uLutK = { value: g.lut ? 1 : 0 };
     this.finalMat.fragmentShader = fs; this.finalMat.needsUpdate = true;
+    // step 11, the frame budget: the colour target's MSAA (at dpr 2 two samples are as clean as four to the
+    // eye) and the glow's levels (the widest of three adds little under the vignette); ?msaa= / ?bloom= to compare
+    if (g.samples !== undefined && g.samples !== this.color.samples) { this.color.samples = g.samples; this.color.dispose(); }
+    if (g.bloom !== undefined) this.levels = this.levels.slice(0, g.bloom);
     // the bake carries the large-scale occlusion: screen-space AO only adds contact shadow, at half the samples
     if (!AO_FS.includes('const int NS = 16;')) throw new Error('AO shader moved');
     this.aoMat.fragmentShader = AO_FS.replace('const int NS = 16;', 'const int NS = 8;'); this.aoMat.needsUpdate = true;
@@ -207,7 +212,7 @@ export class Post {
     this.pass(this.brightMat, this.bA);
     r.setRenderTarget(this.bC); r.setClearColor(0x000000, 0); r.clear();
     const b = this.blurMat.uniforms; const add = this.addMat.uniforms;
-    [[1, 0.50], [2.2, 0.30], [4.5, 0.20]].forEach(([s, wgt]) => {
+    this.levels.forEach(([s, wgt]) => {
       b.tSrc.value = this.bA.texture; b.uDir.value.set(s/this.qw, 0); this.pass(this.blurMat, this.bB);
       b.tSrc.value = this.bB.texture; b.uDir.value.set(0, s/this.qh); this.pass(this.blurMat, this.bD);
       add.tBase.value = this.bC.texture; add.tAdd.value = this.bD.texture; add.uWeight.value = wgt; this.pass(this.addMat, this.bB);

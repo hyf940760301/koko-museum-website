@@ -162,7 +162,7 @@ export async function loadStudy(ctx) {
   const [lnN, lnA] = linenfold();
   const M = {
     wainscot: castleMaterial('s-oak', { env, map: re(maps.od, 0.9, Math.PI/2), color: new THREE.Color(0.86, 0.66, 0.50), roughness: 0.55, envK: 0.35 }),
-    lime: castleMaterial('s-lime', { env, map: re(maps.md, 0.4), normalMap: re(maps.mn, 0.4), arm: re(maps.ma, 0.4), color: new THREE.Color(1.30, 1.30, 1.36), roughness: 1, normal: 0.35, envK: 0.2, mapMean: [0.59, 0.444, 0.293], mapK: 0.12 }),
+    lime: castleMaterial('s-lime', { env, map: re(maps.md, 0.4), normalMap: re(maps.mn, 0.4), arm: re(maps.ma, 0.4), color: new THREE.Color(1.32, 1.28, 1.26), roughness: 1, normal: 0.22, aoK: 0.35, envK: 0.2, mapMean: [0.59, 0.444, 0.293], mapK: 0.05 }),
     stone: castleMaterial('s-stone', { env, map: re(maps.sd), normalMap: re(maps.sn), arm: re(maps.sa), color: new THREE.Color(1.50, 1.33, 1.06), roughness: 1, normal: 0.8, envK: 0.3, mapMean: [0.377, 0.289, 0.177], mapK: 0.85 }),
     floor: castleMaterial('s-floor', { env, map: re(fd, 0.5, Math.PI/2), normalMap: re(fn, 0.5, Math.PI/2), arm: re(fa, 0.5, Math.PI/2), color: new THREE.Color(0.98, 0.85, 0.72), roughness: 1, normal: 0.8, envK: 0.45 }),
     iron: castleMaterial('s-iron', { env, map: re(maps.id, 4), normalMap: re(maps.inn, 4), color: new THREE.Color(0.40, 0.36, 0.33), roughness: 0.5, metalness: 0.7, normal: 0.5, envK: 0.8 }),

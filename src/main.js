@@ -20,8 +20,8 @@ import { buildUI, CN } from './ui.js';
 const V3 = THREE.Vector3;
 const Q = new URLSearchParams(location.search);
 const CAPTURE = Q.has('capture'), ALL = Q.has('all'), SKIP = Q.has('skip') || CAPTURE;
-// ?castle=1: the warm castle rework (src/castle.js): stone bays round the hall and the castle door. Without it nothing below changes.
-const CASTLE = Q.has('castle'); let castle = null;
+// the castle (src/castle.js, the default since step 11): stone hall, props, studiolo. ?castle=0 is the old painted rotunda, kept as a fallback.
+const CASTLE = Q.get('castle') !== '0'; let castle = null;
 const FIXED = Q.has('fixed');   // qa/bench.mjs: hold full sharpness so frame times compare like for like
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
@@ -141,7 +141,7 @@ async function build(progress) {
   SERIES.forEach((s) => studio.setEarned(s.index, earned.has(s.id)));
 
   air = buildAir(CASTLE ? { castle: true } : undefined); scene.add(air.group); if (CASTLE) air.setDepth(post.g.texture);
-  if (CASTLE) { castle = await castleMod.buildCastle(renderer, env, castleAssets, { doors }); if (CAPTURE || Q.has('bench')) window.__castle = castle; rot.add(castle.group); castleMod.alphaDiscipline(scene); const gq = Q.has('grade') ? Q.get('grade').split(',').map(Number) : []; post.castle({ ev: gq[0] ?? castleMod.GRADE.ev, pow: gq[1] || castleMod.GRADE.pow, sat: gq[2] || castleMod.GRADE.sat, lut: Q.has('nolut') ? null : castleAssets.lut }); }
+  if (CASTLE) { castle = await castleMod.buildCastle(renderer, env, castleAssets, { doors }); if (CAPTURE || Q.has('bench')) window.__castle = castle; rot.add(castle.group); castleMod.alphaDiscipline(scene); const gq = Q.has('grade') ? Q.get('grade').split(',').map(Number) : []; post.castle({ ev: gq[0] ?? castleMod.GRADE.ev, pow: gq[1] || castleMod.GRADE.pow, sat: gq[2] || castleMod.GRADE.sat, lut: Q.has('nolut') ? null : castleAssets.lut, samples: Q.has('msaa') ? Number(Q.get('msaa')) : castleMod.FRAME.samples, bloom: Q.has('bloom') ? Number(Q.get('bloom')) : castleMod.FRAME.bloom }); }
   // the first altarpiece is ready before anyone walks in
   const b0 = B[0]; await loadPics(b0);
   const shown = isSeen(b0.s, 0) || SKIP;
@@ -534,10 +534,15 @@ function resize() {
   const scale = S.phase === 'intro' ? Math.min(SC[lvl], 0.72) : SC[lvl];
   post.setSize(w*dpr*scale, h*dpr*scale); post.u.uBloom.value = w < 800 || S.phase === 'intro' ? 0.06 : 0.10;
 }
+let bad = 0;
 function adapt(raw) {
-  if (S.phase !== 'live' || CAPTURE || FIXED) return; accT += raw; if (++accN < 45) return; const avg = accT/accN; accT = 0; accN = 0; const now = performance.now();
-  if (avg > 1/43 && lvl < SC.length - 1) { lvl++; good = 0; lockUp = now + lockMs; lockMs = Math.min(120000, lockMs*2); resize(); }
-  else if (avg < 1/56 && lvl > 0 && now > lockUp) { if (++good >= 5) { lvl--; good = 0; lockUp = now + lockMs; resize(); } } else good = 0;
+  // a single long frame is a hitch (a shader compiling as the props or the study arrive, a tab coming back), not
+  // the steady cost: it must not knock the sharpness down for the next minutes (step 11)
+  if (S.phase !== 'live' || CAPTURE || FIXED || raw > 0.1) return; accT += raw; if (++accN < 45) return; const avg = accT/accN; accT = 0; accN = 0; const now = performance.now();
+  // and one slow window is a busy moment on the machine; only two in a row step the sharpness down
+  if (avg > 1/43 && lvl < SC.length - 1) { if (++bad < 2) return; bad = 0; lvl++; good = 0; lockUp = now + lockMs; lockMs = Math.min(120000, lockMs*2); resize(); }
+  bad = 0;
+  if (avg < 1/56 && lvl > 0 && now > lockUp) { if (++good >= 5) { lvl--; good = 0; lockUp = now + lockMs; resize(); } } else good = 0;
 }
 
 // ---------------------------------------------------------------- the way in
