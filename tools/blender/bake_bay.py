@@ -1,3 +1,5 @@
+# Superseded in step 5 by bake_hall.py (the bake inside the whole hall, RGBA with sky and curvature);
+# kept for the step 1-4 history.
 # Bake the light map of a castle bay with Cycles (GPU / Metal on the Mac).
 #   blender -b --factory-startup -P tools/blender/bake_bay.py -- --in _src/castle/bay.glb  --out _src/castle/bay_lm.png
 #   blender -b --factory-startup -P tools/blender/bake_bay.py -- --in _src/castle/door.glb --out _src/castle/door_lm.png

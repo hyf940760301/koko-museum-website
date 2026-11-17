@@ -25,6 +25,8 @@ export const LIGHT = {
   uOpenA: { value: new Float32Array(20) }, uWideA: { value: new Float32Array(20).fill(0.46) },
   // castle only (castleLighting below): sun through the clerestory, sky through it, the chandelier
   uWin: { value: 1 }, uWinSky: { value: 1 }, uChand: { value: 0 },
+  // castle, baked surfaces (pbr.js): strength of the baked sky through the windows, and of the hemisphere ambient
+  uCSky: { value: 1 }, uCAmb: { value: 1 },
 };
 
 export const LIGHTING = /* glsl */`
@@ -546,15 +548,16 @@ export function cubeUVDefines(tex) {
 // water gilding that reflects a real interior instead of a painted gradient
 function goldFresco(uniforms, gold) {
   let fs = castleLighting(FRESCO_FS);
-  fs = fs.replace('vec3 lin(float r, float g, float b)', 'uniform sampler2D tEnv; uniform float uEnvK;\n#include <cube_uv_reflection_fragment>\nvec3 lin(float r, float g, float b)');
+  fs = fs.replace('vec3 lin(float r, float g, float b)', 'uniform sampler2D tEnv; uniform sampler2D tEnvN; uniform float uEnvK; uniform float uProbeA; uniform float uProbeB;\n#include <cube_uv_reflection_fragment>\nvec3 lin(float r, float g, float b)');
   const old = 'col = leaf*b*(.55*smoothstep(0., .5, e) + .62*e)*(1. + .5*fr) + vec3(1.6, 1.35, .95)*sp*smoothstep(.1, .7, e) + leaf*.35*fr*e;';
   if (!fs.includes(old)) throw new Error('gold shader moved');
   fs = fs.replace(old, `{
-      vec3 envS = textureCubeUV(tEnv, Rf, .22).rgb*uEnvK; vec3 envD = textureCubeUV(tEnv, Ng, .9).rgb*uEnvK;
+      vec3 envS = (textureCubeUV(tEnv, Rf, .22).rgb*uProbeA + textureCubeUV(tEnvN, Rf, .22).rgb*uProbeB)*uEnvK; vec3 envD = (textureCubeUV(tEnv, Ng, .9).rgb*uProbeA + textureCubeUV(tEnvN, Ng, .9).rgb*uProbeB)*uEnvK;
       float F = .55 + .45*fr;
       col = leaf*envS*1.55*F*mix(.75, 1.15, smoothstep(-.4, .5, Rf.y)) + leaf*(E*.20 + envD*.25) + vec3(1.6, 1.35, .95)*sp*smoothstep(.1, .7, e)*.9 + leaf*uCandleCol*uCandle*.10;
     }`);
-  const u = { ...uniforms, tEnv: { value: gold.env }, uEnvK: gold.uEnvK };
+  // (the hall's own day and night probes replace env once castle.js has captured them)
+  const u = { ...uniforms, tEnv: { value: gold.env }, uEnvK: gold.uEnvK, tEnvN: gold.envN || { value: gold.env }, uProbeA: gold.probeA || { value: 1 }, uProbeB: gold.probeB || { value: 0 } };
   return new THREE.ShaderMaterial({ vertexShader: WORLD_VS, fragmentShader: fs, side: THREE.DoubleSide, uniforms: u, defines: cubeUVDefines(gold.env) });
 }
 // finished posters: their own colour, no light, no haze, and alpha 1 so post.js leaves them ungraded

@@ -8,8 +8,8 @@
 # - light map: UASTC + zstd without RDO (data, it feeds the AO and torch light)
 # - every texture carries a full mip chain built offline, transfer function set explicitly
 # - bay glb: meshopt (EXT_meshopt_compression + quantization), precision kept above what shows
-# The Blender output lives in _src/castle/: castle_kit.py writes bay.glb and door.glb, bake_bay.py
-# bay_lm.png and door_lm.png (see the commands at the top of those scripts).
+# The Blender output lives in _src/castle/: castle_kit.py writes bay.glb, door.glb and upper.glb,
+# bake_hall.py the light maps as .npy and tools/lm_png.py turns them into PNGs (commands at the top).
 # Needs ktx (KTX-Software 4.4, ~/.local/bin), gltf-transform (npm), python3 + Pillow.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -57,10 +57,13 @@ for f in "$WORK"/*.png; do
     *_nor)  ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none --normalize $UASTC $RDO $MIP "$f" "$OUT/tex/$n.ktx2" ;;
   esac
 done
-# light maps: R = AO, G = torch light; data, so linear, clamped at the edges
-for m in bay door upper; do
+# light maps (tools/blender/bake_hall.py, then tools/lm_png.py): R = AO, G = torches, B = sky through
+# windows and lantern, A = curvature; data, so linear. Modules keep three mip levels (deeper ones would
+# blend neighbouring uv islands), the floor (sampled by angle and radius) only its full size
+for m in bay door upper floor; do   # (bake_hall.py can also bake bay9 / bay11; not shipped, see castle.js)
   [ "$OUT/lm/${m}_lm.ktx2" -nt "$RAW/${m}_lm.png" ] && [ -z "${FORCE:-}" ] && continue
-  ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none $UASTC --generate-mipmap --mipmap-wrap clamp "$RAW/${m}_lm.png" "$OUT/lm/${m}_lm.ktx2"
+  if [ "$m" = floor ]; then LV="--levels 1"; else LV="--generate-mipmap --mipmap-wrap clamp --levels 3"; fi
+  ktx create --format R8G8B8A8_UNORM --assign-tf linear --assign-primaries none $UASTC $LV "$RAW/${m}_lm.png" "$OUT/lm/${m}_lm.ktx2"
 done
 
 # 3. geometry: the kit modules (tools/blender/castle_kit.py)

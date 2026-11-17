@@ -173,6 +173,9 @@ export class Post {
     r('c += (hash12(gl_FragCoord.xy) - .5)*.014;', 'c += (hash12(gl_FragCoord.xy) - .5)*.014*(1. - pm);');
     this.u.uGradeEV = { value: g.ev ?? 0 }; this.u.uLookPow = { value: g.pow ?? 1 }; this.u.uLookSat = { value: g.sat ?? 1 };
     this.finalMat.fragmentShader = fs; this.finalMat.needsUpdate = true;
+    // the bake carries the large-scale occlusion: screen-space AO only adds contact shadow, at half the samples
+    if (!AO_FS.includes('const int NS = 16;')) throw new Error('AO shader moved');
+    this.aoMat.fragmentShader = AO_FS.replace('const int NS = 16;', 'const int NS = 8;'); this.aoMat.needsUpdate = true;
   }
   pass(mat, target) { this.quad.material = mat; this.r.setRenderTarget(target); this.r.render(this.fsScene, this.fsCam); }
   render(scene, camera) {

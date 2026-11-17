@@ -114,7 +114,7 @@ async function build(progress) {
   rot = new THREE.Group(); scene.add(rot);
   rot.add(new THREE.Mesh(CASTLE ? buildRotunda({ skip: Array.from({ length: K.NB }, (_, k) => k), noFloor: castleMod.FLOOR, noUpper: true }) : buildRotunda(), fresco));
   // castle bays: the gilding reflects the room's light instead of a painted gradient
-  const gilt = CASTLE ? frescoMaterial(fresco.uniforms.tFrieze.value, { wood: fresco.uniforms.tWood.value, woodN: fresco.uniforms.tWoodN.value, plaster: fresco.uniforms.tPlaster.value, plasterN: fresco.uniforms.tPlasterN.value, marble: fresco.uniforms.tMarble.value, marbleN: fresco.uniforms.tMarbleN.value, floor: fresco.uniforms.tFloor.value, floorN: fresco.uniforms.tFloorN.value }, { gold: { env, uEnvK: castleMod.PBR.uEnvK } }) : null;
+  const gilt = CASTLE ? frescoMaterial(fresco.uniforms.tFrieze.value, { wood: fresco.uniforms.tWood.value, woodN: fresco.uniforms.tWoodN.value, plaster: fresco.uniforms.tPlaster.value, plasterN: fresco.uniforms.tPlasterN.value, marble: fresco.uniforms.tMarble.value, marbleN: fresco.uniforms.tMarbleN.value, floor: fresco.uniforms.tFloor.value, floorN: fresco.uniforms.tFloorN.value }, { gold: { env, uEnvK: castleMod.PBR.uEnvK, envN: castleMod.PBR.uEnvMapN, probeA: castleMod.PBR.uProbeA, probeB: castleMod.PBR.uProbeB } }) : null;
   atlas = tondoAtlas(SERIES.map((s) => s.id));
   const lunette = lunetteTexture(); const tondoGeo = new THREE.CircleGeometry(0.45, 56);
   const grotMat = texMaterial(grotesqueTexture(), 1, { aspect: 0.25/3.8 }); const grotGeo = new THREE.PlaneGeometry(0.25, 3.8);
@@ -148,6 +148,8 @@ async function build(progress) {
   applySet(b0, 0, shown);
   if (shown) { b0.open = b0.openT = 1; b0.armReveal = true; }
   enterRoom('rotunda');
+  // the hall's own reflections: day and night probes from its middle (castle.js)
+  if (CASTLE) { castle.captureProbes(renderer, scene, daylight, [gilt], [air.group]); daylight.snap(); }
 }
 
 function enterRoom(name) {

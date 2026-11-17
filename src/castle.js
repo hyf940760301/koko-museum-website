@@ -8,13 +8,18 @@
 // upper module on all 20 bays: the clerestory with its splayed windows and leaded amber glass, the
 // columns up to their capitals, the twenty ribs and limewashed webs of the vault, and the oak lantern
 // ring at 12.2 m; the light comes in through those windows (materials.js castleLighting, light.js).
+// Step 5 bakes the light maps inside the whole hall (tools/blender/bake_hall.py): AO, the twenty
+// torches, the sky through windows and lantern, curvature; the floor has one too (two polar wedges).
+// (Bays 9 and 11 beside the door were baked on their own as well: rendered against the generic map
+// they differed by 0.33-0.37/255 on average, noise rather than shading, so they share the generic one.) The reflections come from two probes the hall
+// renders of itself at load, by day and by night (captureProbes).
 import * as THREE from '../vendor/three/three.module.js';
 import { GLTFLoader } from '../vendor/three/addons/loaders/GLTFLoader.js';
 import { RGBELoader } from '../vendor/three/addons/loaders/RGBELoader.js';
 import { KTX2Loader } from '../vendor/three/addons/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from '../vendor/three/addons/libs/meshopt_decoder.module.js';
 import { bayMatrix, K } from './rotunda.js';
-import { LIGHT } from './materials.js';
+import { LIGHT, cubeUVDefines } from './materials.js';
 import { castleMaterial, PBR } from './pbr.js';
 
 export { PBR };
@@ -31,8 +36,10 @@ const TEX = [  // file, sRGB, repeat, rotation
   ['slab_diff', true, 1/1.5], ['slab_nor', false, 1/1.5], ['slab_arm', false, 1/1.5],
   ['herring_diff', true], ['herring_nor', false], ['herring_arm', false],
 ];
+// light maps (tools/blender/bake_hall.py): the exhibition bay, the door bay, the upper module, the floor
+const LMS = ['bay', 'door', 'upper', 'floor'];
 // downloads the opening counts in its progress: three modules, their light maps, environment, textures
-export const FILES = 7 + TEX.length;
+export const FILES = 4 + LMS.length + TEX.length;
 // the hall for main.js ROOM: the sky comes through the lantern (its opening r 1.42 at 13.5 m)
 export const HALL = { ocu: new THREE.Vector3(0, 13.4, 0), ocuR: 1.38 };
 // the iron chandelier comes with the props (step 8); until then its light stays off
@@ -55,10 +62,10 @@ export function preload(renderer, tick = (p) => p) {
   const gl = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   return Promise.all([
     tick(gl.loadAsync(BASE + 'bay.glb')), tick(gl.loadAsync(BASE + 'door.glb')), tick(gl.loadAsync(BASE + 'upper.glb')),
-    tick(kl.loadAsync(BASE + 'lm/bay_lm.ktx2')), tick(kl.loadAsync(BASE + 'lm/door_lm.ktx2')), tick(kl.loadAsync(BASE + 'lm/upper_lm.ktx2')),
+    ...LMS.map((n) => tick(kl.loadAsync(BASE + 'lm/' + n + '_lm.ktx2'))),
     tick(new RGBELoader().loadAsync(BASE + 'env/chapel_512.hdr')),
     ...TEX.map(tex),
-  ]).then(([bay, door, upper, bayLm, doorLm, upperLm, hdr, ...maps]) => ({ bay, door, upper, bayLm, doorLm, upperLm, hdr, maps }));
+  ]).then(([bay, door, upper, ...rest]) => ({ bay, door, upper, lms: Object.fromEntries(LMS.map((n, i) => [n, rest[i]])), hdr: rest[LMS.length], maps: rest.slice(LMS.length + 1) }));
 }
 
 export async function loadEnv(renderer, assets) {
@@ -139,8 +146,8 @@ function inscription(mat) {
   mat.map = t; mat.side = THREE.DoubleSide; return new THREE.Mesh(g, mat);
 }
 
-// ---------------------------------------------------------------- the floor (no bake: analytic light,
-// and a vertex-colour darkening towards the wall in place of the baked AO)
+// ---------------------------------------------------------------- the floor (step 5: baked, see
+// pbr.js FLOOR_POLAR; without a bake it falls back to a vertex-colour darkening towards the wall)
 const FL = { rose: 1.75, walk0: 9.4, walk1: 11.0, edge: K.R + 0.7, herring: 1.84 };
 function annulus(r0, r1, nth, nr, uvf, aof) {
   const pos = [], uv = [], col = [], idx = [];
@@ -165,9 +172,9 @@ function ribbon(pts, w, out) {
   for (let i = 0; i < pts.length - 1; i++) { const a = base + i*2; out.idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
 }
 const circle = (r, n = 160) => Array.from({ length: n + 1 }, (_, i) => [r*Math.sin(i/n*Math.PI*2), -r*Math.cos(i/n*Math.PI*2)]);
-function buildFloor(M) {
+function buildFloor(M, baked) {
   const g = new THREE.Group(); g.name = 'castle-floor';
-  const ao = (r) => 1 - 0.30*THREE.MathUtils.smoothstep(r, K.R - 1.4, K.R) - 0.25*THREE.MathUtils.smoothstep(r, K.R, FL.edge);
+  const ao = (r) => baked ? 1 : 1 - 0.30*THREE.MathUtils.smoothstep(r, K.R - 1.4, K.R) - 0.25*THREE.MathUtils.smoothstep(r, K.R, FL.edge);
   const flat = (x, z) => [x, z];
   // slabs inside and outside the walkway, the walkway itself in polar tiles (a whole number round the ring)
   const nAround = Math.round(Math.PI*(FL.walk0 + FL.walk1)/FL.herring);
@@ -217,9 +224,15 @@ function glassMaterial() {
 }
 
 export async function buildCastle(renderer, env, assets, opts = {}) {
-  const { bay, door, upper, bayLm, doorLm, upperLm, maps } = assets || await preload(renderer);
+  const { bay, door, upper, lms, maps } = assets || await preload(renderer);
   const [sd, sn, sa, md, mn, ma, od, on, oa, id, inn, fd, fn, fa, hd, hn, ha] = maps;
-  for (const lm of [bayLm, doorLm, upperLm]) { lm.colorSpace = THREE.NoColorSpace; lm.channel = 1; lm.minFilter = THREE.LinearMipmapLinearFilter; lm.needsUpdate = true; }
+  // module light maps on uv1, three mip levels (deeper ones would blend in the bright outside faces);
+  // the floor's is sampled by angle and radius in pbr.js (FLOOR_POLAR), level 0 only
+  for (const [n, lm] of Object.entries(lms)) {
+    lm.colorSpace = THREE.NoColorSpace; lm.channel = n === 'floor' ? 0 : 1; lm.wrapS = lm.wrapT = THREE.ClampToEdgeWrapping;
+    lm.minFilter = n === 'floor' ? THREE.LinearFilter : THREE.LinearMipmapLinearFilter; lm.needsUpdate = true;
+  }
+  const bayLm = lms.bay, doorLm = lms.door, upperLm = lms.upper;
   const mats = (lm) => {
     const common = { env, lm }; const sfx = lm ? '' : '';
     return {
@@ -262,21 +275,51 @@ export async function buildCastle(renderer, env, assets, opts = {}) {
   group.add(inscription(castleMaterial('inscr', { env, color: new THREE.Color(0.11, 0.075, 0.05), roughness: 0.8, envK: 0.2, alphaTest: 0.5 })));
 
   group.add(buildFloor({
-    slab: castleMaterial('slab', { env, map: fd, normalMap: fn, arm: fa, color: new THREE.Color(1.55, 1.38, 1.12), roughness: 1, normal: 0.7, envK: 0.45, mapMean: [0.248, 0.183, 0.129], mapK: 0.75 }),
-    herring: castleMaterial('herring', { env, map: hd, normalMap: hn, arm: ha, color: new THREE.Color(1.62, 1.40, 1.12), roughness: 0.5, normal: 0.6, envK: 0.8, mapMean: [0.229, 0.173, 0.109], mapK: 0.85 }),
-    rose: castleMaterial('rose', { env, map: sd, normalMap: sn, arm: sa, color: new THREE.Color(1.50, 1.33, 1.06), roughness: 0.75, normal: 0.5, envK: 0.6, mapMean: [0.377, 0.289, 0.177], mapK: 0.85 }),
-    brass: castleMaterial('brass', { env, color: new THREE.Color(0.95, 0.70, 0.36), roughness: 0.32, metalness: 1, envK: 1.1 }),
-  }));
+    slab: castleMaterial('slab', { env, lm: lms.floor, polar: true, map: fd, normalMap: fn, arm: fa, color: new THREE.Color(1.55, 1.38, 1.12), roughness: 1, normal: 0.7, envK: 0.45, mapMean: [0.248, 0.183, 0.129], mapK: 0.75 }),
+    herring: castleMaterial('herring', { env, lm: lms.floor, polar: true, map: hd, normalMap: hn, arm: ha, color: new THREE.Color(1.62, 1.40, 1.12), roughness: 0.5, normal: 0.6, envK: 0.8, mapMean: [0.229, 0.173, 0.109], mapK: 0.85 }),
+    rose: castleMaterial('rose', { env, lm: lms.floor, polar: true, map: sd, normalMap: sn, arm: sa, color: new THREE.Color(1.50, 1.33, 1.06), roughness: 0.75, normal: 0.5, envK: 0.6, mapMean: [0.377, 0.289, 0.177], mapK: 0.85 }),
+    brass: castleMaterial('brass', { env, color: new THREE.Color(0.95, 0.70, 0.36), roughness: 0.32, metalness: 1, envK: 2.4 }),   // the probe is the hall itself, dimmer than the chapel HDR
+  }, true));
 
-  const gpu = [bayLm, doorLm, upperLm, ...maps].map((t) => ({ format: t.format, w: t.image.width, h: t.image.height, levels: (t.mipmaps || []).length, bytes: texBytes(t) }));
-  return {
+  const gpu = [...Object.values(lms), ...maps].map((t) => ({ format: t.format, w: t.image.width, h: t.image.height, levels: (t.mipmaps || []).length, bytes: texBytes(t) }));
+  const lum = (v) => v.x*0.2126 + v.y*0.7152 + v.z*0.0722;
+  let probe = null;   // { ambDay, ambNight } once captured
+  const api = {
     group, gpu,
-    // env and torch strength follow the light of the hour
+    // env strength follows the light of the hour: before the probes, the chapel HDR scaled by the
+    // ambient; after, the day probe scaled by how much of the day's ambient there is, plus the night
+    // probe (torch-lit) by how much torch light there is beyond what the day probe already holds
     update() {
-      const a = LIGHT.uAmbUp.value; const amb = (a.x*0.2126 + a.y*0.7152 + a.z*0.0722)/0.43;
-      PBR.uEnvK.value = Math.min(1.2, Math.max(0.12, amb)) + 0.25*LIGHT.uCandle.value;
+      const amb = lum(LIGHT.uAmbUp.value), torch = LIGHT.uCandle.value;
+      if (!probe) { PBR.uEnvK.value = Math.min(1.2, Math.max(0.12, amb/0.43)) + 0.25*torch; return; }
+      const a = Math.min(1.5, Math.max(0, (amb - probe.ambNight)/(probe.ambDay - probe.ambNight)));
+      PBR.uTorchK.value = 0.8;   // twenty torches and their bounce (the bake) against the two nearest of the old formula
+      PBR.uEnvK.value = 1; PBR.uProbeA.value = a; PBR.uProbeB.value = Math.min(1, torch)*(1 - 0.85*Math.min(1, a));
+    },
+    // render the hall from its middle (1.6 m up) by day (12:30) and by night (22:00), pre-filter both,
+    // and make them the reflections of every castle material and of the gilding
+    captureProbes(renderer, scene, daylight, gilts = [], hide = []) {
+      const t0 = performance.now();
+      // 128 per face: each pre-filtered probe is then 384x512 half float (1.6 MB on the GPU); 256 would be 6.3 MB
+      const rt = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType });
+      const cam = new THREE.CubeCamera(0.05, 80, rt); cam.position.set(0, 1.6, 0); cam.updateMatrixWorld(true);
+      const pm = new THREE.PMREMGenerator(renderer);
+      const keep = { hour: daylight.hour, mood: daylight.mood, moodK: daylight.moodK };
+      const vis = hide.map((o) => o.visible); hide.forEach((o) => { o.visible = false; });
+      const shot = (h) => { daylight.hour = h; daylight.mood = null; daylight.moodK = 0; daylight.snap(); api.update(); cam.update(renderer, scene); return { tex: pm.fromCubemap(rt.texture).texture, amb: lum(LIGHT.uAmbUp.value) }; };
+      const day = shot(12.5), night = shot(22);
+      Object.assign(daylight, keep); daylight.snap();
+      hide.forEach((o, i) => { o.visible = vis[i]; });
+      pm.dispose(); rt.dispose();
+      group.traverse((o) => { if (o.isMesh && o.material && o.material.isMeshStandardMaterial && o.material.envMap) { o.material.envMap = day.tex; o.material.needsUpdate = true; } });
+      for (const m of gilts) { if (!m) continue; m.uniforms.tEnv.value = day.tex; Object.assign(m.defines, cubeUVDefines(day.tex)); m.needsUpdate = true; }
+      PBR.uEnvMapN.value = night.tex;
+      probe = { ambDay: day.amb, ambNight: night.amb }; api.update();
+      api.probeMs = performance.now() - t0;
+      return { day: day.tex, night: night.tex };
     },
   };
+  return api;
 }
 
 // Posters are told apart from the room by the alpha of the colour target: a finished poster
