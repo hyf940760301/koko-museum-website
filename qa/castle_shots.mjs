@@ -75,6 +75,11 @@ Object.assign(VAULT, {
   W3: { hour: 12.5, walk: { pos: [0.2, 2.2, -8.3], tgt: [0.6, 3.1, -11.9], fov: 44 } },
   W4: { hour: 12.5, walk: { pos: [-1.2, 1.7, 3.2], tgt: [0.3, 0, 10.5], fov: 62 } },
 });
+// step 7 (window beams): towards the sun-side windows and across the beams, at dawn and golden hour
+Object.assign(VAULT, {
+  B1: { hour: 6.8, walk: { pos: [7, 1.7, 3], tgt: [-12, 6.5, -1.5], fov: 70 } }, B2: { hour: 6.8, walk: { pos: [-7, 1.7, 3], tgt: [12, 6.5, -1.5], fov: 70 } },
+  B3: { hour: 17.6, walk: { pos: [7, 1.7, 3], tgt: [-12, 6.5, -1.5], fov: 70 } }, B4: { hour: 17.6, walk: { pos: [-7, 1.7, 3], tgt: [12, 6.5, -1.5], fov: 70 } },
+});
 for (const h of [7.4, 9, 10.5, 12.5, 14, 15.5, 17, 17.8]) VAULT[`S_${String(h).replace('.', '_')}`] = { hour: h, walk: { pos: [0, 9.5, 9.0], tgt: [0, 0, -2.0], fov: 74 } };
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);

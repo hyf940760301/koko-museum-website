@@ -110,6 +110,15 @@ void main(){
   gl_FragColor = vec4(c, 1.);
 }`;
 
+// the castle look: a 32^3 LUT unrolled to 1024x32 (tools/make_lut.py), trilinear by hand
+const LUT = /* glsl */`
+vec3 lutLook(vec3 c){
+  c = clamp(c, 0., 1.); float b = c.b*31.; float b0 = floor(b); float b1 = min(b0 + 1., 31.);
+  vec2 rg = vec2(c.r*31. + .5, c.g*31. + .5);
+  vec3 s0 = texture2D(tLut, vec2((b0*32. + rg.x)/1024., rg.y/32.)).rgb, s1 = texture2D(tLut, vec2((b1*32. + rg.x)/1024., rg.y/32.)).rgb;
+  return mix(s0, s1, b - b0);
+}
+`;
 // AgX as in three r160 (tonemapping_pars_fragment), then the exact sRGB transfer curve
 const AGX = /* glsl */`
 const mat3 LIN_REC2020_TO_SRGB = mat3(vec3(1.6605, -.1246, -.0182), vec3(-.5876, 1.1329, -.1006), vec3(-.0728, -.0083, 1.1187));
@@ -165,18 +174,26 @@ export class Post {
     this.isCastle = true;
     let fs = FINAL_FS;
     const r = (a, b) => { if (!fs.includes(a)) throw new Error('final shader moved: ' + a.slice(0, 40)); fs = fs.replace(a, b); };
-    r('varying vec2 vUv;', 'varying vec2 vUv;\nuniform float uGradeEV; uniform float uLookPow; uniform float uLookSat;\n' + AGX);
+    r('varying vec2 vUv;', 'varying vec2 vUv;\nuniform float uGradeEV; uniform float uLookPow; uniform float uLookSat; uniform float uPSat; uniform float uPCon; uniform float uPWarm; uniform sampler2D tLut; uniform float uLutK;\n' + AGX + LUT);
     r('vec3 c = texture2D(tColor, vUv).rgb;', 'vec4 c4 = texture2D(tColor, vUv); vec3 c = c4.rgb; float pm = clamp(c4.a, 0., 1.); vec3 raw = max(c, 0.);');
-    r('c = toneMap(c);\n  c = pow(max(c, 0.), vec3(1./2.2));', `c = srgbOut(agx(c*exp2(uExposure + uGradeEV)));
+    r('c = toneMap(c);\n  c = pow(max(c, 0.), vec3(1./2.2));', `{ vec3 wb = vec3(1. + .09*uPWarm, 1. + .012*uPWarm, 1. - .12*uPWarm); c *= wb/dot(wb, vec3(.2126, .7152, .0722)); }   // the preset's white balance
+  c = srgbOut(agx(c*exp2(uExposure + uGradeEV)));
+  c = mix(c, lutLook(c), uLutK);   // the castle look (tools/make_lut.py)
+  c = max(mix(vec3(dot(c, vec3(.2126, .7152, .0722))), c, uPSat), 0.);   // the preset's colour and contrast, on what the eye sees
+  c = max(.42 + (c - .42)*uPCon, 0.);
   { vec2 q = (vUv - .5)*2.; c *= 1. - .22*smoothstep(.45, 1.05, length(q)*.7071); }
   c = mix(c, srgbOut(raw), pm);`);
     r('c += (hash12(gl_FragCoord.xy) - .5)*.014;', 'c += (hash12(gl_FragCoord.xy) - .5)*.014*(1. - pm);');
     this.u.uGradeEV = { value: g.ev ?? 0 }; this.u.uLookPow = { value: g.pow ?? 1 }; this.u.uLookSat = { value: g.sat ?? 1 };
+    this.u.uPSat = { value: 1 }; this.u.uPCon = { value: 1 }; this.u.uPWarm = { value: 0 };
+    this.u.tLut = { value: g.lut || null }; this.u.uLutK = { value: g.lut ? 1 : 0 };
     this.finalMat.fragmentShader = fs; this.finalMat.needsUpdate = true;
     // the bake carries the large-scale occlusion: screen-space AO only adds contact shadow, at half the samples
     if (!AO_FS.includes('const int NS = 16;')) throw new Error('AO shader moved');
     this.aoMat.fragmentShader = AO_FS.replace('const int NS = 16;', 'const int NS = 8;'); this.aoMat.needsUpdate = true;
   }
+  // the castle hall's per-preset look (light.js gsat / gcon / gwarm); neutral elsewhere
+  look(s) { if (!this.isCastle) return; this.u.uPSat.value = s ? s.gsat : 1; this.u.uPCon.value = s ? s.gcon : 1; this.u.uPWarm.value = s ? s.gwarm : 0; }
   pass(mat, target) { this.quad.material = mat; this.r.setRenderTarget(target); this.r.render(this.fsScene, this.fsCam); }
   render(scene, camera) {
     const r = this.r;

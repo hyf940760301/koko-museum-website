@@ -140,8 +140,8 @@ async function build(progress) {
   ROOM.studio = { id: 1, ocu: studio.ocu, ocuR: studio.ocuR, centre: SO.clone(), pool: studio.pool };
   SERIES.forEach((s) => studio.setEarned(s.index, earned.has(s.id)));
 
-  air = buildAir(CASTLE ? { castle: true } : undefined); scene.add(air.group);
-  if (CASTLE) { castle = await castleMod.buildCastle(renderer, env, castleAssets, { doors }); if (CAPTURE || Q.has('bench')) window.__castle = castle; rot.add(castle.group); castleMod.alphaDiscipline(scene); const gq = Q.has('grade') ? Q.get('grade').split(',').map(Number) : []; post.castle({ ev: gq[0] ?? castleMod.GRADE.ev, pow: gq[1] || castleMod.GRADE.pow, sat: gq[2] || castleMod.GRADE.sat }); }
+  air = buildAir(CASTLE ? { castle: true } : undefined); scene.add(air.group); if (CASTLE) air.setDepth(post.g.texture);
+  if (CASTLE) { castle = await castleMod.buildCastle(renderer, env, castleAssets, { doors }); if (CAPTURE || Q.has('bench')) window.__castle = castle; rot.add(castle.group); castleMod.alphaDiscipline(scene); const gq = Q.has('grade') ? Q.get('grade').split(',').map(Number) : []; post.castle({ ev: gq[0] ?? castleMod.GRADE.ev, pow: gq[1] || castleMod.GRADE.pow, sat: gq[2] || castleMod.GRADE.sat, lut: Q.has('nolut') ? null : castleAssets.lut }); }
   // the first altarpiece is ready before anyone walks in
   const b0 = B[0]; await loadPics(b0);
   const shown = isSeen(b0.s, 0) || SKIP;
@@ -498,7 +498,7 @@ function step(dt) {
   // the room takes on the weather of whatever is open
   const moodOn = !!fb && fb.open > 0.3 && fb.openT > 0.5;
   if (moodOn) daylight.mood = fb.s.mood.light;
-  daylight.update(dt, moodOn); if (daylight.cur) post.u.uExposure.value = CASTLE ? daylight.exposure() : daylight.cur.ev;
+  daylight.update(dt, moodOn); if (daylight.cur) post.u.uExposure.value = CASTLE ? daylight.exposure() : daylight.cur.ev; if (CASTLE) post.look(daylight.room && daylight.room.id === 0 && daylight.cur ? daylight.cur : null);
   air.setWeather(moodOn ? fb.s.mood.weather : null); air.update(dt);
   sound.scene(moodOn && !S.video ? fb.s.music : null, moodOn && !S.video ? fb.s.amb : null); sound.update(dt);
   if (!inRot) studio.update(dt, T);
@@ -605,6 +605,8 @@ function capture() {
     if (o.portal !== undefined && doors) { S.door = S.doorT = o.portal; doors.setOpen(o.portal); }
     if (o.glaze !== undefined) for (const x of B) if (x) x.tondo.material.uniforms.uGlaze.value = o.glaze;
     if (o.mood) { daylight.mood = o.mood; daylight.moodK = 1; daylight.snap(); }
+    // the castle's exposure and look follow the mood too (the frame loop sets them; this shot renders without one)
+    if (o.mood && CASTLE) { post.u.uExposure.value = daylight.exposure(); post.look(daylight.room && daylight.room.id === 0 ? daylight.cur : null); }
     if (o.weather !== undefined) { air.setWeather(o.weather); air.snapWeather(); }
     post.u.uInk.value = o.ink ?? 1; post.u.uWash.value = o.wash ?? 1; post.u.uFade.value = o.fade ?? 1;
     if (o.walk) { S.walk = { pos: new V3(...o.walk.pos), tgt: new V3(...o.walk.tgt), fov: o.walk.fov || 50 }; }

@@ -40,7 +40,8 @@ const TEX = [  // file, sRGB, repeat, rotation
 // light maps (tools/blender/bake_hall.py): the exhibition bay, the door bay, the upper module, the floor
 const LMS = ['bay', 'door', 'upper', 'floor'];
 // downloads the opening counts in its progress: three modules, their light maps, environment, textures
-export const FILES = 4 + LMS.length + TEX.length;
+const TORCH_HALL = new THREE.Vector3(1.25, 0.90, 0.60), TORCH_STUDIO = new THREE.Vector3(1.25, 0.70, 0.30);
+export const FILES = 5 + LMS.length + TEX.length;
 // the hall for main.js ROOM: the sky comes through the lantern (its opening r 1.42 at 13.5 m)
 export const HALL = { ocu: new THREE.Vector3(0, 13.4, 0), ocuR: 1.38 };
 // the iron chandelier comes with the props (step 8); until then its light stays off
@@ -65,8 +66,10 @@ export function preload(renderer, tick = (p) => p) {
     tick(gl.loadAsync(BASE + 'bay.glb')), tick(gl.loadAsync(BASE + 'door.glb')), tick(gl.loadAsync(BASE + 'upper.glb')),
     ...LMS.map((n) => tick(kl.loadAsync(BASE + 'lm/' + n + '_lm.ktx2'))),
     tick(new RGBELoader().loadAsync(BASE + 'env/chapel_512.hdr')),
+    // the final look, 32^3 unrolled (tools/make_lut.py): read raw, never flipped, filtered linearly
+    tick(new THREE.TextureLoader().loadAsync(BASE + 'lut.png')).then((t) => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.generateMipmaps = false; t.minFilter = t.magFilter = THREE.LinearFilter; t.needsUpdate = true; return t; }),
     ...TEX.map(tex),
-  ]).then(([bay, door, upper, ...rest]) => ({ bay, door, upper, lms: Object.fromEntries(LMS.map((n, i) => [n, rest[i]])), hdr: rest[LMS.length], maps: rest.slice(LMS.length + 1) }));
+  ]).then(([bay, door, upper, ...rest]) => ({ bay, door, upper, lms: Object.fromEntries(LMS.map((n, i) => [n, rest[i]])), hdr: rest[LMS.length], lut: rest[LMS.length + 1], maps: rest.slice(LMS.length + 2) }));
 }
 
 export async function loadEnv(renderer, assets) {
@@ -291,6 +294,9 @@ export async function buildCastle(renderer, env, assets, opts = {}) {
     // ambient; after, the day probe scaled by how much of the day's ambient there is, plus the night
     // probe (torch-lit) by how much torch light there is beyond what the day probe already holds
     update() {
+      // torch light in the hall: a deep gold rather than the studio's orange (on the pale floor at night
+      // the old colour read as an orange wash); the studio keeps its own
+      LIGHT.uCandleCol.value.copy(LIGHT.uRoom.value < 0.5 ? TORCH_HALL : TORCH_STUDIO);
       const amb = lum(LIGHT.uAmbUp.value), torch = LIGHT.uCandle.value;
       if (!probe) { PBR.uEnvK.value = Math.min(1.2, Math.max(0.12, amb/0.43)) + 0.25*torch; return; }
       const a = Math.min(1.5, Math.max(0, (amb - probe.ambNight)/(probe.ambDay - probe.ambNight)));

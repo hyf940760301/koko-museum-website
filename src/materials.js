@@ -522,7 +522,7 @@ float sunVisWin(vec3 P){
   float pen = .03 + .01*t; float hy = Q.y > 7.075 ? .225*sqrt(max(0., 1. - pow((Q.y - 7.075)/.225, 2.))) : .225;
   return (1. - smoothstep(hy - pen, hy + pen, off))*smoothstep(6.10 - pen, 6.10 + pen, Q.y)*(1. - smoothstep(7.30 - pen, 7.30 + pen, Q.y));
 }
-float sunVis(vec3 P){ return uRoom < .5 ? sunVisWin(P)*uWin*1.8 : sunVisOcu(P); }   // a small aperture: the pools are bright where they land
+float sunVis(vec3 P){ return uRoom < .5 ? sunVisWin(P)*uWin*3.0 : sunVisOcu(P); }   // a small aperture: the pools are bright where they land
 `;
 const CASTLE_SKY = /* glsl */`vec3 castleSky(vec3 P, vec3 N){
   // the ring of windows as a soft band of sky light: the nearest ones strongly, across the hall faintly

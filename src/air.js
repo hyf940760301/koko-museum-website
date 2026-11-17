@@ -60,6 +60,74 @@ export function buildAir(opts = {}) {
   beam.layers.set(1); beam.renderOrder = 5; beam.frustumCulled = false; group.add(beam);
   if (opts.castle) beam.visible = false;
 
+  // ---- the castle's window beams: the sun-side clerestory windows (up to 5 of the 20) each throw a
+  // slanted prism of light: the window's glass (0.45 x 1.2 m, centre 6.70 m, on r = 12.45 like
+  // sunVisWin) pulled along the sun. Each box is drawn by its back faces only, additive, with the
+  // depth test off: the fragment marches the part of its own eye ray inside the box, stopped by the
+  // scene's depth from the G buffer (so columns in front hide it), and lights two layers of drifting
+  // dust in it. It fades towards the floor, nothing beyond r = 11.95 (inside the wall) counts, and
+  // the strength is the preset's beam x the window sun (uWin), so overcast and night stay quiet.
+  const NB = 5; const BU = { uBeamTh: { value: new Float32Array(NB) }, uBeamW: { value: new Float32Array(NB) }, uBeamL: { value: 20 }, tDepth: { value: null }, uBeamK: { value: Number(new URLSearchParams(location.search).get('beamk')) || 1 } };   // ?beamk= for tuning
+  let beams = null;
+  if (opts.castle) {
+    const corner = [], idx = [], ind = [];
+    for (let b = 0; b < NB; b++) {
+      const o = b*8;
+      for (let k = 0; k < 8; k++) { corner.push(k & 1 ? 1 : -1, k & 2 ? 1 : -1, k & 4 ? 1 : 0); idx.push(b); }
+      // 12 triangles of the box: faces x-, x+, y-, y+, z0, z1
+      [[0, 2, 6, 4], [1, 5, 7, 3], [0, 4, 5, 1], [2, 3, 7, 6], [0, 1, 3, 2], [4, 6, 7, 5]].forEach(([a, b2, c, d]) => ind.push(o + a, o + b2, o + c, o + a, o + c, o + d));
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(corner, 3)); g.setAttribute('aI', new THREE.Float32BufferAttribute(idx, 1)); g.setIndex(ind);
+    beams = new THREE.Mesh(g, new THREE.ShaderMaterial({ side: THREE.DoubleSide, transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, uniforms: { ...shared, ...BU },
+      vertexShader: /* glsl */`attribute float aI; uniform vec3 uSunDir; uniform float uBeamTh[${NB}]; uniform float uBeamW[${NB}]; uniform float uBeamL;
+        varying vec3 vW; flat varying float vTh; flat varying float vWt;
+        void main(){ int i = int(aI + .5); float th = uBeamTh[i]; vTh = th; vWt = uBeamW[i];
+          vec3 T = vec3(cos(th), 0., sin(th)), C = vec3(12.45*sin(th), 6.70, -12.45*cos(th));
+          vW = C + position.x*.40*T + vec3(0., position.y*.78, 0.) - position.z*uBeamL*uSunDir;
+          gl_Position = vWt > .002 ? projectionMatrix*viewMatrix*vec4(vW, 1.) : vec4(0., 0., 2., 1.); }`,
+      fragmentShader: /* glsl */`uniform float uTime; uniform vec3 uSunCol; uniform vec3 uSunDir; uniform float uBeam; uniform float uWin; uniform float uBeamL; uniform float uBeamK; uniform sampler2D tDepth;
+        varying vec3 vW; flat varying float vTh; flat varying float vWt; ${NOISE}
+        void main(){
+          vec3 D = uSunDir, T = vec3(cos(vTh), 0., sin(vTh)), C = vec3(12.45*sin(vTh), 6.70, -12.45*cos(vTh));
+          mat3 Mi = inverse(mat3(T, vec3(0., 1., 0.), -D));
+          vec3 O = cameraPosition, ray = vW - O; float sB = length(ray); vec3 V = ray/sB;
+          vec3 q0 = Mi*(O - C), dq = Mi*V;
+          vec3 lo = vec3(-.40, -.78, 0.), hi = vec3(.40, .78, uBeamL);
+          vec3 t1 = (lo - q0)/dq, t2 = (hi - q0)/dq; vec3 tn = min(t1, t2), tf = max(t1, t2);
+          float tEn = max(max(tn.x, tn.y), tn.z), tEx = min(min(tf.x, tf.y), tf.z);
+          if (abs(sB - tEx) > abs(sB - tEn)) discard;   // the far face only: one fragment per box per pixel, also from inside it
+          float s0 = max(tEn, 0.), s1 = tEx;
+          float dz = texture2D(tDepth, gl_FragCoord.xy/vec2(textureSize(tDepth, 0))).a;
+          float k = -(viewMatrix*vec4(V, 0.)).z; if (dz > 0. && k > 1e-4) s1 = min(s1, dz/k);
+          if (s1 <= s0) discard;
+          float I = 0., ds = (s1 - s0)/10.;
+          for (int j = 0; j < 10; j++) {
+            float s = s0 + (float(j) + .5)*ds; vec3 P = O + V*s, q = q0 + dq*s;
+            if (P.y < 0. || dot(P.xz, P.xz) > 11.95*11.95) continue;
+            // the window's shape at this depth: 0.45 wide, 6.10 - 7.30 with its round head, softening with distance
+            float pen = .03 + .012*q.z, y = 6.70 + q.y;
+            float hy = y > 7.075 ? .225*sqrt(max(0., 1. - pow((y - 7.075)/.225, 2.))) : .225;
+            float m = (1. - smoothstep(hy - pen, hy + pen, abs(q.x)))*smoothstep(6.10 - pen, 6.10 + pen, y)*(1. - smoothstep(7.30 - pen, 7.30 + pen, y));
+            // two layers of dust, drifting slowly
+            float d1 = vnoise(P*1.1 + vec3(uTime*.035, uTime*.012, 0.)), d2 = vnoise(P*3.7 + vec3(0., -uTime*.05, uTime*.02));
+            float dust = .45 + .75*d1*d1 + .35*d2;
+            I += m*dust*mix(.25, 1., smoothstep(0., 3.2, P.y));
+          }
+          I *= ds;
+          float phase = 1. + 1.6*pow(max(dot(V, D), 0.), 5.);   // brighter looking up towards the window
+          vec3 col = uSunCol*vec3(1.0, .80, .55)*I*phase*uBeam*uWin*vWt*.13*uBeamK;
+          gl_FragColor = vec4(col, 1.); }` }));
+    beams.layers.set(1); beams.renderOrder = 4; beams.frustumCulled = false; group.add(beams);
+  }
+  const BAYA = Math.PI/10;
+  const aimBeams = () => {
+    const D = LIGHT.uSunDir.value; const h = Math.hypot(D.x, D.z); const th0 = Math.atan2(D.x, -D.z), k0 = Math.round(th0/BAYA);
+    BU.uBeamL.value = Math.min(6.7/Math.max(D.y, 0.05) + 1.5, 30);
+    const on = LIGHT.uRoom.value < 0.5 && D.y > 0.02 && h > 0.05 && LIGHT.uWin.value*AIR.uBeam.value > 0.01;
+    for (let j = 0; j < NB; j++) { const th = (k0 + j - 2)*BAYA; BU.uBeamTh.value[j] = th; const dA = Math.abs(th - th0); BU.uBeamW.value[j] = on ? Math.max(0, 1 - dA/0.75)**1.5 : 0; }
+    beams.visible = on;
+  };
+
   // ---- dust
   const N = 900; const pos = new Float32Array(N*3), rnd = new Float32Array(N*4);
   let seed = 9173; const rand = () => { seed = (seed*16807) % 2147483647; return seed/2147483647; };
@@ -145,7 +213,9 @@ export function buildAir(opts = {}) {
       flames.geometry.dispose(); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('aS', new THREE.BufferAttribute(s, 1)); flames.geometry = g; },
     setViewport(hPx, fovDeg) { AIR.uPx.value = hPx/(2*Math.tan(fovDeg*Math.PI/360)); },
     setWeather(kind) { wState.want = WEATHER[kind] ? kind : null; },
+    setDepth(tex) { BU.tDepth.value = tex; },
     update(dt) {
+      if (beams) aimBeams();
       if (wState.kind !== wState.want) { wState.amount -= dt*1.2; if (wState.amount <= 0) { wState.amount = 0; wState.kind = wState.want; applyKind(wState.kind); } }
       else if (wState.kind) wState.amount = Math.min(1, wState.amount + dt*0.5);
       wu.uAmount.value = wState.amount; weather.visible = wState.amount > 0.001 && !!wState.kind;
