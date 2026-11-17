@@ -1,5 +1,5 @@
 # Koko museum - one castle bay of the rotunda, built parametrically.
-#   blender -b --factory-startup -P tools/blender/castle_bay.py -- --bay 0 --out assets/castle/bay0.glb
+#   blender -b --factory-startup -P tools/blender/castle_bay.py -- --bay 0 --out _src/castle/bay0.glb
 # Everything is modelled in the bay's own frame (three.js bayMatrix: x along the wall, y up,
 # z into the room, wall face at z = 0 for s = 0). Parts are laid out "unrolled" in (s, y, d):
 # s = arc length along the wall, y = height, d = depth behind the wall face (negative = into
@@ -11,7 +11,7 @@ from mathutils import Vector, Matrix
 argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 ap = argparse.ArgumentParser()
 ap.add_argument('--bay', type=int, default=0)
-ap.add_argument('--out', default='assets/castle/bay0.glb')
+ap.add_argument('--out', default='_src/castle/bay0.glb')
 ap.add_argument('--blend', default='')
 args = ap.parse_args(argv)
 

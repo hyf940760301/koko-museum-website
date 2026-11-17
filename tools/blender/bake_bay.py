@@ -1,5 +1,5 @@
 # Bake the light map of a castle bay with Cycles (GPU / Metal on the Mac).
-#   blender -b --factory-startup -P tools/blender/bake_bay.py -- --in assets/castle/bay0.glb --size 1024 --samples 256 --out assets/castle/lm/bay0_lm.png
+#   blender -b --factory-startup -P tools/blender/bake_bay.py -- --in _src/castle/bay0.glb --size 1024 --samples 256 --out _src/castle/bay0_lm.png
 # R = ambient occlusion (1.5 m), G = irradiance from the bay's two torches / 4 (so 1.0 in the
 # texture is 4x the candle-formula unit used by LIGHTING in src/materials.js). The rotunda's
 # neighbours, floor and cornice are stood in by plain proxies so the occlusion reads right
@@ -10,8 +10,8 @@ from mathutils import Vector
 
 argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 ap = argparse.ArgumentParser()
-ap.add_argument('--in', dest='inp', default='assets/castle/bay0.glb')
-ap.add_argument('--out', default='assets/castle/lm/bay0_lm.png')
+ap.add_argument('--in', dest='inp', default='_src/castle/bay0.glb')
+ap.add_argument('--out', default='_src/castle/bay0_lm.png')
 ap.add_argument('--size', type=int, default=1024)
 ap.add_argument('--samples', type=int, default=256)
 ap.add_argument('--tsamples', type=int, default=512)

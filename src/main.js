@@ -96,15 +96,18 @@ const restOpen = (b) => (b.k === 0 ? 1 : 0);
 
 // ---------------------------------------------------------------- build
 async function build(progress) {
-  let done = 0; const total = SERIES.length + 5; const tickP = (p) => p.then((v) => { progress(++done/total); return v; });
+  // ?castle=1: its downloads start now and count in the opening's progress (castle.js preload)
+  const castleMod = CASTLE ? await import('./castle.js') : null;
+  let done = 0; const total = SERIES.length + 5 + (castleMod ? castleMod.FILES : 0); const tickP = (p) => p.then((v) => { progress(++done/total); return v; });
+  const castleP = castleMod ? castleMod.preload(renderer, tickP) : null;
   const [qs, front, turn] = await Promise.all([Promise.all(SERIES.map((s) => tickP(image(asset(s, 'q.jpg'))))), tickP(image('./assets/study/front.jpg')), tickP(image('./assets/study/turnaround.jpg')),
     ...['p1.jpg', 'p2.jpg', 'p3.jpg'].map((f) => tickP(tex(asset(SERIES[0], f))))]);
 
   const repeat = (t, srgb) => { t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; return t; };
   const ph = (name) => loader.loadAsync('./assets/tex/ph/' + name);
   const [wood, woodN, plaster, plasterN, marble, marbleN, floor, floorN] = await Promise.all([ph('oak_diff.jpg'), ph('oak_nor.jpg'), ph('stucco_diff.jpg'), ph('stucco_nor.jpg'), ph('marble_diff.jpg'), ph('marble_nor.jpg'), ph('terrazzo_diff.jpg'), ph('terrazzo_nor.jpg')]);
-  let castleMod = null, env = null;
-  if (CASTLE) { castleMod = await import('./castle.js'); setCastle(true); env = await castleMod.loadEnv(renderer); }
+  let env = null, castleAssets = null;
+  if (CASTLE) { castleAssets = await castleP; setCastle(true); env = await castleMod.loadEnv(renderer, castleAssets); }
   const fresco = frescoMaterial(friezeTexture(), { wood: repeat(wood, false), woodN: repeat(woodN, false), plaster: repeat(plaster, false), plasterN: repeat(plasterN, false), marble: repeat(marble, false), marbleN: repeat(marbleN, false), floor: repeat(floor, false), floorN: repeat(floorN, false) });
   rot = new THREE.Group(); scene.add(rot);
   rot.add(new THREE.Mesh(CASTLE ? buildRotunda({ skip: [0] }) : buildRotunda(), fresco));
@@ -136,7 +139,7 @@ async function build(progress) {
   SERIES.forEach((s) => studio.setEarned(s.index, earned.has(s.id)));
 
   air = buildAir(); scene.add(air.group);
-  if (CASTLE) { castle = await castleMod.buildCastle(renderer, env); rot.add(castle.group); castleMod.alphaDiscipline(scene); const gq = Q.has('grade') ? Q.get('grade').split(',').map(Number) : []; post.castle({ ev: gq[0] ?? castleMod.GRADE.ev, pow: gq[1] || castleMod.GRADE.pow, sat: gq[2] || castleMod.GRADE.sat }); }
+  if (CASTLE) { castle = await castleMod.buildCastle(renderer, env, castleAssets); if (CAPTURE || Q.has('bench')) window.__castle = castle; rot.add(castle.group); castleMod.alphaDiscipline(scene); const gq = Q.has('grade') ? Q.get('grade').split(',').map(Number) : []; post.castle({ ev: gq[0] ?? castleMod.GRADE.ev, pow: gq[1] || castleMod.GRADE.pow, sat: gq[2] || castleMod.GRADE.sat }); }
   // the first altarpiece is ready before anyone walks in
   const b0 = B[0]; await loadPics(b0);
   const shown = isSeen(b0.s, 0) || SKIP;
