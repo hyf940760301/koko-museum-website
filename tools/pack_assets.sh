@@ -25,9 +25,9 @@ python3 - "$SRC" "$WORK" <<'PY'
 import sys, os
 from PIL import Image
 src, out = sys.argv[1], sys.argv[2]
-JOBS = [  # source, runtime name, size (same sizes as step 1)
-  ('sandstone_blocks_08_diff_2k.jpg', 'sandstone_diff', 2048), ('sandstone_blocks_08_nor_gl_2k.jpg', 'sandstone_nor', 2048), ('sandstone_blocks_08_arm_2k.jpg', 'sandstone_arm', 1024),
-  ('medieval_wall_01_diff_2k.jpg', 'render_diff', 1536), ('medieval_wall_01_nor_gl_2k.jpg', 'render_nor', 1536), ('medieval_wall_01_arm_2k.jpg', 'render_arm', 1024),
+JOBS = [  # source, runtime name, size: colour up to 2K, normal and ARM at most 1K (download budget)
+  ('sandstone_blocks_08_diff_2k.jpg', 'sandstone_diff', 2048), ('sandstone_blocks_08_nor_gl_2k.jpg', 'sandstone_nor', 1024), ('sandstone_blocks_08_arm_2k.jpg', 'sandstone_arm', 1024),
+  ('medieval_wall_01_diff_2k.jpg', 'render_diff', 1536), ('medieval_wall_01_nor_gl_2k.jpg', 'render_nor', 1024), ('medieval_wall_01_arm_2k.jpg', 'render_arm', 1024),
   ('oak_veneer_01_diff_1k.jpg', 'oak_diff', 1024), ('oak_veneer_01_nor_gl_1k.jpg', 'oak_nor', 1024), ('oak_veneer_01_arm_1k.jpg', 'oak_arm', 512),
   ('metal_plate_02_diff_1k.jpg', 'iron_diff', 512), ('metal_plate_02_nor_gl_1k.jpg', 'iron_nor', 512),
 ]
