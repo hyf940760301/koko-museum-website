@@ -32,8 +32,9 @@ const TEX = [  // file, sRGB, repeat, rotation
   ['render_diff', true, 1.125], ['render_nor', false, 1.125], ['render_arm', false, 1.125],
   ['oak_diff', true, 1.23, Math.PI/2], ['oak_nor', false, 1.23, Math.PI/2], ['oak_arm', false, 1.23, Math.PI/2],
   ['iron_diff', true, 4], ['iron_nor', false, 4],
-  // the floor: warm slabs (floor_tiles_08, 1.5 m a texture tile, uv in metres) and the herringbone walkway (uv in tiles)
-  ['slab_diff', true, 1/1.5], ['slab_nor', false, 1/1.5], ['slab_arm', false, 1/1.5],
+  // the floor: warm slabs (floor_tiles_08, 5x5 slabs a texture; step 6 spreads one texture over 3.75 m,
+  // 0.75 m slabs instead of 0.30 m, calmer) and the herringbone walkway (uv in tiles)
+  ['slab_diff', true, 1/3.75], ['slab_nor', false, 1/3.75], ['slab_arm', false, 1/3.75],
   ['herring_diff', true], ['herring_nor', false], ['herring_arm', false],
 ];
 // light maps (tools/blender/bake_hall.py): the exhibition bay, the door bay, the upper module, the floor
@@ -236,8 +237,8 @@ export async function buildCastle(renderer, env, assets, opts = {}) {
   const mats = (lm) => {
     const common = { env, lm }; const sfx = lm ? '' : '';
     return {
-      stone: castleMaterial('stone' + sfx, { ...common, map: sd, normalMap: sn, arm: sa, color: new THREE.Color(1.50, 1.33, 1.06), roughness: 1, normal: 1.0, envK: 0.35, mapMean: [0.377, 0.289, 0.177], mapK: 0.85, moss: 0.22 }),
-      render: castleMaterial('render', { ...common, map: md, normalMap: mn, arm: ma, color: new THREE.Color(0.46, 0.17, 0.13), roughness: 1, normal: 0.45, envK: 0.30, mapMean: [0.59, 0.444, 0.293], mapK: 0.45 }),
+      stone: castleMaterial('stone' + sfx, { ...common, map: sd, normalMap: sn, arm: sa, color: new THREE.Color(1.50, 1.33, 1.06), roughness: 1, normal: 1.0, envK: 0.35, mapMean: [0.377, 0.289, 0.177], mapK: 0.85, wear: 'wall' }),   // (the step-1 wall moss is gone: warm, not green)
+      render: castleMaterial('render', { ...common, wear: 'wall', map: md, normalMap: mn, arm: ma, color: new THREE.Color(0.46, 0.17, 0.13), roughness: 1, normal: 0.45, envK: 0.30, mapMean: [0.59, 0.444, 0.293], mapK: 0.45 }),
       oak: castleMaterial('oak', { ...common, map: od, normalMap: on, arm: oa, color: new THREE.Color(0.78, 0.62, 0.50), roughness: 0.9, normal: 0.6, envK: 0.45 }),
       iron: castleMaterial('iron', { ...common, map: id, normalMap: inn, color: new THREE.Color(0.55, 0.50, 0.47), roughness: 0.55, metalness: 0.85, normal: 0.8, envK: 0.6 }),
       pitch: castleMaterial('pitch', { ...common, color: new THREE.Color(0.030, 0.024, 0.019), roughness: 0.62, metalness: 0, envK: 0.5 }),
@@ -275,9 +276,9 @@ export async function buildCastle(renderer, env, assets, opts = {}) {
   group.add(inscription(castleMaterial('inscr', { env, color: new THREE.Color(0.11, 0.075, 0.05), roughness: 0.8, envK: 0.2, alphaTest: 0.5 })));
 
   group.add(buildFloor({
-    slab: castleMaterial('slab', { env, lm: lms.floor, polar: true, map: fd, normalMap: fn, arm: fa, color: new THREE.Color(1.55, 1.38, 1.12), roughness: 1, normal: 0.7, envK: 0.45, mapMean: [0.248, 0.183, 0.129], mapK: 0.75 }),
-    herring: castleMaterial('herring', { env, lm: lms.floor, polar: true, map: hd, normalMap: hn, arm: ha, color: new THREE.Color(1.62, 1.40, 1.12), roughness: 0.5, normal: 0.6, envK: 0.8, mapMean: [0.229, 0.173, 0.109], mapK: 0.85 }),
-    rose: castleMaterial('rose', { env, lm: lms.floor, polar: true, map: sd, normalMap: sn, arm: sa, color: new THREE.Color(1.50, 1.33, 1.06), roughness: 0.75, normal: 0.5, envK: 0.6, mapMean: [0.377, 0.289, 0.177], mapK: 0.85 }),
+    slab: castleMaterial('slab', { env, lm: lms.floor, polar: true, wear: 'floor', map: fd, normalMap: fn, arm: fa, color: new THREE.Color(1.55, 1.38, 1.12), roughness: 1, normal: 0.45, envK: 0.45, mapMean: [0.248, 0.183, 0.129], mapK: 0.45 }),   // slab to slab colour pulled in
+    herring: castleMaterial('herring', { env, lm: lms.floor, polar: true, wear: 'floor', map: hd, normalMap: hn, arm: ha, color: new THREE.Color(1.62, 1.40, 1.12), roughness: 0.5, normal: 0.6, envK: 0.8, mapMean: [0.229, 0.173, 0.109], mapK: 0.85 }),
+    rose: castleMaterial('rose', { env, lm: lms.floor, polar: true, wear: 'rose', map: sd, normalMap: sn, arm: sa, color: new THREE.Color(1.50, 1.33, 1.06), roughness: 0.75, normal: 0.5, envK: 0.6, mapMean: [0.377, 0.289, 0.177], mapK: 0.85 }),
     brass: castleMaterial('brass', { env, color: new THREE.Color(0.95, 0.70, 0.36), roughness: 0.32, metalness: 1, envK: 2.4 }),   // the probe is the hall itself, dimmer than the chapel HDR
   }, true));
 
@@ -311,7 +312,9 @@ export async function buildCastle(renderer, env, assets, opts = {}) {
       Object.assign(daylight, keep); daylight.snap();
       hide.forEach((o, i) => { o.visible = vis[i]; });
       pm.dispose(); rt.dispose();
-      group.traverse((o) => { if (o.isMesh && o.material && o.material.isMeshStandardMaterial && o.material.envMap) { o.material.envMap = day.tex; o.material.needsUpdate = true; } });
+      // every castle material: the merged hall, and the door leaves that hang on rotunda.js's pivots
+      const ms = new Set(Object.values(ML)); group.traverse((o) => { if (o.isMesh && o.material) ms.add(o.material); });
+      for (const m of ms) if (m.isMeshStandardMaterial && m.envMap) { m.envMap = day.tex; m.needsUpdate = true; }
       for (const m of gilts) { if (!m) continue; m.uniforms.tEnv.value = day.tex; Object.assign(m.defines, cubeUVDefines(day.tex)); m.needsUpdate = true; }
       PBR.uEnvMapN.value = night.tex;
       probe = { ambDay: day.amb, ambNight: night.amb }; api.update();

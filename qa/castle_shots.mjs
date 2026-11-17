@@ -68,6 +68,13 @@ VAULT.X1 = { hour: 12.5, walk: { pos: [0, 3.2, -1.5], tgt: [0, 0, -7.8], fov: 60
 const A_COL = { pos: [0.4, 1.1, -8.6], tgt: [1.83, 0.25, -11.56], fov: 50 };
 const A_DOOR = { pos: [2.39, 1.6, 6.58], tgt: [2.61, 1.5, 11.30], fov: 62 };
 Object.assign(VAULT, { A1: { hour: 12.5, walk: A_COL }, A2: { hour: 22, walk: A_COL }, A3: { hour: 12.5, walk: A_DOOR }, A4: { hour: 22, walk: A_DOOR } });
+// step 6 (wear), close: soot over a torch, damp at the wall foot, worn arch and column edges, the polished ways
+Object.assign(VAULT, {
+  W1: { hour: 12.5, walk: { pos: [1.408, 3.2, -8.889], tgt: [1.846, 3.6, -11.655], fov: 40 } },
+  W2: { hour: 12.5, walk: { pos: [0.9, 0.95, -9.4], tgt: [1.6, 0.35, -11.8], fov: 50 } },
+  W3: { hour: 12.5, walk: { pos: [0.2, 2.2, -8.3], tgt: [0.6, 3.1, -11.9], fov: 44 } },
+  W4: { hour: 12.5, walk: { pos: [-1.2, 1.7, 3.2], tgt: [0.3, 0, 10.5], fov: 62 } },
+});
 for (const h of [7.4, 9, 10.5, 12.5, 14, 15.5, 17, 17.8]) VAULT[`S_${String(h).replace('.', '_')}`] = { hour: h, walk: { pos: [0, 9.5, 9.0], tgt: [0, 0, -2.0], fov: 74 } };
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);

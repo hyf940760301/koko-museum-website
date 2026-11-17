@@ -35,12 +35,41 @@ const ENV_PARS = THREE.ShaderChunk.envmap_physical_pars_fragment.replace(
   'vec4 envMapColor = textureCubeUV( envMap, reflectVec, roughness )*uProbeA + (uProbeB > .001 ? textureCubeUV( uEnvMapN, reflectVec, roughness )*uProbeB : vec4(0.));');
 if (ENV_PARS === THREE.ShaderChunk.envmap_physical_pars_fragment) throw new Error('envmap chunk moved');
 
+// Step 6, the wear of the hall, warm and never dirty (the plan's caps: nothing darker than x0.85,
+// no green, no blue-black). All analytic from the world position except the edges, which read the
+// curvature baked into the light map (A). ?nowear turns it off, for before/after comparisons.
+const NOWEAR = typeof location !== 'undefined' && new URLSearchParams(location.search).has('nowear');
+const WEAR = /* glsl */`
+// rising damp at the foot of the wall: up to 0.55 m, the edge broken by noise at 1.5 per metre
+float wDamp(vec3 P){
+  if (length(P.xz) < 11.0) return 0.;
+  float e = .55 + .09*(vnoise(P*1.5) - .5)*2.;
+  return 1. - smoothstep(e - .20, e, P.y);
+}
+// soot over each torch (y 3.0-4.4, 0.35 wide) and a breath of it under the string course
+float wSoot(vec3 P){
+  if (length(P.xz) < 10.8) return 0.;
+  float ang = atan(P.x, -P.z); float a0 = (floor(ang/0.314159265) + .5)*0.314159265; float s = (ang - a0)*12.;
+  float dy = P.y - 3.7; float g = exp(-.5*(s*s/(.12*.12) + dy*dy/(.33*.33)))*(.8 + .2*vnoise(P*6.));
+  float band = exp(-.5*s*s/(.28*.28))*smoothstep(5.15, 5.58, P.y)*step(P.y, 5.62);
+  return max(g, band*.35);
+}
+// feet: the walkway ring (r 9.2-11.0) and the way from the middle to the door (bay 10, +z)
+float wPolish(vec3 P){
+  float r = length(P.xz);
+  float ring = smoothstep(9.0, 9.4, r)*(1. - smoothstep(10.9, 11.2, r));
+  float path = (1. - smoothstep(.55, 1.05, abs(P.x)))*step(0., P.z)*smoothstep(1.8, 2.4, r);
+  return max(ring, path)*(.70 + .30*vnoise(P*.9));
+}
+`;
+
 const PARS = /* glsl */`
 uniform float uEnvK; uniform float uTorchK; uniform float uOpenA[20]; uniform float uWideA[20];
 uniform sampler2D uEnvMapN; uniform float uProbeA; uniform float uProbeB; uniform float uCSky; uniform float uCAmb;
 varying vec3 vCW;
 ${NOISE}
 ${ROOM_LIGHT}
+${WEAR}
 `;
 
 // the soft shade an altarpiece and the arch leave on the niche back (as mode 4 of the fresco)
@@ -60,6 +89,37 @@ const NICHE = /* glsl */`
   }
 `;
 
+// the wear on the albedo (after the map) and on the roughness
+function wearColour(w) {
+  if (!w) return '';
+  if (w === 'wall') return /* glsl */`
+  {
+    float dmp = wDamp(vCW), sot = wSoot(vCW);
+    diffuseColor.rgb *= mix(vec3(1.), vec3(.90, .86, .80), dmp);    // warm brown, x0.86 at most
+    diffuseColor.rgb *= mix(vec3(1.), vec3(.86, .85, .84), sot);    // x0.85 at the heart of a soot mark
+    #if defined(USE_LIGHTMAP) && !defined(FLOOR_POLAR)
+    diffuseColor.rgb *= 1. + .06*smoothstep(.62, .85, texture2D(lightMap, vLightMapUv).a);   // worn, lighter edges
+    #endif
+  }`;
+  if (w === 'floor') return /* glsl */`
+  diffuseColor.rgb *= 1. + .05*wPolish(vCW);`;
+  if (w === 'rose') return /* glsl */`
+  {
+    // the rose as two stones: pale petals and centre, a warm red-brown ground between them and in the outer band
+    float r = length(vCW.xz); float a = atan(vCW.x, -vCW.z); float d = a - floor(a/0.785398 + .5)*0.785398;
+    float t = clamp((r - .40)/1.16, 0., 1.); float w = sin(3.14159*t)*.30*(1. - .35*t);
+    float petal = (1. - smoothstep(-.012, .012, abs(d)*r - w*r))*step(.40, r)*step(r, 1.56);
+    float ground = step(.40, r)*(1. - petal);
+    diffuseColor.rgb *= mix(vec3(1.10, 1.08, 1.04), vec3(.66, .50, .38), ground);
+  }`;
+  return '';
+}
+function wearRough(w) {
+  if (w === 'wall') return '\n  roughnessFactor = max(.2, roughnessFactor - .10*wDamp(vCW));';
+  if (w === 'floor') return '\n  roughnessFactor = mix(roughnessFactor, .32, wPolish(vCW));';
+  return '';
+}
+
 // kind: 'stone' | 'render' | 'oak' | 'iron' | 'pitch'
 export function castleMaterial(kind, o) {
   const m = new THREE.MeshStandardMaterial({
@@ -70,6 +130,7 @@ export function castleMaterial(kind, o) {
     alphaTest: o.alphaTest ?? 0,
   });
   m.defines = { CASTLE_ANALYTIC: o.lm ? 'false' : 'true' }; if (o.polar) m.defines.FLOOR_POLAR = '';
+  const wear = NOWEAR ? null : o.wear;   // 'wall' | 'floor' | 'rose'
   m.name = 'castle-' + kind;
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, LIGHT, PBR);
@@ -81,6 +142,8 @@ export function castleMaterial(kind, o) {
   diffuseColor.rgb = mix(diffuse*vec3(${o.mapMean.map((v) => v.toFixed(3)).join(', ')}), diffuseColor.rgb, ${(o.mapK ?? 1).toFixed(3)});${o.moss ? `
   // the faintest moss, low down where the damp would sit
   diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb*vec3(.80, .90, .70), ${o.moss.toFixed(3)}*smoothstep(.9, .05, vCW.y)*smoothstep(.35, .75, vnoise(vCW*2.7)));` : ''}` : '#include <map_fragment>')
+      .replace('#include <color_fragment>', '#include <color_fragment>' + wearColour(wear))
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>' + wearRough(wear))
       .replace('#include <lights_fragment_maps>', /* glsl */`#include <lights_fragment_maps>
   {
     vec3 Nw = inverseTransformDirection(normal, viewMatrix);
@@ -111,7 +174,7 @@ export function castleMaterial(kind, o) {
   outgoingLight = mix(outgoingLight, uHazeCol, 1. - exp(-length(cameraPosition - vCW)*uHaze));
   #include <opaque_fragment>`);
   };
-  m.customProgramCacheKey = () => 'castle-' + kind + (o.lm ? '' : '-nolm') + (o.polar ? '-polar' : '') + (o.alphaTest ? '-at' : '');
+  m.customProgramCacheKey = () => 'castle-' + kind + (o.lm ? '' : '-nolm') + (o.polar ? '-polar' : '') + (o.alphaTest ? '-at' : '') + (wear ? '-w' + wear : '');
   return m;
 }
 
