@@ -150,12 +150,27 @@ async function build(progress) {
   enterRoom('rotunda');
   // the hall's own reflections: day and night probes from its middle (castle.js)
   if (CASTLE) { castle.captureProbes(renderer, scene, daylight, [gilt], [air.group]); daylight.snap(); }
+  // the castle's furniture follows once the hall is open (captures and the bench wait for it)
+  if (CASTLE && !Q.has('noprops')) {
+    const pp = castle.loadProps({ atlas, series: SERIES }).then((pr) => {
+      castle.group.updateMatrixWorld(true);
+      for (const b of B) { if (!b) continue; b.tri.group.traverse((o) => { const pa = o.isMesh && o.geometry.parameters; if (pa && pa.width === 0.80 && pa.height === 0.15) o.material = pr.plateMat(plateTexture(b.s.latin, `N° ${b.s.no} · MMXXVI`).image); }); }
+      castleMod.alphaDiscipline(rot);
+      if (S.room === 'rotunda') setHallFlames();
+    }).catch((e) => console.error('castle props', e));
+    if (CAPTURE || Q.has('bench')) await pp;
+  }
+}
+// the torches, and the castle chandelier's candles once it hangs
+function setHallFlames() {
+  const pts = sconcePoints(); const cand = CASTLE && castle ? castle.flames : [];
+  air.setFlames([...pts, ...cand], cand.length ? [...pts.map(() => 0), ...cand.map(() => 1)] : null);
 }
 
 function enterRoom(name) {
   S.room = name; const r = ROOM[name]; rot.visible = name === 'rotunda'; studio.group.visible = name === 'studio';
   daylight.setRoom(r); air.place(0.5); air.setWeather(null); air.snapWeather();
-  if (name === 'rotunda') { air.setFlames(sconcePoints()); air.flames.material.uniforms.uLit.value = 0; }
+  if (name === 'rotunda') { setHallFlames(); air.flames.material.uniforms.uLit.value = 0; }
   else { air.setFlames([studio.flame]); air.flames.material.uniforms.uLit.value = 0.9; LIGHT.uLampA.value.set(studio.flame.x, studio.flame.y, studio.flame.z, LIGHT.uLampA.value.w); LIGHT.uLampB.value.set(studio.lampB.x, studio.lampB.y, studio.lampB.z, LIGHT.uLampB.value.w); }
   S.mode = 'look'; S.shot = null; S.hover = S.hoverPanel = S.hoverHit = null; S.yaw = S.yawT = 0; S.pitch = S.pitchT = name === 'rotunda' ? restPitch() : 0.02; S.vyaw = 0;
   daylight.snap();

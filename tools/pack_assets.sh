@@ -66,8 +66,43 @@ for m in bay door upper floor; do   # (bake_hall.py can also bake bay9 / bay11; 
   ktx create --format R8G8B8A8_UNORM --assign-tf linear --assign-primaries none $UASTC $LV "$RAW/${m}_lm.png" "$OUT/lm/${m}_lm.ktx2"
 done
 
+# props (step 8): the Poly Haven kite shield's maps (body colour at 1K, the rest at 512: it hangs 3.8 m
+# up beside the door); the props of tools/blender/props_castle.py use the hall's oak and iron maps
+SH=_src/polyhaven/kite_shield/textures
+python3 - "$SH" "$WORK" <<'PY2'
+import sys, os
+from PIL import Image
+src, out = sys.argv[1], sys.argv[2]
+for s, d, size in [('body_diff', 'shield_diff', 1024), ('body_nor_gl', 'shield_nor', 512), ('body_arm', 'shield_arm', 512),
+                   ('clamps_trim_diff', 'shtrim_diff', 512), ('clamps_trim_nor_gl', 'shtrim_nor', 512), ('clamps_trim_arm', 'shtrim_arm', 512)]:
+    p = os.path.join(out, 'props', d + '.png'); os.makedirs(os.path.dirname(p), exist_ok=True)
+    if os.path.exists(p): continue
+    Image.open(os.path.join(src, f'kite_shield_{s}_1k.jpg')).convert('RGB').resize((size, size), Image.LANCZOS).save(p)
+PY2
+mkdir -p "$OUT/props"
+for f in "$WORK"/props/*.png; do
+  n=$(basename "$f" .png); [ "$OUT/props/$n.ktx2" -nt "$f" ] && [ -z "${FORCE:-}" ] && continue
+  case "$n" in
+    *_diff) ktx create --format R8G8B8_SRGB --assign-tf srgb --assign-primaries bt709 $UASTC $RDO $MIP "$f" "$OUT/props/$n.ktx2" ;;
+    *_arm)  ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none $ETC1S $MIP "$f" "$OUT/props/$n.ktx2" ;;
+    *_nor)  ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none --normalize $UASTC $RDO $MIP "$f" "$OUT/props/$n.ktx2" ;;
+  esac
+done
+# the shield's geometry without its jpg maps (castle.js gives it the KTX2 ones), and the props
+python3 - <<'PY3'
+import json
+D = '_src/polyhaven/kite_shield'; g = json.load(open(D + '/kite_shield_1k.gltf'))
+for m in g['materials']:
+    pm = m.get('pbrMetallicRoughness', {}); [pm.pop(x, None) for x in ['baseColorTexture', 'metallicRoughnessTexture']]
+    m.pop('normalTexture', None); m.pop('occlusionTexture', None)
+for k in ['images', 'textures', 'samplers']: g.pop(k, None)
+json.dump(g, open(D + '/shield_notex.gltf', 'w'))
+PY3
+gltf-transform meshopt _src/polyhaven/kite_shield/shield_notex.gltf "$OUT/props/shield.glb" --level medium --quantize-position 16 --quantize-normal 12 --quantize-texcoord 14 >/dev/null
+gltf-transform meshopt "$RAW/props.glb" "$OUT/props/props.glb" --level medium --quantize-position 16 --quantize-normal 12 --quantize-texcoord 16 >/dev/null
+
 # 3. geometry: the kit modules (tools/blender/castle_kit.py)
 for m in bay door upper; do
   gltf-transform meshopt "$RAW/$m.glb" "$OUT/$m.glb" --level medium --quantize-position 16 --quantize-normal 12 --quantize-texcoord 16 >/dev/null
 done
-ls -l "$OUT"/tex/*.ktx2 "$OUT"/lm/*.ktx2 "$OUT"/*.glb | awk '{printf "%8.1f KB  %s\n", $5/1024, $9}'
+ls -l "$OUT"/tex/*.ktx2 "$OUT"/lm/*.ktx2 "$OUT"/*.glb "$OUT"/props/* | awk '{printf "%8.1f KB  %s\n", $5/1024, $9}'

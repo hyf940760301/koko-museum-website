@@ -21,6 +21,7 @@ import { MeshoptDecoder } from '../vendor/three/addons/libs/meshopt_decoder.modu
 import { bayMatrix, K } from './rotunda.js';
 import { LIGHT, cubeUVDefines } from './materials.js';
 import { castleMaterial, PBR } from './pbr.js';
+import { loadProps } from './props.js';
 
 export { PBR };
 // AgX puts mid-grey lower than the old curve: lift the grade so the room keeps its brightness
@@ -44,8 +45,9 @@ const TORCH_HALL = new THREE.Vector3(1.25, 0.90, 0.60), TORCH_STUDIO = new THREE
 export const FILES = 5 + LMS.length + TEX.length;
 // the hall for main.js ROOM: the sky comes through the lantern (its opening r 1.42 at 13.5 m)
 export const HALL = { ocu: new THREE.Vector3(0, 13.4, 0), ocuR: 1.38 };
-// the iron chandelier comes with the props (step 8); until then its light stays off
-export const CHANDELIER = false;
+// the iron chandelier (step 8, src/props.js): its light is the analytic point of materials.js castleSky,
+// on from the start so the night probe holds it; the model follows with the props
+export const CHANDELIER = true;
 // the castle lays its own floor (main.js then leaves the old one out of the drum)
 export const FLOOR = true;
 
@@ -288,8 +290,17 @@ export async function buildCastle(renderer, env, assets, opts = {}) {
   const gpu = [...Object.values(lms), ...maps].map((t) => ({ format: t.format, w: t.image.width, h: t.image.height, levels: (t.mipmaps || []).length, bytes: texBytes(t) }));
   const lum = (v) => v.x*0.2126 + v.y*0.7152 + v.z*0.0722;
   let probe = null;   // { ambDay, ambNight } once captured
+  let dayProbe = null;
   const api = {
-    group, gpu,
+    group, gpu, flames: [],
+    // the furniture (src/props.js), fetched once the hall is open; resolves with the props' api
+    async loadProps(ctx) {
+      const t0 = performance.now();
+      const pr = await loadProps({ ...ctx, ktx: ktxLoader(renderer), env: dayProbe || env, maps: { id, inn, od, on, oa }, flamesOut: api.flames });
+      alphaDiscipline(pr.group); group.add(pr.group);
+      if (dayProbe) pr.group.traverse((o) => { if (o.isMesh && o.material.envMap) { o.material.envMap = dayProbe; o.material.needsUpdate = true; } });
+      api.props = pr; api.propsMs = performance.now() - t0; return pr;
+    },
     // env strength follows the light of the hour: before the probes, the chapel HDR scaled by the
     // ambient; after, the day probe scaled by how much of the day's ambient there is, plus the night
     // probe (torch-lit) by how much torch light there is beyond what the day probe already holds
@@ -325,6 +336,7 @@ export async function buildCastle(renderer, env, assets, opts = {}) {
       PBR.uEnvMapN.value = night.tex;
       probe = { ambDay: day.amb, ambNight: night.amb }; api.update();
       api.probeMs = performance.now() - t0;
+      dayProbe = day.tex;
       return { day: day.tex, night: night.tex };
     },
   };

@@ -531,7 +531,8 @@ const CASTLE_SKY = /* glsl */`vec3 castleSky(vec3 P, vec3 N){
   float dn = dot(Wn, Wn); vec3 Ln = Wn*inversesqrt(dn), Lf = normalize(Wf);
   float s = max(dot(N, Ln)*.6 + .4, 0.)*2.2/(1. + dn*.06) + max(dot(N, Lf)*.6 + .4, 0.)*.12 + .05;
   vec3 E = uSkyCol*uWinSky*s*.022*vec3(1.05, .82, .58);   // through amber glass
-  if (uChand > .003) E += uCandleCol*uChand*pointLight(P, N, vec3(0., 6.4, 0.), .08)*1.2;
+  // the corona's twenty candles (step 8): beeswax light, paler than the torches, so the pale floor stays gold rather than orange
+  if (uChand > .003) E += vec3(1.20, .94, .70)*uChand*pointLight(P, N, vec3(0., 6.4, 0.), .08)*.55;
   return E;
 }
 `;

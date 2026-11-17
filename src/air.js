@@ -194,23 +194,24 @@ export function buildAir(opts = {}) {
 
   // ---- candle flames
   const flames = new THREE.Points(new THREE.BufferGeometry(), new THREE.ShaderMaterial({ ...PREMUL, uniforms: { ...shared, uLit: { value: 0 } },
-    vertexShader: /* glsl */`attribute float aS; uniform float uPx; uniform float uTime; varying float vS;
-      void main(){ vec4 mv = viewMatrix*vec4(position, 1.); gl_Position = projectionMatrix*mv; gl_PointSize = max(2., .42*uPx/-mv.z); vS = aS; }`,
-    fragmentShader: /* glsl */`uniform float uTime; uniform float uCandle; uniform float uLit; varying float vS; ${NOISE}
+    vertexShader: /* glsl */`attribute float aS; attribute float aK; uniform float uPx; uniform float uTime; varying float vS; varying float vK;
+      void main(){ vec4 mv = viewMatrix*vec4(position, 1.); gl_Position = projectionMatrix*mv; gl_PointSize = max(2., .42*(aK > .5 ? .5 : 1.)*uPx/-mv.z); vS = aS; vK = aK; }`,
+    fragmentShader: /* glsl */`uniform float uTime; uniform float uCandle; uniform float uLit; uniform float uChand; varying float vS; varying float vK; ${NOISE}
       void main(){ vec2 q = (gl_PointCoord - .5)*vec2(1., -1.); float fl = vnoise(vec3(uTime*6., vS*10., 0.));
         vec2 f = q*vec2(11., 5.2) - vec2((fl - .5)*.5*(q.y + .1)*6., -.25);
         float body = smoothstep(1., .25, length(vec2(f.x*(1. + max(f.y, 0.)*1.3), f.y)));
         float glow = exp(-dot(q, q)*26.)*.20*(.8 + .4*fl);
         vec3 col = vec3(1.9, 1.25, .45)*body*(1.1 + .4*fl) + vec3(1.2, .62, .22)*glow;
-        float k = max(max(uCandle, 0.), uLit); gl_FragColor = vec4(col*k, 0.); }` }));
+        float k = vK > .5 ? uChand : max(max(uCandle, 0.), uLit); gl_FragColor = vec4(col*k, 0.); }` }));   // vK: a candle of the castle's chandelier
   flames.layers.set(1); flames.frustumCulled = false; flames.renderOrder = 8; group.add(flames);
 
   return {
     group, sky, flames,
     // tell the air which oculus it serves
     place(skyLift = 0.5) { const o = LIGHT.uOcu.value; sky.position.set(o.x, o.y + skyLift, o.z); sky.scale.setScalar(LIGHT.uOcuR.value/0.96 + 0.12); },
-    setFlames(points) { const p = new Float32Array(points.length*3), s = new Float32Array(points.length); points.forEach((v, i) => { p[i*3] = v.x; p[i*3 + 1] = v.y; p[i*3 + 2] = v.z; s[i] = (i*0.618) % 1; });
-      flames.geometry.dispose(); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('aS', new THREE.BufferAttribute(s, 1)); flames.geometry = g; },
+    // points, and which of them are the castle chandelier's candles (kinds[i] = 1: smaller, lit by uChand)
+    setFlames(points, kinds = null) { const p = new Float32Array(points.length*3), s = new Float32Array(points.length), kk = new Float32Array(points.length); points.forEach((v, i) => { p[i*3] = v.x; p[i*3 + 1] = v.y; p[i*3 + 2] = v.z; s[i] = (i*0.618) % 1; kk[i] = kinds ? kinds[i] : 0; });
+      flames.geometry.dispose(); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('aS', new THREE.BufferAttribute(s, 1)); g.setAttribute('aK', new THREE.BufferAttribute(kk, 1)); flames.geometry = g; },
     setViewport(hPx, fovDeg) { AIR.uPx.value = hPx/(2*Math.tan(fovDeg*Math.PI/360)); },
     setWeather(kind) { wState.want = WEATHER[kind] ? kind : null; },
     setDepth(tex) { BU.tDepth.value = tex; },

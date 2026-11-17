@@ -80,6 +80,16 @@ Object.assign(VAULT, {
   B1: { hour: 6.8, walk: { pos: [7, 1.7, 3], tgt: [-12, 6.5, -1.5], fov: 70 } }, B2: { hour: 6.8, walk: { pos: [-7, 1.7, 3], tgt: [12, 6.5, -1.5], fov: 70 } },
   B3: { hour: 17.6, walk: { pos: [7, 1.7, 3], tgt: [-12, 6.5, -1.5], fov: 70 } }, B4: { hour: 17.6, walk: { pos: [-7, 1.7, 3], tgt: [12, 6.5, -1.5], fov: 70 } },
 });
+// step 8 (props): the corona by night and by day, a bench, the ropes, the banners, the door wall, a plate
+Object.assign(VAULT, {
+  R1: { hour: 22, walk: { pos: [0, 1.7, 5.5], tgt: [0, 6.8, 0], fov: 62 } }, R2: { hour: 12.5, walk: { pos: [0, 1.7, 5.5], tgt: [0, 6.8, 0], fov: 62 } },
+  R3: { hour: 15.5, walk: { pos: [3.0, 1.45, -1.6], tgt: [5.18, 0.35, -3.76], fov: 55 } },
+  R4: { hour: 12.5, walk: { pos: [1.6, 1.55, -7.4], tgt: [0, 0.85, -11.2], fov: 58 } },
+  R5: { hour: 12.5, walk: { pos: [0.4, 3.4, -5.0], tgt: [1.8, 6.4, -11.6], fov: 46 } },
+  R6: { hour: 17, walk: { pos: [0, 2.0, 4.0], tgt: [0, 4.0, 12], fov: 64 } }, R7: { hour: 22, walk: { pos: [0, 2.0, 4.0], tgt: [0, 4.0, 12], fov: 64 } },
+  R8: { hour: 12.5, walk: { pos: [0.25, 1.35, -9.7], tgt: [0, 0.95, -11.6], fov: 40 } },
+  R9: { hour: 12.5, walk: { pos: [-0.6, 3.0, 8.3], tgt: [-1.8, 3.85, 11.5], fov: 34 } },   // a shield and the tapestry
+});
 for (const h of [7.4, 9, 10.5, 12.5, 14, 15.5, 17, 17.8]) VAULT[`S_${String(h).replace('.', '_')}`] = { hour: h, walk: { pos: [0, 9.5, 9.0], tgt: [0, 0, -2.0], fov: 74 } };
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
