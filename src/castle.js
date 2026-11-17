@@ -294,6 +294,8 @@ export async function buildCastle(renderer, env, assets, opts = {}) {
   let dayProbe = null;
   const api = {
     group, gpu, flames: [],
+    // the colour wash (main.js render): texture detail follows it (pbr.js uDetail)
+    detail(w) { PBR.uDetail.value = w; },
     // the furniture (src/props.js), fetched once the hall is open; resolves with the props' api
     async loadProps(ctx) {
       const t0 = performance.now();

@@ -524,7 +524,7 @@ function step(dt) {
   const f = facing(); if (f !== lastFacing && ui) { lastFacing = f; ui.ringState(f, gotBays()); }
   const night = LIGHT.uAmbUp.value.x + LIGHT.uAmbUp.value.y + LIGHT.uAmbUp.value.z < 0.80; if (night !== nightOn && ui) { nightOn = night; ui.night(night); }
 }
-function render() { LIGHT.uTime.value = T; AIR.uPx.value = post.h/(2*Math.tan(camera.fov*Math.PI/360)); post.render(scene, camera); }
+function render() { LIGHT.uTime.value = T; if (castle) castle.detail(post.u.uWash.value); AIR.uPx.value = post.h/(2*Math.tan(camera.fov*Math.PI/360)); post.render(scene, camera); }
 
 // ---------------------------------------------------------------- size and adaptive sharpness
 const SC = [1, 0.85, 0.7, 0.56]; let lvl = 0, accT = 0, accN = 0, good = 0, lockUp = 0, lockMs = 15000;
@@ -562,7 +562,7 @@ const ptrCoarse = () => matchMedia('(pointer: coarse)').matches;
 
 async function main() {
   resize();
-  const prologue = SKIP ? null : buildPrologue(document.getElementById('prologue'), { quick: (store.d.visits || 0) > 0 });
+  const prologue = SKIP ? null : buildPrologue(document.getElementById('prologue'), { quick: (store.d.visits || 0) > 0, castle: CASTLE });
   if (SKIP) document.getElementById('prologue').remove();
   await build((p) => prologue && prologue.progress(p));
   ui = buildUI({ act });

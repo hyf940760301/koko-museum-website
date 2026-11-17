@@ -9,7 +9,10 @@ import { LIGHT, LIGHTING, NOISE, castleLighting } from './materials.js';
 // shared knobs: env strength follows the room (bright by day, low at night). Once the hall has
 // captured its own reflection probes (castle.js captureProbes) envMap is the day probe, uEnvMapN the
 // night one, and the reflection is day*uProbeA + night*uProbeB.
-export const PBR = { uEnvK: { value: 1 }, uTorchK: { value: 1 }, uEnvMapN: { value: null }, uProbeA: { value: 1 }, uProbeB: { value: 0 } };
+// uDetail (step 10) is the colour wash of main.js/post.js (1 = full colour): while the room is still a red-chalk
+// drawing the texture detail and normal maps fall back to their average, so FINAL_FS's edge
+// detection draws the masonry and joinery rather than every grain of the stone
+export const PBR = { uEnvK: { value: 1 }, uTorchK: { value: 1 }, uEnvMapN: { value: null }, uProbeA: { value: 1 }, uProbeB: { value: 0 }, uDetail: { value: 1 } };
 // the sky term of the bake is stored sqrt(E/SKYMAX) (tools/blender/bake_hall.py)
 const SKYMAX = 0.25;
 
@@ -28,6 +31,8 @@ function roomLight() {
   return s;
 }
 const ROOM_LIGHT = roomLight();
+const NORMAL_MAPS = THREE.ShaderChunk.normal_fragment_maps.replace('mapN.xy *= normalScale;', 'mapN.xy *= normalScale*uDetail;');
+if (NORMAL_MAPS === THREE.ShaderChunk.normal_fragment_maps) throw new Error('normal chunk moved');
 
 // three's image-based specular, with the second (night) probe mixed in
 const ENV_PARS = THREE.ShaderChunk.envmap_physical_pars_fragment.replace(
@@ -65,7 +70,7 @@ float wPolish(vec3 P){
 
 const PARS = /* glsl */`
 uniform float uEnvK; uniform float uTorchK; uniform float uOpenA[20]; uniform float uWideA[20];
-uniform sampler2D uEnvMapN; uniform float uProbeA; uniform float uProbeB; uniform float uCSky; uniform float uCAmb;
+uniform sampler2D uEnvMapN; uniform float uProbeA; uniform float uProbeB; uniform float uCSky; uniform float uCAmb; uniform float uDetail;
 varying vec3 vCW;
 ${NOISE}
 ${ROOM_LIGHT}
@@ -139,9 +144,10 @@ export function castleMaterial(kind, o) {
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\n' + PARS).replace('#include <envmap_physical_pars_fragment>', ENV_PARS)
       // calm a busy texture: pull it part of the way to its own average colour
       .replace('#include <map_fragment>', o.mapMean ? `#include <map_fragment>
-  diffuseColor.rgb = mix(diffuse*vec3(${o.mapMean.map((v) => v.toFixed(3)).join(', ')}), diffuseColor.rgb, ${(o.mapK ?? 1).toFixed(3)});${o.moss ? `
+  diffuseColor.rgb = mix(diffuse*vec3(${o.mapMean.map((v) => v.toFixed(3)).join(', ')}), diffuseColor.rgb, ${(o.mapK ?? 1).toFixed(3)}*uDetail);${o.moss ? `
   // the faintest moss, low down where the damp would sit
   diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb*vec3(.80, .90, .70), ${o.moss.toFixed(3)}*smoothstep(.9, .05, vCW.y)*smoothstep(.35, .75, vnoise(vCW*2.7)));` : ''}` : '#include <map_fragment>')
+      .replace('#include <normal_fragment_maps>', NORMAL_MAPS)
       .replace('#include <color_fragment>', '#include <color_fragment>' + wearColour(wear))
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>' + wearRough(wear))
       .replace('#include <lights_fragment_maps>', /* glsl */`#include <lights_fragment_maps>
