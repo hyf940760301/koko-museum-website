@@ -24,11 +24,14 @@ const TEX = [  // file, sRGB, repeat, rotation
   ['render_diff', true, 1.125], ['render_nor', false, 1.125], ['render_arm', false, 1.125],
   ['oak_diff', true, 1.23, Math.PI/2], ['oak_nor', false, 1.23, Math.PI/2], ['oak_arm', false, 1.23, Math.PI/2],
   ['iron_diff', true, 4], ['iron_nor', false, 4],
+  // the floor: warm slabs (floor_tiles_08, 1.5 m a texture tile, uv in metres) and the herringbone walkway (uv in tiles)
+  ['slab_diff', true, 1/1.5], ['slab_nor', false, 1/1.5], ['slab_arm', false, 1/1.5],
+  ['herring_diff', true], ['herring_nor', false], ['herring_arm', false],
 ];
 // downloads the opening counts in its progress: two modules, their light maps, environment, textures
 export const FILES = 5 + TEX.length;
 // the castle lays its own floor (main.js then leaves the old one out of the drum)
-export const FLOOR = false;
+export const FLOOR = true;
 
 let ktx2 = null;
 const ktxLoader = (renderer) => ktx2 || (ktx2 = new KTX2Loader().setTranscoderPath('./vendor/three/addons/libs/basis/').detectSupport(renderer));
@@ -129,9 +132,63 @@ function inscription(mat) {
   mat.map = t; mat.side = THREE.DoubleSide; return new THREE.Mesh(g, mat);
 }
 
+// ---------------------------------------------------------------- the floor (no bake: analytic light,
+// and a vertex-colour darkening towards the wall in place of the baked AO)
+const FL = { rose: 1.75, walk0: 9.4, walk1: 11.0, edge: K.R + 0.7, herring: 1.84 };
+function annulus(r0, r1, nth, nr, uvf, aof) {
+  const pos = [], uv = [], col = [], idx = [];
+  for (let j = 0; j <= nr; j++) for (let i = 0; i <= nth; i++) {
+    const r = r0 + (r1 - r0)*j/nr, th = i/nth*Math.PI*2; const x = r*Math.sin(th), z = -r*Math.cos(th);
+    pos.push(x, 0, z); uv.push(...uvf(x, z, r, th)); const a = aof(r); col.push(a, a, a);
+  }
+  const W = nth + 1;
+  for (let j = 0; j < nr; j++) for (let i = 0; i < nth; i++) { const a = j*W + i, b = a + 1, c = a + W, d = c + 1; idx.push(a, b, c, b, d, c); }   // counter-clockwise from above
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(pos.length/3).fill([0, 1, 0]).flat(), 3)); g.setIndex(idx);
+  return g;
+}
+// a flat ribbon along a polyline of [x, z] points, width w, a hair above the floor
+function ribbon(pts, w, out) {
+  const base = out.pos.length/3;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], q = pts[Math.min(i + 1, pts.length - 1)], o = pts[Math.max(i - 1, 0)];
+    let tx = q[0] - o[0], tz = q[1] - o[1]; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+    out.pos.push(p[0] - tz*w/2, 0.002, p[1] + tx*w/2, p[0] + tz*w/2, 0.002, p[1] - tx*w/2);
+  }
+  for (let i = 0; i < pts.length - 1; i++) { const a = base + i*2; out.idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+}
+const circle = (r, n = 160) => Array.from({ length: n + 1 }, (_, i) => [r*Math.sin(i/n*Math.PI*2), -r*Math.cos(i/n*Math.PI*2)]);
+function buildFloor(M) {
+  const g = new THREE.Group(); g.name = 'castle-floor';
+  const ao = (r) => 1 - 0.30*THREE.MathUtils.smoothstep(r, K.R - 1.4, K.R) - 0.25*THREE.MathUtils.smoothstep(r, K.R, FL.edge);
+  const flat = (x, z) => [x, z];
+  // slabs inside and outside the walkway, the walkway itself in polar tiles (a whole number round the ring)
+  const nAround = Math.round(Math.PI*(FL.walk0 + FL.walk1)/FL.herring);
+  const parts = [
+    [annulus(FL.rose, FL.walk0, 240, 16, flat, ao), M.slab],
+    [annulus(FL.walk0, FL.walk1, 400, 4, (x, z, r, th) => [th/(Math.PI*2)*nAround, (r - FL.walk0)/FL.herring], ao), M.herring],
+    [annulus(FL.walk1, FL.edge, 400, 8, flat, ao), M.slab],
+    [annulus(0.0001, FL.rose, 96, 6, (x, z) => [x/2, z/2], () => 1), M.rose],
+  ];
+  for (const [geo, m] of parts) { m.vertexColors = true; const mesh = new THREE.Mesh(geo, m); mesh.name = m.name; g.add(mesh); }
+  // the rose: brass rings, sixteen rays and eight pointed petals inlaid in the stone; brass lines edge the walkway
+  const B = { pos: [], idx: [] };
+  for (const [r, w] of [[1.72, 0.05], [1.56, 0.022], [0.40, 0.028], [0.16, 0.02], [FL.walk0, 0.035], [FL.walk1, 0.035]]) ribbon(circle(r, r > 5 ? 720 : 160), w, B);
+  for (let i = 0; i < 16; i++) { const a = i/16*Math.PI*2 + Math.PI/16; ribbon([[0.40*Math.sin(a), -0.40*Math.cos(a)], [1.56*Math.sin(a), -1.56*Math.cos(a)]], 0.014, B); }
+  for (let i = 0; i < 8; i++) for (const sd of [1, -1]) {
+    const a0 = i/8*Math.PI*2; const pts = [];
+    for (let k = 0; k <= 24; k++) { const t = k/24; const r = 0.40 + 1.16*t; const a = a0 + sd*Math.sin(Math.PI*t)*0.30*(1 - 0.35*t); pts.push([r*Math.sin(a), -r*Math.cos(a)]); }
+    ribbon(pts, 0.022, B);
+  }
+  const bg = new THREE.BufferGeometry(); bg.setAttribute('position', new THREE.Float32BufferAttribute(B.pos, 3)); bg.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(B.pos.length/3).fill([0, 1, 0]).flat(), 3)); bg.setIndex(B.idx);
+  M.brass.polygonOffset = true; M.brass.polygonOffsetFactor = -2; M.brass.polygonOffsetUnits = -4;
+  const brass = new THREE.Mesh(bg, M.brass); brass.name = 'castle-brass'; g.add(brass);
+  return g;
+}
+
 export async function buildCastle(renderer, env, assets, opts = {}) {
   const { bay, door, bayLm, doorLm, maps } = assets || await preload(renderer);
-  const [sd, sn, sa, md, mn, ma, od, on, oa, id, inn] = maps;
+  const [sd, sn, sa, md, mn, ma, od, on, oa, id, inn, fd, fn, fa, hd, hn, ha] = maps;
   for (const lm of [bayLm, doorLm]) { lm.colorSpace = THREE.NoColorSpace; lm.channel = 1; lm.minFilter = THREE.LinearMipmapLinearFilter; lm.needsUpdate = true; }
   const mats = (lm) => {
     const common = { env, lm }; const sfx = lm ? '' : '';
@@ -165,6 +222,13 @@ export async function buildCastle(renderer, env, assets, opts = {}) {
     });
   }
   group.add(inscription(castleMaterial('inscr', { env, color: new THREE.Color(0.11, 0.075, 0.05), roughness: 0.8, envK: 0.2, alphaTest: 0.5 })));
+
+  group.add(buildFloor({
+    slab: castleMaterial('slab', { env, map: fd, normalMap: fn, arm: fa, color: new THREE.Color(1.55, 1.38, 1.12), roughness: 1, normal: 0.7, envK: 0.45, mapMean: [0.248, 0.183, 0.129], mapK: 0.75 }),
+    herring: castleMaterial('herring', { env, map: hd, normalMap: hn, arm: ha, color: new THREE.Color(1.62, 1.40, 1.12), roughness: 0.5, normal: 0.6, envK: 0.8, mapMean: [0.229, 0.173, 0.109], mapK: 0.85 }),
+    rose: castleMaterial('rose', { env, map: sd, normalMap: sn, arm: sa, color: new THREE.Color(1.50, 1.33, 1.06), roughness: 0.75, normal: 0.5, envK: 0.6, mapMean: [0.377, 0.289, 0.177], mapK: 0.85 }),
+    brass: castleMaterial('brass', { env, color: new THREE.Color(0.95, 0.70, 0.36), roughness: 0.32, metalness: 1, envK: 1.1 }),
+  }));
 
   const gpu = [bayLm, doorLm, ...maps].map((t) => ({ format: t.format, w: t.image.width, h: t.image.height, levels: (t.mipmaps || []).length, bytes: texBytes(t) }));
   return {

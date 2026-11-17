@@ -50,6 +50,8 @@ for (const [c, o] of Object.entries(HCAM)) for (const h of [7.4, 12.5, 17.8, 22]
 HALL.H4 = { hour: 12.5, walk: { pos: [2.6, 1.7, -3.6], tgt: [7.4, 2.6, -9.6], fov: 52 } };   // bays 1-3 along the wall
 HALL.H5 = { hour: 17.8, walk: { pos: [0.4, 1.65, 7.6], tgt: [0, 2.2, 12], fov: 46 } };       // the doorway, close
 HALL.H6 = { hour: 17.8, walk: { pos: [0.4, 1.65, 7.6], tgt: [0, 2.2, 12], fov: 46 }, portal: 1 };  // ... opened
+HALL.H7 = { hour: 12.5, walk: { pos: [0, 1.7, 3.0], tgt: [0, 0, -0.2], fov: 50 } };          // the stone rose
+HALL.H8 = { hour: 12.5, walk: { pos: [0.5, 1.7, -7.0], tgt: [1.4, 0, -10.4], fov: 52 } };    // the herringbone walkway
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {

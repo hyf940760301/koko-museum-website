@@ -9,6 +9,8 @@ SRC=_src/polyhaven; mkdir -p "$SRC" assets/castle/env
 B=https://dl.polyhaven.org/file/ph-assets
 get() { [ -s "$SRC/$(basename "$1")" ] || curl -fsSL -o "$SRC/$(basename "$1")" "$B/$1"; }
 for a in sandstone_blocks_08 medieval_wall_01; do for m in diff nor_gl arm; do get "Textures/jpg/2k/$a/${a}_${m}_2k.jpg"; done; done
+# the floor (step 3): colour at 2K, normal and ARM at 1K
+for a in floor_tiles_08 herringbone_brick_02; do get "Textures/jpg/2k/$a/${a}_diff_2k.jpg"; for m in nor_gl arm; do get "Textures/jpg/1k/$a/${a}_${m}_1k.jpg"; done; done
 for a in metal_plate_02 oak_veneer_01; do for m in diff nor_gl arm; do get "Textures/jpg/1k/$a/${a}_${m}_1k.jpg"; done; done
 get "HDRIs/hdr/1k/sepulchral_chapel_rotunda_1k.hdr"
 # the environment only feeds blurred reflections: 512 x 256 is plenty
