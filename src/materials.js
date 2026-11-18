@@ -409,14 +409,20 @@ float revealMask(vec2 p){
       cover = max(cover, 1. - smoothstep(grow - .18, grow + .12, d/rad));
     }
   } else if (uRevealMode < 2.5) {
+    // measure from the middle of the panel. the old origin sat at a corner, so every
+    // stroke landed on the bottom left and the rest stayed the cream ground until the
+    // very end. one stroke per eighth, still jittered, so a run of hashes cannot
+    // leave a whole side untouched.
     vec2 dir = normalize(vec2(.85, -.45)); vec2 side = vec2(-dir.y, dir.x);
-    float along = dot(p, dir); float across = dot(p, side); cover = 0.;
+    float along = dot(p - vec2(.5), dir); float across = dot(p - vec2(.5), side); cover = 0.;
+    float span = .5*(abs(side.x) + abs(side.y));
     for (int i = 0; i < 8; i++) {
       float fi = float(i);
       float y0 = hash12(vec2(uSeed, fi));
       float w = mix(.10, .15, hash12(vec2(fi, uSeed + 2.)));
       float head = uReveal*1.8 - hash12(vec2(fi + 4., uSeed))*.18;
-      float band = 1. - smoothstep(w*.3, w*1.25, abs(across - (y0 - .5)*.8));
+      float center = mix(-span, span, (fi + y0)/8.);
+      float band = 1. - smoothstep(w*.3, w*1.25, abs(across - center));
       cover = max(cover, band*smoothstep(-.06, .14, head - along));
     }
   } else {
