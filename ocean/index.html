@@ -28,7 +28,7 @@
 <div id="place" class="hud"></div>
 <div id="help" class="hud">
   <b>鼠标</b> 视角　<b>W A S D</b> 移动　<b>Q / E</b> 升降　<b>Shift</b> 加速<br>
-  <b>1 – 9</b> 打卡视角　<b>C</b> 电影模式　<b>P</b> 定格精修　<b>H</b> 隐藏界面
+  <b>1 – 9</b> 打卡视角　<b>C</b> 电影模式　<b>P</b> 定格精修　<b>M</b> 静音　<b>H</b> 隐藏界面
 </div>
 <div id="gate">
   <h1>深蓝遗境</h1>
@@ -1184,7 +1184,18 @@ fn aces(x: vec3f) -> vec3f { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 *
   let uv = fc.xy / u.misc.yz;
   let d = uv - 0.5;
   let ca = d * dot(d, d) * 0.010;
-  var col = vec3f(textureSampleLevel(sc, lin, uv + ca, 0.0).r, textureSampleLevel(sc, lin, uv, 0.0).g, textureSampleLevel(sc, lin, uv - ca, 0.0).b);
+  let c0 = textureSampleLevel(sc, lin, uv, 0.0);
+  var col = vec3f(textureSampleLevel(sc, lin, uv + ca, 0.0).r, c0.g, textureSampleLevel(sc, lin, uv - ca, 0.0).b);
+  if (u.misc.w > 0.5) {
+    // a gentle depth of field focused at 16 m: the far haze softens, particles near the lens bloom
+    let r = clamp(abs(1.0 - 16.0 / max(c0.a, 0.4)) - 0.3, 0.0, 1.0) * 1.7 * u.misc.z / 1080.0;
+    var acc = col;
+    for (var k = 0; k < 6; k++) {
+      let a = f32(k) * 1.0472 + 0.5;
+      acc += textureSampleLevel(sc, lin, uv + vec2f(cos(a), sin(a)) * r / u.misc.yz, 0.0).rgb;
+    }
+    col = acc / 7.0;
+  }
   let bl = textureSampleLevel(b1, lin, uv, 0.0).rgb * 0.30 + textureSampleLevel(b2, lin, uv, 0.0).rgb * 0.30 +
            textureSampleLevel(b3, lin, uv, 0.0).rgb * 0.22 + textureSampleLevel(b4, lin, uv, 0.0).rgb * 0.18;
   col += bl * 1.1;
@@ -1286,6 +1297,11 @@ const SCALES = [0.42, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
 let tier = Q.has('tier') ? +Q.get('tier') : 1;
 let scaleIdx = Q.has('scale') ? SCALES.findIndex(s => s >= +Q.get('scale')) : 3;
 if (scaleIdx < 0) scaleIdx = SCALES.length - 1;
+// software rasterisers and fallback adapters start at the bottom; real GPUs start in the middle and are measured from there
+const ainfo = adapter.info || {};
+const SOFT = !!ainfo.isFallbackAdapter || /swiftshader|llvmpipe|software|basic render/i.test([ainfo.vendor, ainfo.architecture, ainfo.device, ainfo.description].join(' '));
+if (SOFT && !Q.has('tier')) tier = 0;
+if (SOFT && !Q.has('scale')) scaleIdx = 0;
 let cine = false, autoTier = tier;
 const SMAP_EXTENT = 380;
 let smapSize = 0, smapTex = null, smapView = null, smapCenter = [1e9, 1e9], smapDirty = true;
@@ -1483,6 +1499,116 @@ const PART_FIXED = partData.length;
 for (let i = 0; i < 7000; i++) partData.push([rnd(), rnd(), rnd(), 0, rr(0.012, 0.035), rr(0.25, 0.9), rnd(), rnd()]);
 const partI = vbuf(new Float32Array(partData.flat()));
 
+// ---------- audio: oscillators, filters and noise only ----------
+const audio = { ctx: null, muted: false };
+const ar = (a, b) => a + (b - a) * Math.random();
+function startAudio() {
+  if (audio.ctx) { audio.ctx.resume(); return; }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  const ctx = audio.ctx = new AC(), now = ctx.currentTime;
+  const master = audio.master = ctx.createGain();
+  master.gain.setValueAtTime(0, now); master.gain.linearRampToValueAtTime(0.6, now + 4);
+  const comp = ctx.createDynamicsCompressor();
+  audio.meter = ctx.createAnalyser(); audio.meter.fftSize = 2048;
+  master.connect(comp); comp.connect(ctx.destination); comp.connect(audio.meter);
+  // everything is heard through water: a low-pass that opens towards the surface
+  const water = audio.water = ctx.createBiquadFilter();
+  water.type = 'lowpass'; water.frequency.value = 2200; water.Q.value = 0.5; water.connect(master);
+  // three feedback delays stand in for the reverberation of open water
+  const echo = audio.echo = ctx.createGain(); echo.gain.value = 1;
+  audio.echoSend = ctx.createGain(); audio.echoSend.gain.value = 0.15; audio.echoSend.connect(echo);
+  for (const [dt, fb, pan] of [[0.37, 0.5, -0.7], [0.53, 0.46, 0.7], [0.83, 0.4, 0]]) {
+    const d = ctx.createDelay(2), g = ctx.createGain(), lp = ctx.createBiquadFilter(), p = ctx.createStereoPanner();
+    d.delayTime.value = dt; g.gain.value = fb; lp.type = 'lowpass'; lp.frequency.value = 1200; p.pan.value = pan;
+    echo.connect(d); d.connect(lp); lp.connect(g); g.connect(d); lp.connect(p); p.connect(water);
+  }
+  const len = ctx.sampleRate * 4, white = ctx.createBuffer(1, len, ctx.sampleRate), brown = ctx.createBuffer(1, len, ctx.sampleRate);
+  const w = white.getChannelData(0), b = brown.getChannelData(0);
+  for (let i = 0, acc = 0; i < len; i++) { w[i] = Math.random() * 2 - 1; acc = (acc + 0.02 * w[i]) / 1.02; b[i] = acc * 3.5; }
+  audio.white = white;
+  const loop = buf => { const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true; s.start(); return s; };
+  const lfo = (freq, depth, param) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = freq; g.gain.value = depth; o.connect(g); g.connect(param); o.start(); };
+  // the hum of the deep: detuned low partials that slowly beat, over filtered brown noise
+  const drone = audio.drone = ctx.createGain(); drone.gain.value = 0.5; drone.connect(water);
+  for (const [f, type, g, rate] of [[36, 'sine', 0.5, 0.05], [54.3, 'sine', 0.26, 0.083], [72.7, 'triangle', 0.09, 0.061], [108.6, 'sine', 0.045, 0.11]]) {
+    const o = ctx.createOscillator(), og = ctx.createGain();
+    o.type = type; o.frequency.value = f; og.gain.value = g; lfo(rate, g * 0.45, og.gain); lfo(rate * 0.37, f * 0.006, o.frequency);
+    o.connect(og); og.connect(drone); o.start();
+  }
+  const rum = ctx.createBiquadFilter(), rg = ctx.createGain();
+  rum.type = 'lowpass'; rum.frequency.value = 130; rg.gain.value = 0.9; lfo(0.07, 55, rum.frequency);
+  loop(brown).connect(rum); rum.connect(rg); rg.connect(drone);
+  const wash = ctx.createBiquadFilter(), wg = ctx.createGain();
+  wash.type = 'bandpass'; wash.frequency.value = 520; wash.Q.value = 0.6; wg.gain.value = 0.03; lfo(0.11, 0.015, wg.gain); lfo(0.043, 180, wash.frequency);
+  loop(white).connect(wash); wash.connect(wg); wg.connect(water);
+  setTimeout(bubbleBurst, 1500); setTimeout(whaleCall, 6000);
+}
+// one bubble: a sine that chirps upward as the bubble shrinks towards its pop, then a click of filtered noise
+function bubble(t0, f0, dur, gain, pan) {
+  const ctx = audio.ctx, o = ctx.createOscillator(), g = ctx.createGain(), p = ctx.createStereoPanner();
+  o.frequency.setValueAtTime(f0, t0); o.frequency.exponentialRampToValueAtTime(f0 * ar(1.5, 2.5), t0 + dur);
+  g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(gain, t0 + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  p.pan.value = pan; o.connect(g); g.connect(p); p.connect(audio.water); p.connect(audio.echoSend);
+  o.start(t0); o.stop(t0 + dur + 0.02);
+  const n = ctx.createBufferSource(), bp = ctx.createBiquadFilter(), ng = ctx.createGain(), tp = t0 + dur * 0.85;
+  n.buffer = audio.white; bp.type = 'bandpass'; bp.frequency.value = f0 * 3.2; bp.Q.value = 2.5;
+  ng.gain.setValueAtTime(0, tp); ng.gain.linearRampToValueAtTime(gain * 0.5, tp + 0.003); ng.gain.exponentialRampToValueAtTime(0.0001, tp + 0.035);
+  n.connect(bp); bp.connect(ng); ng.connect(p);
+  n.start(tp, Math.random() * 3); n.stop(tp + 0.05);
+}
+function bubbleBurst() {
+  const ctx = audio.ctx;
+  if (ctx.state === 'running') {
+    let t = ctx.currentTime + 0.05;
+    const n = 2 + Math.floor(Math.random() * Math.random() * 16), pan = ar(-0.8, 0.8), big = Math.random();
+    for (let i = 0; i < n; i++) {
+      t += ar(0.025, 0.16);
+      bubble(t, ar(380, 900) * (1.6 - big) * (1 + i * 0.03), ar(0.05, 0.13), ar(0.03, 0.09) * (0.5 + big), pan + ar(-0.15, 0.15));
+    }
+  }
+  setTimeout(bubbleBurst, ar(500, 3600));
+}
+// a far whale: gliding, lightly vibrating tones with an octave partial, mostly heard through the echoes
+function whaleCall() {
+  const ctx = audio.ctx;
+  if (ctx.state === 'running') {
+    let t0 = ctx.currentTime + 0.1;
+    const phrases = 1 + Math.floor(Math.random() * 3), pan = ar(-0.7, 0.7), base = ar(95, 170);
+    for (let k = 0; k < phrases; k++) {
+      const dur = ar(2.6, 5.2), f0 = base * ar(0.85, 1.25), f1 = f0 * ar(1.5, 2.7), f2 = f0 * ar(0.75, 1.4);
+      const g = ctx.createGain(), bp = ctx.createBiquadFilter(), p = ctx.createStereoPanner(), dry = ctx.createGain(), vib = ctx.createOscillator();
+      bp.type = 'bandpass'; bp.Q.value = 1.1; bp.frequency.setValueAtTime(f0 * 2.2, t0); bp.frequency.exponentialRampToValueAtTime(f1 * 2.2, t0 + dur * 0.45); bp.frequency.exponentialRampToValueAtTime(f2 * 2.2, t0 + dur);
+      g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(0.2, t0 + dur * 0.25); g.gain.setValueAtTime(0.2, t0 + dur * 0.6); g.gain.linearRampToValueAtTime(0, t0 + dur);
+      vib.frequency.value = ar(4, 6.5); vib.start(t0); vib.stop(t0 + dur + 0.1);
+      for (const [mul, type, amp] of [[1, 'sine', 1], [2, 'triangle', 0.3], [3.01, 'sine', 0.08]]) {
+        const o = ctx.createOscillator(), og = ctx.createGain(), vg = ctx.createGain();
+        o.type = type; og.gain.value = amp; vg.gain.value = f0 * mul * 0.012;
+        o.frequency.setValueAtTime(f0 * mul, t0); o.frequency.exponentialRampToValueAtTime(f1 * mul, t0 + dur * 0.45); o.frequency.exponentialRampToValueAtTime(f2 * mul, t0 + dur);
+        vib.connect(vg); vg.connect(o.frequency); o.connect(og); og.connect(g); o.start(t0); o.stop(t0 + dur + 0.1);
+      }
+      p.pan.value = pan; dry.gain.value = 0.22;
+      g.connect(bp); bp.connect(p); p.connect(dry); dry.connect(audio.water); p.connect(audio.echo);
+      t0 += dur + ar(0.3, 1.4);
+    }
+  }
+  setTimeout(whaleCall, ar(13000, 30000));
+}
+// depth and enclosure colour the mix
+function updateAudio() {
+  const a = audio; if (!a.ctx || a.ctx.state !== 'running') return;
+  const t = a.ctx.currentTime, depth = Math.min(1, -cam.pos[1] / 60);
+  const cave = 1 - sstep(14, 40, Math.hypot(cam.pos[0] + 125, cam.pos[1] + 44, cam.pos[2] - 5));
+  a.water.frequency.setTargetAtTime(3400 - 2300 * depth - 500 * cave, t, 0.5);
+  a.drone.gain.setTargetAtTime(0.3 + 0.4 * depth + 0.2 * cave, t, 0.5);
+  a.echoSend.gain.setTargetAtTime(0.15 + 0.6 * cave, t, 0.5);
+}
+window.__audio = () => {
+  if (!audio.ctx) return 'not started';
+  const d = new Float32Array(2048); audio.meter.getFloatTimeDomainData(d);
+  return audio.ctx.state + ' rms ' + Math.sqrt(d.reduce((s, v) => s + v * v, 0) / d.length).toFixed(4);
+};
+
 // ---------- camera, input ----------
 const SPOTS = [
   { name: '巨藻森林', pos: [62, -44, 52], yaw: 1.2, pitch: 0.22 },
@@ -1510,12 +1636,13 @@ addEventListener('keydown', e => {
   if (e.code.startsWith('Digit')) goSpot(+e.code.slice(5) - 1);
   if (e.code === 'KeyC') { cine = !cine; tier = cine ? 3 : autoTier; allocShadow(); }
   if (e.code === 'KeyP') { frozen = !frozen; accum = 0; }
+  if (e.code === 'KeyM' && audio.ctx) { audio.muted = !audio.muted; audio.master.gain.setTargetAtTime(audio.muted ? 0 : 0.6, audio.ctx.currentTime, 0.1); }
   if (e.code === 'KeyH') for (const el of document.querySelectorAll('.hud')) el.style.display = el.style.display === 'none' ? '' : 'none';
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
-$('gate').addEventListener('click', () => { $('gate').classList.add('off'); canvas.requestPointerLock?.(); });
-canvas.addEventListener('click', () => canvas.requestPointerLock?.());
+$('gate').addEventListener('click', () => { $('gate').classList.add('off'); canvas.requestPointerLock?.(); startAudio(); });
+canvas.addEventListener('click', () => { canvas.requestPointerLock?.(); startAudio(); });
 addEventListener('mousemove', e => {
   if (document.pointerLockElement !== canvas) return;
   cam.yaw += e.movementX * 0.0022;
@@ -1562,9 +1689,9 @@ function adapt(dtMs, now) {
   ema += (Math.min(dtMs, 400) - ema) * 0.08;
   if (CAP || frozen || cine || now < holdUntil) return;
   if (ema > 19.5) { slow++; fast = 0; } else if (ema < 17.3) { fast++; slow = 0; } else { slow = 0; fast = 0; }
-  if (slow > 30) {
+  if (slow > (ema > 33 ? 8 : 30)) {
     if (now - raisedAt < 4000) backoff = Math.min(backoff * 2, 120000);
-    if (scaleIdx > 0) scaleIdx--; else if (tier > 0) { tier--; autoTier = tier; allocShadow(); }
+    if (scaleIdx > 0) scaleIdx = Math.max(0, scaleIdx - (ema > 33 ? 2 : 1)); else if (tier > 0) { tier--; autoTier = tier; allocShadow(); }
     slow = 0; holdUntil = now + 700;
   } else if (fast > 150 && now - raisedAt > backoff) {
     if (scaleIdx < SCALES.length - 1) scaleIdx++; else if (tier < 2) { tier++; autoTier = tier; allocShadow(); scaleIdx = 3; }
@@ -1577,7 +1704,7 @@ function render(now) {
   const dt = Math.min(dtMs / 1000, 0.1);
   adapt(dtMs, now);
   allocShadow(); allocTargets(false);
-  if (!CAP) updateCamera(dt);
+  if (!CAP) { updateCamera(dt); updateAudio(); }
   if (!frozen && !CAP) time += dt;
   const moved = prev && (Math.abs(prev.yaw - cam.yaw) + Math.abs(prev.pitch - cam.pitch) + Math.hypot(...cam.pos.map((v, i) => v - prev.pos[i])) > 1e-5);
   if (moved) accum = 0;
@@ -1600,7 +1727,7 @@ function render(now) {
     smapCenter = [cx, cz]; smapDirty = true;
   }
   ud.set([smapCenter[0], smapCenter[1], SMAP_EXTENT, 1 / SMAP_EXTENT], 44);
-  ud.set([smapSize, cw, ch, 0], 48);
+  ud.set([smapSize, cw, ch, tier > 0 ? 1 : 0], 48);
   device.queue.writeBuffer(ubuf, 0, ud);
 
   const enc = device.createCommandEncoder();
