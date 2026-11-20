@@ -224,7 +224,7 @@ struct ROut { @builtin(position) clip: vec4f, @location(0) lp: vec2f, @location(
 @fragment fn fsRockH(i: ROut) -> @location(0) vec4f {
   let n1 = snoise(i.lp * 1.7 + i.hs.y * 17.0); let n2 = snoise(i.lp * 4.3 + i.hs.y * 31.0);
   let rr = length(i.lp) * (1.0 + 0.28 * n1);
-  return vec4f(i.hs.x * smoothstep(1.0, 0.45, rr) * (0.72 + 0.28 * (1.0 - min(rr * rr, 1.0)) + 0.16 * n2 + 0.1 * n1), 0.0, 0.0, 1.0);
+  return vec4f(i.hs.x * (1.0 - smoothstep(0.45, 1.0, rr)) * (0.72 + 0.28 * (1.0 - min(rr * rr, 1.0)) + 0.16 * n2 + 0.1 * n1), 0.0, 0.0, 1.0);
 }
 // then the sea bed is added (the sum is stored as a coarse part and a fine remainder, to keep full precision in half floats);
 @fragment fn fsHeightRaw(@builtin(position) fc: vec4f) -> @location(0) vec4f {
@@ -429,7 +429,7 @@ fn sdFallenHead(p0: vec3f) -> f32 {
   d = smin(d, sdCapsule(q, vec3f(0.0, -0.5, -0.05), vec3f(0.0, -1.15, -0.1), 0.36), 0.15);
   d = smin(d, sdCapsule(q, vec3f(-0.13, -0.24, 0.66), vec3f(0.13, -0.24, 0.66), 0.045), 0.05);
   d = smin(d, length(vec3f(abs(q.x) - 0.2, q.y - 0.07, q.z - 0.6)) - 0.075, 0.02);
-  d += 0.012 * sin(q.x * 23.0 + sin(q.y * 9.0) * 2.0) * smoothstep(0.2, -0.3, q.z);
+  d += 0.012 * sin(q.x * 23.0 + sin(q.y * 9.0) * 2.0) * (1.0 - smoothstep(-0.3, 0.2, q.z));
   return d * S * 0.85;
 }
 
@@ -535,7 +535,7 @@ fn sdGate(p: vec3f) -> f32 {
   d = max(d, -sdBox2(vec2f(c.x, abs(c.y) - 1.55), vec2f(0.55, 0.16)));
   let a = atan2(q.y, q.x);
   let sg = abs(fract(a * 14.0 / TAU) - 0.5);
-  d += smoothstep(0.035, 0.0, sg) * 0.07;
+  d += (1.0 - smoothstep(0.0, 0.035, sg)) * 0.07;
   let jag = 0.5 * sin(q.x * 2.1) * sin(q.y * 1.7 + 2.0) * sin(q.z * 2.9);
   d = max(d, -(length(q - vec3f(-11.4, 11.4, 0.3)) - 2.9 + jag));
   return d;
@@ -1130,18 +1130,18 @@ fn pathPos(ia: vec4f, ib: vec4f, t: f32) -> vec3f {
     alb = mix(side, back, smoothstep(0.5, 0.82, v));
     alb = mix(vec3f(0.92), alb, smoothstep(0.02, 0.36, v));
     if (kind == 1) { alb = mix(alb, acc, smoothstep(0.38, 0.42, abs(fract(lp.x * 2.6 + 0.2) - 0.5))); }
-    else { alb = mix(alb, acc, smoothstep(0.035, 0.01, abs(lp.y - 0.015)) * step(lp.x, 0.3)); }
+    else { alb = mix(alb, acc, (1.0 - smoothstep(0.01, 0.035, abs(lp.y - 0.015))) * step(lp.x, 0.3)); }
     if (part > 0.5) { alb = mix(alb, acc, 0.55); }
-    alb *= 1.0 - smoothstep(0.03, 0.018, length(lp.xy - vec2f(0.385, 0.035)));
+    alb *= 1.0 - (1.0 - smoothstep(0.018, 0.03, length(lp.xy - vec2f(0.385, 0.035))));
     spec = 0.6;
   } else if (part < 19.5) {
     let sp = abs(lp.z) / 0.62;
     if (i.info.w > 0.5) {
       alb = vec3f(0.05, 0.065, 0.09);
-      alb = mix(alb, vec3f(0.7), smoothstep(0.06, 0.03, length(vec2f(lp.x - 0.12, sp - 0.22) * vec2f(1.0, 0.35))));
+      alb = mix(alb, vec3f(0.7), (1.0 - smoothstep(0.03, 0.06, length(vec2f(lp.x - 0.12, sp - 0.22) * vec2f(1.0, 0.35)))));
     } else {
       alb = vec3f(0.84, 0.86, 0.88);
-      alb *= 1.0 - 0.8 * smoothstep(0.62, 0.7, snoise(vec2f(lp.x, lp.z) * 14.0 + i.info.y)) * smoothstep(0.1, -0.1, lp.x);
+      alb *= 1.0 - 0.8 * smoothstep(0.62, 0.7, snoise(vec2f(lp.x, lp.z) * 14.0 + i.info.y)) * (1.0 - smoothstep(-0.1, 0.1, lp.x));
       alb = mix(alb, vec3f(0.1), smoothstep(0.8, 1.0, sp));
     }
   } else if (part < 29.5) {
@@ -1161,7 +1161,7 @@ fn pathPos(ia: vec4f, ib: vec4f, t: f32) -> vec3f {
     // jellyfish are drawn additively: a glassy bell that shows mostly at its rim, with dimmer tentacles
     let rim = pow(1.0 - abs(dot(n, rd)), 2.0);
     let tint = mix(vec3f(0.55, 0.80, 1.0), vec3f(1.0, 0.55, 0.85), fract(i.info.y * 0.37));
-    let glow = select(0.10 + 0.9 * rim + 0.25 * smoothstep(0.7, 1.0, sin(atan2(lp.z, lp.y) * 8.0)) * smoothstep(0.35, 0.0, lp.x), 0.22, part > 40.5);
+    let glow = select(0.10 + 0.9 * rim + 0.25 * smoothstep(0.7, 1.0, sin(atan2(lp.z, lp.y) * 8.0)) * (1.0 - smoothstep(0.0, 0.35, lp.x)), 0.22, part > 40.5);
     let li = ambAt(max(-i.wpos.y, 0.0)) * 0.9 + sunLight(i.wpos, time) * 0.5;
     return vec4f(tint * glow * li * exp(-EXT * length(i.wpos - u.camPos.xyz)), 0.0);
   }
@@ -1203,7 +1203,7 @@ fn grassPos(ia: vec4f, ib: vec4f, tt: f32, t: f32) -> vec3f {
     let tw = v.ib.x * 50.0 + tt * 4.5 + 0.5 * sin(t * 0.4 + v.ib.z + tt * 3.0);
     let s0 = vec3f(cos(tw), 0.0, sin(tw));
     sd = normalize(s0 - tg * dot(s0, tg));
-    w = v.ib.y * (0.45 + 0.55 * sin(PI * min(tt * 1.1, 1.0))) * smoothstep(1.0, 0.9, tt);
+    w = v.ib.y * (0.45 + 0.55 * sin(PI * min(tt * 1.1, 1.0))) * (1.0 - smoothstep(0.9, 1.0, tt));
   } else if (kind < 1.5) {
     c = grassPos(v.ia, v.ib, tt, t);
     tg = normalize(grassPos(v.ia, v.ib, tt + 0.05, t) - c);
@@ -1241,7 +1241,7 @@ fn grassPos(ia: vec4f, ib: vec4f, tt: f32, t: f32) -> vec3f {
     alb = mix(vec3f(0.03, 0.09, 0.025), vec3f(0.19, 0.36, 0.07), tt) * (0.7 + 0.6 * g);
     thru = vec3f(0.30, 0.50, 0.06);
     if (g > 0.86) { alb = mix(vec3f(0.14, 0.035, 0.03), vec3f(0.48, 0.15, 0.10), tt); thru = vec3f(0.5, 0.15, 0.05); }
-    alb *= 0.8 + 0.4 * smoothstep(0.6, 0.0, ax);
+    alb *= 0.8 + 0.4 * (1.0 - smoothstep(0.0, 0.6, ax));
     shade = mix(0.25, 1.0, smoothstep(0.0, 0.45, tt));                         // the blades shade each other near the ground
   } else {
     // a sea fan: a flat lattice of branches that fork as they spread from the holdfast
@@ -1267,7 +1267,7 @@ fn grassPos(ia: vec4f, ib: vec4f, tt: f32, t: f32) -> vec3f {
   let amb = ambAt(max(-i.wpos.y, 0.0)) * mix(0.55, 1.0, shade);
   let ndl = dot(n, SUN);
   var col = alb * (sunL * (0.3 + 0.5 * abs(ndl)) * 0.7 + amb * 0.7);
-  col += thru * sunL * smoothstep(0.1, -0.5, ndl) * 0.22;          // light through the blade
+  col += thru * sunL * (1.0 - smoothstep(-0.5, 0.1, ndl)) * 0.22;          // light through the blade
   return fogged(col, i.wpos);
 }
 
@@ -1294,7 +1294,7 @@ struct POut { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(
     let f = fract(v.ib.y + t * v.ib.z / H);
     p = v.ia.xyz + vec3f(0.0, f * H, 0.0) + vec3f(sin(t * 2.1 + v.ib.w * 50.0 + f * 30.0), 0.0, cos(t * 1.7 + v.ib.w * 31.0 + f * 24.0)) * (0.12 + 1.3 * f);
     size = v.ib.x * (1.0 + 1.4 * f);
-    col = (ambAt(max(-p.y, 0.0)) + sunLight(p, t) * 0.7) * 1.3 * smoothstep(0.0, 0.03, f) * smoothstep(1.0, 0.97, f);
+    col = (ambAt(max(-p.y, 0.0)) + sunLight(p, t) * 0.7) * 1.3 * smoothstep(0.0, 0.03, f) * (1.0 - smoothstep(0.97, 1.0, f));
   } else {
     let a = t * 0.12 + v.ib.z * TAU;
     p = CAVE_C + vec3f(-2.0, 1.0, 0.0) + (v.ia.xyz - 0.5) * vec3f(20.0, 13.0, 20.0) + vec3f(sin(a), 0.6 * sin(a * 1.7 + v.ib.w * 9.0), cos(a)) * 1.5;
@@ -1314,9 +1314,9 @@ struct POut { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(
 }
 @fragment fn fsPart(i: POut) -> @location(0) vec4f {
   let r = length(i.uv);
-  var a = exp(-r * r * 4.5) * smoothstep(1.0, 0.8, r);
+  var a = exp(-r * r * 4.5) * (1.0 - smoothstep(0.8, 1.0, r));
   if (abs(i.col.a - 2.0) < 0.5) {
-    a = smoothstep(0.6, 0.86, r) * smoothstep(1.0, 0.92, r) * 0.8 + smoothstep(0.3, 0.0, length(i.uv - vec2f(-0.35, 0.4))) * 1.2 + 0.08 * step(r, 0.9);
+    a = smoothstep(0.6, 0.86, r) * (1.0 - smoothstep(0.92, 1.0, r)) * 0.8 + (1.0 - smoothstep(0.0, 0.3, length(i.uv - vec2f(-0.35, 0.4)))) * 1.2 + 0.08 * step(r, 0.9);
   }
   return vec4f(i.col.rgb * a, 0.0);
 }
