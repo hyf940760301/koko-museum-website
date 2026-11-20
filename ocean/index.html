@@ -84,6 +84,8 @@ const RUNE = vec3f(0.30, 1.00, 0.86);
 const OB_A = vec3f(0.0, -45.0, 0.0);              // obelisk axis (glow)
 const OB_B = vec3f(0.0, -34.0, 0.0);
 const PURPLE = vec3f(0.62, 0.22, 1.0);
+const ZNEAR = 0.1;
+const ZA = 1.0001667;                             // far / (far - near), far = 600
 const CAVE_C = vec3f(-125.0, -44.0, 5.0);         // heart of the glowing cave
 
 // ---------- hashes and noise ----------
@@ -815,7 +817,8 @@ fn shade(pos: vec3f, n0: vec3f, rd: vec3f, m: f32, t: f32, time: f32) -> vec3f {
 fn ign(p: vec2f) -> f32 { return fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715)))); }
 fn hg(c: f32, g: f32) -> f32 { let g2 = g * g; return (1.0 - g2) / pow(1.0 + g2 - 2.0 * g * c, 1.5); }
 
-@fragment fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
+struct FOut { @location(0) col: vec4f, @builtin(frag_depth) depth: f32 };
+@fragment fn fs(@builtin(position) fc: vec4f) -> FOut {
   let px = fc.xy + u.jitter.xy;
   let ndc = vec2f(px.x * u.res.z * 2.0 - 1.0, 1.0 - px.y * u.res.w * 2.0);
   let ro = u.camPos.xyz;
@@ -833,6 +836,7 @@ fn hg(c: f32, g: f32) -> f32 { let g2 = g * g; return (1.0 - g2) / pow(1.0 + g2 
     t += h.x * 0.88;
     if (t > tLim) { break; }
   }
+  if (!hit && t < tLim) { hit = true; m = map(ro + rd * t).y; }      // out of steps along a silhouette: shade where the ray stopped
   var col = vec3f(0.0);
   var tEnd = tLim;
   if (hit && t < tLim) {
@@ -873,7 +877,10 @@ fn hg(c: f32, g: f32) -> f32 { let g2 = g * g; return (1.0 - g2) / pow(1.0 + g2 
     scat += exp(-EXT * s) * li * ds;
   }
   col += scat;
-  return vec4f(col, tEnd);
+  var o: FOut;
+  o.col = vec4f(col, tEnd);
+  o.depth = ZA * (1.0 - ZNEAR / max(tEnd * dot(rd, u.camFwd.xyz), 0.11));
+  return o;
 }
 
 // sun-space depth of the first occluder under each point of the sea surface
@@ -889,6 +896,224 @@ fn hg(c: f32, g: f32) -> f32 { let g2 = g * g; return (1.0 - g2) / pow(1.0 + g2 
     if (t > 150.0) { break; }
   }
   return vec4f(t, 0.0, 0.0, 1.0);
+}
+`;
+
+/* =====================================================================================
+   WGSL — rasterised life: fish, mantas, the leviathan, kelp, drifting particles
+   (appended to the scene module, so it shares the water optics and the shadow map)
+   ===================================================================================== */
+const WGSL_LIFE = /* wgsl */`
+fn toClip(wp: vec3f) -> vec4f {
+  let v = wp - u.camPos.xyz;
+  let z = dot(v, u.camFwd.xyz);
+  let x = dot(v, u.camRight.xyz) / u.camRight.w;
+  let y = dot(v, u.camUp.xyz) / u.camUp.w;
+  return vec4f(x - u.jitter.x * 2.0 * u.res.z * z, y + u.jitter.y * 2.0 * u.res.w * z, ZA * (z - ZNEAR), z);
+}
+fn sunLight(wpos: vec3f, time: f32) -> vec3f {
+  let depth = max(-wpos.y, 0.0);
+  let sl = depth / SUN.y;
+  let qs = wpos.xz + SUN.xz * sl;
+  return sunAt(depth) * shadowMap(qs, sl) * mix(1.0, caustic(qs, time), 0.6) * mix(0.75, beams(qs, time), 0.45);
+}
+// extinction plus the in-scattering of a uniform medium between the eye and the surface
+fn fogged(col: vec3f, wpos: vec3f) -> vec4f {
+  let v = wpos - u.camPos.xyz;
+  let t = length(v);
+  let dm = max(-(u.camPos.y + wpos.y) * 0.5, 0.0);
+  let ph = 0.5 * hg(dot(v / t, SUN), 0.6) + 0.5;
+  let tr = exp(-EXT * t);
+  return vec4f(col * tr + SIG_S * (ambAt(dm) + sunAt(dm) * (0.8 * ph)) / EXT * (1.0 - tr), t);
+}
+
+struct LIn { @location(0) pos: vec3f, @location(1) nrm: vec3f, @location(2) uvp: vec3f, @location(3) ia: vec4f, @location(4) ib: vec4f };
+struct LOut { @builtin(position) clip: vec4f, @location(0) wpos: vec3f, @location(1) nrm: vec3f, @location(2) lp: vec3f, @location(3) info: vec4f };
+// every animal follows a closed loop: ia = centre, radius; ib = phase, angular speed, size, school id + seed
+fn pathPos(ia: vec4f, ib: vec4f, t: f32) -> vec3f {
+  let sid = floor(ib.w);
+  let ang = ib.x + ib.y * t;
+  let e = 0.6 + 0.4 * fract(sid * 0.37);
+  let p = ia.xyz + vec3f(cos(ang) * ia.w, sin(ang * 2.0 + sid * 1.7) * ia.w * 0.10, sin(ang) * ia.w * e);
+  let s = fract(ib.w) * 100.0;
+  return p + vec3f(sin(t * 0.31 + s), 0.5 * sin(t * 0.23 + s * 1.7), cos(t * 0.27 + s * 2.3)) * min(ia.w * 0.05, 1.0);
+}
+@vertex fn vsLife(v: LIn) -> LOut {
+  let t = u.camPos.w;
+  let p0 = pathPos(v.ia, v.ib, t);
+  let fw = normalize(pathPos(v.ia, v.ib, t + 0.25) - p0);
+  let rt = normalize(cross(fw, vec3f(0.0, 1.0, 0.0)));
+  let up = cross(rt, fw);
+  var lp = v.pos; var n = v.nrm;
+  let size = v.ib.z; let part = v.uvp.z;
+  let s = fract(v.ib.w) * 100.0;
+  let k = 0.5 - lp.x;
+  if (part < 9.5) {
+    lp.z += 0.10 * k * k * sin(t * 7.0 / (0.5 + size) + s + lp.x * 5.0);
+  } else if (part < 19.5) {
+    let sp = abs(lp.z) / 0.62;
+    let a = t * 1.5 + s - sp * 1.6;
+    let A = 0.2 * pow(sp, 1.5);
+    lp.y += A * sin(a);
+    let dy = (0.3 * sqrt(sp) * sin(a) - 1.6 * A * cos(a)) / 0.62 * sign(lp.z);
+    n = normalize(vec3f(n.x, n.y, n.z - dy * n.y));
+  } else {
+    lp.y += 0.05 * k * k * sin(t * 0.9 + s + lp.x * 4.0);
+  }
+  var o: LOut;
+  o.wpos = p0 + (fw * lp.x + up * lp.y + rt * lp.z) * size;
+  o.nrm = fw * n.x + up * n.y + rt * n.z;
+  o.lp = v.pos;
+  o.info = vec4f(part, s, floor(v.ib.w), v.uvp.y);
+  o.clip = toClip(o.wpos);
+  return o;
+}
+@fragment fn fsLife(i: LOut) -> @location(0) vec4f {
+  let time = u.camPos.w;
+  let rd = normalize(i.wpos - u.camPos.xyz);
+  var n = normalize(i.nrm);
+  if (dot(n, rd) > 0.0) { n = -n; }
+  let part = i.info.x; let lp = i.lp;
+  var alb = vec3f(0.5); var spec = 0.35;
+  if (part < 9.5) {
+    let kind = i32(i.info.z) % 5;
+    var back = vec3f(0.08, 0.20, 0.34); var side = vec3f(0.74, 0.82, 0.88); var acc = vec3f(0.98, 0.82, 0.18);
+    if (kind == 1) { back = vec3f(0.98, 0.42, 0.06); side = back; acc = vec3f(0.95); }
+    else if (kind == 2) { back = vec3f(0.98, 0.80, 0.10); side = back; acc = vec3f(0.12, 0.2, 0.6); }
+    else if (kind == 3) { back = vec3f(0.05, 0.20, 0.70); side = vec3f(0.14, 0.45, 0.95); }
+    else if (kind == 4) { back = vec3f(0.92, 0.28, 0.36); side = vec3f(1.0, 0.56, 0.52); acc = vec3f(0.6, 0.3, 0.9); }
+    let v = clamp(lp.y / 0.26 + 0.5, 0.0, 1.0);
+    alb = mix(side, back, smoothstep(0.5, 0.82, v));
+    alb = mix(vec3f(0.92), alb, smoothstep(0.02, 0.36, v));
+    if (kind == 1) { alb = mix(alb, acc, smoothstep(0.38, 0.42, abs(fract(lp.x * 2.6 + 0.2) - 0.5))); }
+    else { alb = mix(alb, acc, smoothstep(0.035, 0.01, abs(lp.y - 0.015)) * step(lp.x, 0.3)); }
+    if (part > 0.5) { alb = mix(alb, acc, 0.55); }
+    alb *= 1.0 - smoothstep(0.03, 0.018, length(lp.xy - vec2f(0.385, 0.035)));
+    spec = 0.6;
+  } else if (part < 19.5) {
+    let sp = abs(lp.z) / 0.62;
+    if (i.info.w > 0.5) {
+      alb = vec3f(0.05, 0.065, 0.09);
+      alb = mix(alb, vec3f(0.7), smoothstep(0.06, 0.03, length(vec2f(lp.x - 0.12, sp - 0.22) * vec2f(1.0, 0.35))));
+    } else {
+      alb = vec3f(0.84, 0.86, 0.88);
+      alb *= 1.0 - 0.8 * smoothstep(0.62, 0.7, snoise(vec2f(lp.x, lp.z) * 14.0 + i.info.y)) * smoothstep(0.1, -0.1, lp.x);
+      alb = mix(alb, vec3f(0.1), smoothstep(0.8, 1.0, sp));
+    }
+  } else {
+    let v = clamp(lp.y / 0.2 + 0.5, 0.0, 1.0);
+    alb = mix(vec3f(0.42, 0.47, 0.52), vec3f(0.07, 0.10, 0.14), smoothstep(0.2, 0.6, v));
+    alb *= 0.75 + 0.5 * snoise(lp.xy * 9.0) * snoise(lp.xz * 23.0);
+    alb = mix(alb, vec3f(0.04), smoothstep(0.01, 0.0, abs(length(lp.xy - vec2f(0.33, -0.01)) - 0.0)) * 0.0);
+    spec = 0.15;
+  }
+  let sunL = sunLight(i.wpos, time);
+  let amb = ambAt(max(-i.wpos.y, 0.0));
+  var lit = sunL * (0.2 + 0.8 * max(dot(n, SUN), 0.0)) * 0.7 + amb * (0.55 + 0.45 * n.y) * 0.8;
+  lit += vec3f(0.80, 0.72, 0.56) * sunAt(50.0) * (0.5 - 0.5 * n.y) * 0.08;
+  var col = alb * lit + sunL * spec * pow(max(dot(n, normalize(SUN - rd)), 0.0), 24.0) * 0.4;
+  return fogged(col, i.wpos);
+}
+
+struct KIn { @location(0) st: vec2f, @location(3) ia: vec4f, @location(4) ib: vec4f };
+struct KOut { @builtin(position) clip: vec4f, @location(0) wpos: vec3f, @location(1) nrm: vec3f, @location(2) uv: vec3f, @location(3) seed: f32 };
+// a kelp frond: ia = root, height; ib = seed, half width, phase
+fn kelpPos(ia: vec4f, ib: vec4f, tt: f32, t: f32) -> vec3f {
+  let h = ia.w; let s = ib.x * 50.0;
+  let k = pow(tt, 1.4);
+  var off = vec2f(0.85, 0.4) * (h * 0.13 * k) * (0.7 + 0.3 * sin(t * 0.21 + ib.z));
+  let a1 = t * 0.55 + ib.z + tt * 2.6;
+  off += vec2f(sin(a1), cos(a1 * 0.83 + s)) * (h * 0.03 * k + 0.2 * tt);
+  off += vec2f(cos(tt * 9.0 + s), sin(tt * 9.0 + s)) * 0.3 * tt;
+  return ia.xyz + vec3f(off.x, h * tt * (1.0 - 0.05 * k), off.y);
+}
+@vertex fn vsKelp(v: KIn) -> KOut {
+  let t = u.camPos.w;
+  let tt = v.st.y;
+  let c = kelpPos(v.ia, v.ib, tt, t);
+  let tg = normalize(kelpPos(v.ia, v.ib, tt + 0.02, t) - c);
+  let tw = v.ib.x * 50.0 + tt * 4.5 + 0.5 * sin(t * 0.4 + v.ib.z + tt * 3.0);
+  let s0 = vec3f(cos(tw), 0.0, sin(tw));
+  let sd = normalize(s0 - tg * dot(s0, tg));
+  let w = v.ib.y * (0.45 + 0.55 * sin(PI * min(tt * 1.1, 1.0))) * smoothstep(1.0, 0.9, tt);
+  var o: KOut;
+  o.wpos = c + sd * (v.st.x * w);
+  o.nrm = cross(tg, sd);
+  o.uv = vec3f(v.st.x, tt * v.ia.w, tt);
+  o.seed = v.ib.x;
+  o.clip = toClip(o.wpos);
+  return o;
+}
+@fragment fn fsKelp(i: KOut) -> @location(0) vec4f {
+  let x = i.uv.x; let ax = abs(x); let y = i.uv.y;
+  let fy = fract(y / 1.15 + select(0.0, 0.5, x > 0.0) + i.seed * 7.0);
+  let hw = 0.36 * pow(max(sin(PI * pow(ax, 0.75)), 0.0), 0.8) + 0.03 * sin(ax * 30.0 + y * 3.0);
+  let stipe = ax < 0.07;
+  if (!(stipe || abs(fy - 0.5) < hw)) { discard; }
+  let time = u.camPos.w;
+  let rd = normalize(i.wpos - u.camPos.xyz);
+  var n = normalize(i.nrm);
+  if (dot(n, rd) > 0.0) { n = -n; }
+  var alb = mix(vec3f(0.06, 0.09, 0.015), vec3f(0.24, 0.20, 0.035), 0.5 + 0.5 * sin(y * 2.3 + i.seed * 40.0 + ax * 3.0));
+  alb *= 0.7 + 0.6 * snoise(vec2f(x * 3.0 + i.seed * 20.0, y * 5.0)) * snoise(vec2f(x * 9.0, y * 1.3));
+  alb *= 0.8 + 0.4 * smoothstep(0.0, 0.3, abs(abs(fy - 0.5) - 0.02));       // midrib
+  if (stipe) { alb = vec3f(0.10, 0.08, 0.03); }
+  let sunL = sunLight(i.wpos, time) * mix(0.4, 1.0, i.uv.z);
+  let amb = ambAt(max(-i.wpos.y, 0.0)) * mix(0.55, 1.0, i.uv.z);
+  let ndl = dot(n, SUN);
+  var col = alb * (sunL * (0.3 + 0.5 * abs(ndl)) * 0.7 + amb * 0.7);
+  col += vec3f(0.40, 0.36, 0.05) * sunL * smoothstep(0.1, -0.5, ndl) * 0.22;          // light through the blade
+  return fogged(col, i.wpos);
+}
+
+struct PIn { @builtin(vertex_index) vi: u32, @location(3) ia: vec4f, @location(4) ib: vec4f };
+struct POut { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(1) col: vec4f };
+// ia.w: 0 marine snow, 1 kelp motes, 2 bubbles, 3 cave spores
+@vertex fn vsPart(v: PIn) -> POut {
+  let t = u.camPos.w;
+  let cam = u.camPos.xyz;
+  let kind = v.ia.w;
+  var p = vec3f(0.0); var size = v.ib.x; var col = vec3f(0.0);
+  if (kind < 0.5) {
+    let B = 34.0;
+    let q = v.ia.xyz * B + vec3f(0.22, -0.05, 0.1) * t + 0.35 * vec3f(sin(t * 0.3 + v.ib.z * 40.0), sin(t * 0.2 + v.ib.w * 40.0), cos(t * 0.25 + v.ib.z * 20.0));
+    p = cam + (fract((q - cam) / B + 0.5) - 0.5) * B;
+    col = (ambAt(max(-p.y, 0.0)) * 0.5 + sunLight(p, t)) * v.ib.y;
+  } else if (kind < 1.5) {
+    p = vec3f(112.0 + (v.ia.x - 0.5) * 100.0, -53.0 + fract(v.ia.y + t * 0.006) * 32.0, 28.0 + (v.ia.z - 0.5) * 100.0);
+    p += 0.8 * vec3f(sin(t * 0.4 + v.ib.z * 50.0), sin(t * 0.33 + v.ib.w * 50.0), cos(t * 0.37 + v.ib.z * 30.0));
+    let tw = 0.55 + 0.45 * sin(t * 1.3 + v.ib.w * 80.0);
+    col = vec3f(0.85, 1.0, 0.35) * tw * tw * 2.4;
+  } else if (kind < 2.5) {
+    let H = -v.ia.y - 0.6;
+    let f = fract(v.ib.y + t * v.ib.z / H);
+    p = v.ia.xyz + vec3f(0.0, f * H, 0.0) + vec3f(sin(t * 2.1 + v.ib.w * 50.0 + f * 30.0), 0.0, cos(t * 1.7 + v.ib.w * 31.0 + f * 24.0)) * (0.12 + 1.3 * f);
+    size = v.ib.x * (1.0 + 1.4 * f);
+    col = (ambAt(max(-p.y, 0.0)) + sunLight(p, t) * 0.7) * 1.3 * smoothstep(0.0, 0.03, f) * smoothstep(1.0, 0.97, f);
+  } else {
+    let a = t * 0.12 + v.ib.z * TAU;
+    p = CAVE_C + vec3f(-2.0, 1.0, 0.0) + (v.ia.xyz - 0.5) * vec3f(20.0, 13.0, 20.0) + vec3f(sin(a), 0.6 * sin(a * 1.7 + v.ib.w * 9.0), cos(a)) * 1.5;
+    let tw = 0.5 + 0.5 * sin(t * 1.1 + v.ib.w * 70.0);
+    col = PURPLE * tw * 3.0;
+  }
+  let dist = length(p - cam);
+  let px = dist * u.camUp.w * 2.0 * u.res.w;         // size of one pixel at that distance
+  let s2 = max(size, px * 0.8);
+  col *= (size / s2) * (size / s2) * smoothstep(0.25, 1.0, dist) * exp(-EXT * dist);
+  let c = array<vec2f, 6>(vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0), vec2f(-1.0, -1.0), vec2f(1.0, 1.0), vec2f(-1.0, 1.0))[v.vi];
+  var o: POut;
+  o.uv = c;
+  o.col = vec4f(col, kind);
+  o.clip = toClip(p + (u.camRight.xyz * c.x + u.camUp.xyz * c.y) * s2);
+  return o;
+}
+@fragment fn fsPart(i: POut) -> @location(0) vec4f {
+  let r = length(i.uv);
+  var a = exp(-r * r * 4.5) * smoothstep(1.0, 0.8, r);
+  if (abs(i.col.a - 2.0) < 0.5) {
+    a = smoothstep(0.6, 0.86, r) * smoothstep(1.0, 0.92, r) * 0.8 + smoothstep(0.3, 0.0, length(i.uv - vec2f(-0.35, 0.4))) * 1.2 + 0.08 * step(r, 0.9);
+  }
+  return vec4f(i.col.rgb * a, 0.0);
 }
 `;
 
@@ -1014,18 +1239,32 @@ async function module(label, code) {
   }
   return mod;
 }
-let mScene, mTaa, mDown, mFinal;
+let mScene, mTaa, mDown, mFinal, mLife;
 try {
-  [mScene, mTaa, mDown, mFinal] = await Promise.all([
+  [mScene, mTaa, mDown, mFinal, mLife] = await Promise.all([
+    module('life', WGSL_COMMON + WGSL_SCENE + WGSL_LIFE),
     module('scene', WGSL_COMMON + WGSL_SCENE), module('taa', WGSL_COMMON + WGSL_TAA),
-    module('down', WGSL_DOWN), module('final', WGSL_COMMON + WGSL_FINAL)]);
+    module('down', WGSL_DOWN), module('final', WGSL_COMMON + WGSL_FINAL)]).then(a => [a[1], a[2], a[3], a[4], a[0]]);
 } catch (e) { return fail(String(e.message || e)); }
 const HDR = 'rgba16float';
 const pipe = (mod, entry, format, vmod) => device.createRenderPipeline({
   layout: 'auto', vertex: { module: vmod || mod, entryPoint: 'vs' },
   fragment: { module: mod, entryPoint: entry, targets: [{ format }] }, primitive: { topology: 'triangle-list' } });
 const pShadow = pipe(mScene, 'fsShadow', 'r16float');
-const pScene = pipe(mScene, 'fs', HDR);
+const DEPTH = 'depth32float';
+const pScene = device.createRenderPipeline({
+  layout: 'auto', vertex: { module: mScene, entryPoint: 'vs' }, fragment: { module: mScene, entryPoint: 'fs', targets: [{ format: HDR }] },
+  primitive: { topology: 'triangle-list' }, depthStencil: { format: DEPTH, depthWriteEnabled: true, depthCompare: 'always' } });
+const INST = { arrayStride: 32, stepMode: 'instance', attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x4' }, { shaderLocation: 4, offset: 16, format: 'float32x4' }] };
+const lifePipe = (vsName, fsName, buffers, additive) => device.createRenderPipeline({
+  layout: 'auto', vertex: { module: mLife, entryPoint: vsName, buffers },
+  fragment: { module: mLife, entryPoint: fsName, targets: [additive
+    ? { format: HDR, blend: { color: { srcFactor: 'one', dstFactor: 'one' }, alpha: { srcFactor: 'zero', dstFactor: 'one' } } } : { format: HDR }] },
+  primitive: { topology: 'triangle-list', cullMode: 'none' },
+  depthStencil: { format: DEPTH, depthWriteEnabled: !additive, depthCompare: 'less' } });
+const pLife = lifePipe('vsLife', 'fsLife', [{ arrayStride: 36, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }, { shaderLocation: 1, offset: 12, format: 'float32x3' }, { shaderLocation: 2, offset: 24, format: 'float32x3' }] }, INST]);
+const pKelp = lifePipe('vsKelp', 'fsKelp', [{ arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] }, INST]);
+const pPart = lifePipe('vsPart', 'fsPart', [INST], true);
 const pTaa = pipe(mTaa, 'fs', HDR);
 const pDown0 = pipe(mDown, 'fsFirst', HDR);
 const pDown = pipe(mDown, 'fsDown', HDR);
@@ -1038,10 +1277,10 @@ const ud = new Float32Array(UN);
 
 // ---------- quality ----------
 const TIERS = [
-  { name: '流畅', steps: 72, vol: 14, sh: 10, smap: 1024 },
-  { name: '均衡', steps: 100, vol: 22, sh: 16, smap: 1024 },
-  { name: '高', steps: 130, vol: 32, sh: 24, smap: 2048 },
-  { name: '电影', steps: 190, vol: 56, sh: 40, smap: 2048 },
+  { name: '流畅', steps: 72, vol: 14, sh: 10, smap: 1024, fish: 0.3, kelp: 0.5, snow: 2000 },
+  { name: '均衡', steps: 100, vol: 22, sh: 16, smap: 1024, fish: 0.6, kelp: 0.75, snow: 4000 },
+  { name: '高', steps: 130, vol: 32, sh: 24, smap: 2048, fish: 1, kelp: 1, snow: 7000 },
+  { name: '电影', steps: 190, vol: 56, sh: 40, smap: 2048, fish: 1, kelp: 1, snow: 7000 },
 ];
 const SCALES = [0.42, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
 let tier = Q.has('tier') ? +Q.get('tier') : 1;
@@ -1071,14 +1310,15 @@ function allocTargets(force) {
   cw = w; ch = h; rw = nrw; rh = nrh;
   if (!OFF) { canvas.width = cw; canvas.height = ch; }
   if (capTex) { capTex.destroy(); capTex = null; }
-  if (T) for (const t of [T.scene, T.hist[0], T.hist[1], ...T.bloom]) t.destroy();
-  T = { scene: tex(rw, rh), hist: [tex(rw, rh), tex(rw, rh)], bloom: [2, 4, 8, 16].map(d => tex(Math.ceil(rw / d), Math.ceil(rh / d))) };
-  const V = { scene: T.scene.createView(), hist: T.hist.map(t => t.createView()), bloom: T.bloom.map(t => t.createView()) };
+  if (T) for (const t of [T.scene, T.depth, T.hist[0], T.hist[1], ...T.bloom]) t.destroy();
+  T = { scene: tex(rw, rh), depth: tex(rw, rh, DEPTH), hist: [tex(rw, rh), tex(rw, rh)], bloom: [2, 4, 8, 16].map(d => tex(Math.ceil(rw / d), Math.ceil(rh / d))) };
+  const V = { scene: T.scene.createView(), depth: T.depth.createView(), hist: T.hist.map(t => t.createView()), bloom: T.bloom.map(t => t.createView()) };
   const ub = { buffer: ubuf };
   BG = {
     V,
     shadow: bg(pShadow, [ub]),
     scene: bg(pScene, [ub, smapView, linear]),
+    life: [pLife, pKelp, pPart].map(p => bg(p, [ub, smapView, linear])),
     taa: [0, 1].map(i => bg(pTaa, [ub, V.scene, V.hist[1 - i], linear])),      // writes hist[i], reads hist[1 - i]
     down0: [0, 1].map(i => bg(pDown0, [V.hist[i], linear])),
     down: [0, 1, 2].map(i => bg(pDown, [V.bloom[i], linear])),
@@ -1117,10 +1357,136 @@ function terrainH(x, z) {
   return -50 + dunes * (0.22 + 0.78 * far) + (rg * rg * 26 + 5 * far) * far + snoise(x * 0.09, z * 0.09) * 1.6 * far * rg - 64 * Math.exp(-d * d);
 }
 
+// ---------- life: meshes and instances ----------
+let seedState = 20261120;
+const rnd = () => { let t = seedState += 0x6D2B79F5; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const rr = (a, b) => a + (b - a) * rnd();
+const vbuf = (arr, usage = GPUBufferUsage.VERTEX) => { const b = device.createBuffer({ size: Math.max(16, arr.byteLength), usage: usage | GPUBufferUsage.COPY_DST }); device.queue.writeBuffer(b, 0, arr); return b; };
+// meshes are lists of (position, normal, u, v, part); normals are averaged from the faces
+function mesh() {
+  const P = [], A = [], I = [];
+  return {
+    v(x, y, z, a = 0, b = 0, part = 0) { P.push([x, y, z]); A.push([a, b, part]); return P.length - 1; },
+    tri(a, b, c) { I.push(a, b, c); },
+    quad(a, b, c, d) { I.push(a, b, c, a, c, d); },
+    build() {
+      const N = P.map(() => [0, 0, 0]);
+      for (let i = 0; i < I.length; i += 3) {
+        const [a, b, c] = [P[I[i]], P[I[i + 1]], P[I[i + 2]]];
+        const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+        for (const k of [I[i], I[i + 1], I[i + 2]]) for (let j = 0; j < 3; j++) N[k][j] += n[j];
+      }
+      const out = new Float32Array(P.length * 9);
+      P.forEach((p, i) => { const l = Math.hypot(...N[i]) || 1; out.set([...p, N[i][0] / l, N[i][1] / l, N[i][2] / l, ...A[i]], i * 9); });
+      return { vb: vbuf(out), ib: vbuf(new Uint32Array(I), GPUBufferUsage.INDEX), count: I.length };
+    },
+  };
+}
+// a spindle body along x (nose at +0.5) with tail, dorsal and pectoral fins; 'whale' lays the fluke flat
+function fishMesh(part, hgt, wid, whale) {
+  const m = mesh(), R = 12, S = 10, ring = [];
+  for (let i = 0; i <= R; i++) {
+    const s = i / R, x = 0.5 - s * 0.86, r = Math.pow(Math.sin(Math.PI * Math.pow(s, whale ? 0.5 : 0.62)), 0.8) + (i === R ? 0.07 : 0.0);
+    ring.push([]);
+    for (let j = 0; j < S; j++) { const a = j / S * 2 * Math.PI; ring[i].push(m.v(x, Math.cos(a) * r * hgt, Math.sin(a) * r * wid, s, j / S, part)); }
+  }
+  for (let i = 0; i < R; i++) for (let j = 0; j < S; j++) m.quad(ring[i][j], ring[i][(j + 1) % S], ring[i + 1][(j + 1) % S], ring[i + 1][j]);
+  const fin = (pts) => { const ids = pts.map(p => whale ? m.v(p[0], p[2] || 0, p[1], 0, 0, part + 1) : m.v(p[0], p[1], p[2] || 0, 0, 0, part + 1)); for (let i = 1; i + 1 < ids.length; i++) m.tri(ids[0], ids[i], ids[i + 1]); };
+  const f = whale ? 0.24 : 0.2;
+  fin([[-0.33, 0], [-0.54, f], [-0.45, 0], [-0.54, -f]]);
+  if (whale) {
+    for (const sg of [1, -1]) { const ids = [[0.18, -hgt * 0.5, sg * wid * 0.8], [0.02, -hgt * 0.9, sg * (wid + 0.2)], [0.08, -hgt * 0.5, sg * wid * 0.85]].map(p => m.v(...p, 0, 0, part + 1)); m.tri(...ids); }
+    const ids = [[-0.1, hgt * 0.75, 0], [-0.2, hgt * 0.72, 0], [-0.19, hgt * 1.15, 0]].map(p => m.v(...p, 0, 0, part + 1)); m.tri(...ids);
+  } else {
+    fin([[0.14, hgt * 0.9], [-0.16, hgt * 0.75], [-0.1, hgt * 1.7], [0.04, hgt * 1.5]]);
+    fin([[-0.02, -hgt * 0.8], [-0.2, -hgt * 0.6], [-0.16, -hgt * 1.35]]);
+  }
+  return m.build();
+}
+function mantaMesh() {
+  const m = mesh(), NS = 14, NC = 8, part = 10;
+  for (const top of [1, 0]) {
+    const g = [];
+    for (let i = -NS; i <= NS; i++) {
+      const s = i / NS, as = Math.abs(s), le = 0.3 - 0.35 * Math.pow(as, 1.3), te = -0.3 + 0.22 * Math.pow(as, 0.8);
+      g.push([]);
+      for (let j = 0; j <= NC; j++) {
+        const c = j / NC, th = 0.08 * Math.pow(1 - as, 1.3) * Math.pow(Math.sin(Math.PI * Math.pow(c, 0.7)), 0.6);
+        g[g.length - 1].push(m.v(le + (te - le) * c, (top ? 1 : -1) * th + 0.012 * (1 - as), s * 0.62, c, top, part));
+      }
+    }
+    for (let i = 0; i < 2 * NS; i++) for (let j = 0; j < NC; j++) top ? m.quad(g[i][j], g[i + 1][j], g[i + 1][j + 1], g[i][j + 1]) : m.quad(g[i][j], g[i][j + 1], g[i + 1][j + 1], g[i + 1][j]);
+  }
+  const tip = m.v(-1.0, 0, 0, 1, 1, part), b = [[-0.28, 0.02, 0.02], [-0.28, 0.02, -0.02], [-0.28, -0.015, 0]].map(p => m.v(...p, 1, 1, part));
+  m.tri(b[0], b[1], tip); m.tri(b[1], b[2], tip); m.tri(b[2], b[0], tip);
+  for (const sg of [1, -1]) m.tri(m.v(0.29, 0.01, sg * 0.06, 0, 1, part), m.v(0.4, -0.02, sg * 0.085, 0, 1, part), m.v(0.27, 0.0, sg * 0.13, 0, 1, part));
+  return m.build();
+}
+const fishM = fishMesh(0, 0.26, 0.105, false), mantaM = mantaMesh(), whaleM = fishMesh(20, 0.2, 0.17, true);
+
+// ia = (centre, radius), ib = (phase, angular speed, size, school id + seed)
+const SCHOOLS = [
+  [0, -38, 0, 27, 260, 0.42], [0, -36, 40, 15, 150, 0.3], [5, -42, 86, 19, 220, 0.34], [112, -40, 28, 24, 320, 0.36], [100, -34, 44, 16, 200, 0.28],
+  [126, -44, 12, 14, 180, 0.4], [66, -41, -70, 17, 260, 0.33], [72, -36, -62, 10, 140, 0.26], [-62, -41, 62, 17, 240, 0.36], [100, -30, -30, 13, 170, 0.3],
+  [0, -13, -52, 11, 160, 0.3], [172, -66, -10, 26, 220, 0.5], [-84, -44, 8, 9, 130, 0.27], [20, -27, 20, 62, 120, 1.1], [-40, -40, -40, 22, 200, 0.38],
+  [22, -40, -96, 12, 150, 0.3], [-88, -30, -58, 20, 200, 0.4], [40, -44, 100, 12, 130, 0.25],
+];
+const fishData = [];
+SCHOOLS.forEach(([x, y, z, R, n, size], sid) => {
+  const dir = rnd() > 0.5 ? 1 : -1, v = rr(1.3, 2.4), sp = Math.min(5, 1.6 + R * 0.12);
+  const shoals = [0, 1, 2].map(() => rr(0, 6.283));          // each school travels as three shoals along its loop
+  if (CAP && sid === 1) { const a = shoals[0], e = 0.6 + 0.4 * ((sid * 0.37) % 1); console.log('shoal at', (x + Math.cos(a) * R).toFixed(1), (y + Math.sin(a * 2 + sid * 1.7) * R * 0.1).toFixed(1), (z + Math.sin(a) * R * e).toFixed(1)); }
+  for (let i = 0; i < n; i++) {
+    const g = () => (rnd() + rnd() + rnd() - 1.5) * 1.2;
+    fishData.push([x + g() * sp, y + g() * sp * 0.45, z + g() * sp, R, shoals[i % 3] + g() * 5 / R, dir * v / R, size * rr(0.75, 1.3), sid + rnd() * 0.999]);
+  }
+});
+for (let i = fishData.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [fishData[i], fishData[j]] = [fishData[j], fishData[i]]; }
+const fishI = vbuf(new Float32Array(fishData.flat()));
+const mantaData = [
+  [0, -20, 10, 56, 0.0, 2.2 / 56, 6.5, 30.3], [0, -22, 10, 56, 0.16, 2.2 / 56, 5.2, 30.7], [62, -17, -24, 40, 2.0, -2.0 / 40, 6.0, 31.2],
+  [112, -25, 30, 36, 4.0, 2.1 / 36, 5.5, 32.5], [-70, -24, 50, 44, 1.0, -2.3 / 44, 6.8, 33.1], [-70, -27, 50, 44, 0.86, -2.3 / 44, 5.0, 33.8], [150, -30, -40, 50, 3.0, 2.0 / 50, 7.0, 34.4],
+];
+const mantaI = vbuf(new Float32Array(mantaData.flat()));
+const whaleData = [[176, -24, 6, 62, 2.6, 3.0 / 62, 58, 40.3], [-30, -20, -170, 85, 0.8, -2.6 / 85, 30, 41.6]];
+const whaleI = vbuf(new Float32Array(whaleData.flat()));
+
+// kelp: a forest beside the trench, thinner stands by the arch and the wreck
+const KSEG = 30, kelpV = [], kelpIdx = [];
+for (let i = 0; i <= KSEG; i++) kelpV.push(-1, i / KSEG, 1, i / KSEG);
+for (let i = 0; i < KSEG; i++) kelpIdx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
+const kelpVB = vbuf(new Float32Array(kelpV)), kelpIB = vbuf(new Uint16Array(kelpIdx), GPUBufferUsage.INDEX);
+const kelpData = [];
+function stand(cx, cz, R, plants, hMin, hMax) {
+  for (let i = 0, tries = 0; i < plants && tries < plants * 30; tries++) {
+    const a = rnd() * 6.283, r = Math.sqrt(rnd()) * R, x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+    if (snoise(x * 0.06, z * 0.06) < -0.25) continue;
+    const y = terrainH(x, z);
+    if (y < -57) continue;
+    const h = Math.min(rr(hMin, hMax), -y - 7), fr = 3 + Math.floor(rnd() * 3), ph = rnd() * 6.283;
+    for (let k = 0; k < fr; k++) kelpData.push([x + rr(-0.5, 0.5), y - 0.3, z + rr(-0.5, 0.5), h * rr(0.7, 1), rnd(), rr(0.55, 0.95), ph + rr(-0.4, 0.4), 0]);
+    i++;
+  }
+}
+stand(112, 28, 46, 330, 16, 36); stand(-62, 62, 30, 40, 9, 20); stand(74, -84, 18, 18, 8, 16); stand(-92, 12, 16, 16, 8, 16);
+for (let i = kelpData.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [kelpData[i], kelpData[j]] = [kelpData[j], kelpData[i]]; }
+const kelpI = vbuf(new Float32Array(kelpData.flat()));
+
+// particles: motes, bubbles and spores first, marine snow last so that its count can follow the quality tier
+const partData = [];
+for (let i = 0; i < 900; i++) partData.push([rnd(), rnd(), rnd(), 1, rr(0.03, 0.06), 0, rnd(), rnd()]);
+const VENTS = [[0, -46.4, 0], [-13, -49.5, 40], [66, -46, -70], [60, -49, -64], [100, -49.5, -24], [-125, -49.5, 5], [-62, -49, 66], [112, -50, 28], [8, -49.5, 80], [160, -80, 10], [-10, -49.5, -40], [22, -46, -92]];
+for (const [x, y, z] of VENTS) for (let i = 0; i < 46; i++) partData.push([x + rr(-0.5, 0.5), y, z + rr(-0.5, 0.5), 2, rr(0.02, 0.07), rnd(), rr(1.2, 2.3), rnd()]);
+for (let i = 0; i < 320; i++) partData.push([rnd(), rnd(), rnd(), 3, rr(0.03, 0.06), 0, rnd(), rnd()]);
+const PART_FIXED = partData.length;
+for (let i = 0; i < 7000; i++) partData.push([rnd(), rnd(), rnd(), 0, rr(0.012, 0.035), rr(0.25, 0.9), rnd(), rnd()]);
+const partI = vbuf(new Float32Array(partData.flat()));
+
 // ---------- camera, input ----------
 const SPOTS = [
-  { name: '巨藻森林', pos: [88, -45, 40], yaw: 1.107, pitch: 0.25 },
-  { name: '深渊海沟', pos: [166, -56, -80], yaw: 3.05, pitch: -0.42 },
+  { name: '巨藻森林', pos: [62, -44, 52], yaw: 1.2, pitch: 0.22 },
+  { name: '深渊海沟', pos: [156, -80, -95], yaw: 3.0, pitch: 0.2 },
   { name: '天生石拱', pos: [-82, -44.5, 82], yaw: 0.785, pitch: 0.1 },
   { name: '紫晶洞窟', pos: [-103, -46.2, 7], yaw: -1.5708, pitch: 0.12 },
   { name: '沉船与鲸尾', pos: [40, -44, -98], yaw: 2.33, pitch: 0.12 },
@@ -1243,7 +1609,24 @@ function render(now) {
     rp.setPipeline(p); rp.setBindGroup(0, g); rp.draw(3); rp.end();
   };
   if (smapDirty) { pass(smapView, pShadow, BG.shadow); smapDirty = false; histValid = false; }
-  pass(BG.V.scene, pScene, BG.scene);
+  {
+    const rp = enc.beginRenderPass({ colorAttachments: [{ view: BG.V.scene, loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }],
+      depthStencilAttachment: { view: BG.V.depth, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' } });
+    rp.setPipeline(pScene); rp.setBindGroup(0, BG.scene); rp.draw(3); rp.end();
+  }
+  if (!Q.has('nolife')) {
+    const rp = enc.beginRenderPass({ colorAttachments: [{ view: BG.V.scene, loadOp: 'load', storeOp: 'store' }],
+      depthStencilAttachment: { view: BG.V.depth, depthLoadOp: 'load', depthStoreOp: 'store' } });
+    rp.setPipeline(pLife); rp.setBindGroup(0, BG.life[0]);
+    for (const [m, inst, n] of [[fishM, fishI, Math.round(fishData.length * q.fish)], [mantaM, mantaI, mantaData.length], [whaleM, whaleI, whaleData.length]]) {
+      rp.setVertexBuffer(0, m.vb); rp.setVertexBuffer(1, inst); rp.setIndexBuffer(m.ib, 'uint32'); rp.drawIndexed(m.count, n);
+    }
+    rp.setPipeline(pKelp); rp.setBindGroup(0, BG.life[1]);
+    rp.setVertexBuffer(0, kelpVB); rp.setVertexBuffer(1, kelpI); rp.setIndexBuffer(kelpIB, 'uint16'); rp.drawIndexed(kelpIdx.length, Math.round(kelpData.length * q.kelp));
+    rp.setPipeline(pPart); rp.setBindGroup(0, BG.life[2]);
+    rp.setVertexBuffer(0, partI); rp.draw(6, PART_FIXED + q.snow);
+    rp.end();
+  }
   histIdx = 1 - histIdx;
   pass(BG.V.hist[histIdx], pTaa, BG.taa[histIdx]);
   pass(BG.V.bloom[0], pDown0, BG.down0[histIdx]);
