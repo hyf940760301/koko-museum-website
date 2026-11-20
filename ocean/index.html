@@ -1,0 +1,1043 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>深蓝遗境 · WebGPU 海底漫游</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #02161f; overflow: hidden; font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; color: #d9f4f6; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 1px 6px rgba(0, 20, 30, .8); letter-spacing: .04em; }
+  #stat { top: 14px; right: 18px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; opacity: .7; text-align: right; }
+  #help { left: 18px; bottom: 14px; font-size: 12px; line-height: 1.7; opacity: .72; }
+  #help b { font-weight: 600; color: #fff; }
+  #place { left: 50%; top: 12%; transform: translateX(-50%); font-size: 26px; font-weight: 300; letter-spacing: .5em; opacity: 0; transition: opacity 1.2s; white-space: nowrap; }
+  #place.on { opacity: .92; }
+  #gate { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 30%, rgba(8, 70, 90, .55), rgba(1, 14, 22, .9)); transition: opacity .8s; cursor: pointer; text-align: center; }
+  #gate.off { opacity: 0; pointer-events: none; }
+  #gate h1 { font-weight: 200; font-size: 44px; letter-spacing: .6em; margin: 0 0 18px .6em; }
+  #gate p { margin: 4px 0; opacity: .75; font-size: 14px; letter-spacing: .15em; }
+  #gate .go { margin-top: 26px; padding: 10px 34px; border: 1px solid rgba(190, 240, 245, .5); border-radius: 30px; font-size: 14px; letter-spacing: .4em; }
+  #gate .err { color: #ffd0b0; max-width: 620px; line-height: 1.8; letter-spacing: .05em; }
+  .capture .hud, .capture #gate { display: none; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="stat" class="hud"></div>
+<div id="place" class="hud"></div>
+<div id="help" class="hud">
+  <b>鼠标</b> 视角　<b>W A S D</b> 移动　<b>Q / E</b> 升降　<b>Shift</b> 加速<br>
+  <b>1 – 4</b> 打卡视角　<b>C</b> 电影模式　<b>P</b> 定格精修　<b>H</b> 隐藏界面
+</div>
+<div id="gate">
+  <h1>深蓝遗境</h1>
+  <p>程序化 WebGPU 海底漫游 · 样片：潮汐之门与守望巨像</p>
+  <p id="gmsg" class="go">点击潜入</p>
+</div>
+
+<script>
+'use strict';
+/* =====================================================================================
+   WGSL — shared header
+   ===================================================================================== */
+const WGSL_COMMON = /* wgsl */`
+struct U {
+  camPos: vec4f,    // xyz, w = time
+  camRight: vec4f,  // xyz, w = tan(fov/2) * aspect
+  camUp: vec4f,     // xyz, w = tan(fov/2)
+  camFwd: vec4f,    // xyz, w = frame index
+  pPos: vec4f, pRight: vec4f, pUp: vec4f, pFwd: vec4f,   // previous frame camera
+  res: vec4f,       // render w, h, 1/w, 1/h
+  jitter: vec4f,    // xy sub-pixel jitter, z history blend, w neighbourhood clamp on/off
+  quality: vec4f,   // x march steps, y volume samples, z shadow steps, w exposure
+  smap: vec4f,      // xz centre, extent, 1/extent
+  misc: vec4f,      // x shadow map size, yz canvas size, w unused
+};
+@group(0) @binding(0) var<uniform> u: U;
+
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+}
+`;
+
+/* =====================================================================================
+   WGSL — the world: noise, signed distance modelling, water optics, shading
+   ===================================================================================== */
+const WGSL_SCENE = /* wgsl */`
+@group(0) @binding(1) var smapTex: texture_2d<f32>;
+@group(0) @binding(2) var lin: sampler;
+
+const PI = 3.14159265;
+const TAU = 6.2831853;
+const FLOOR = -50.0;
+const TMAX = 320.0;
+const SUN = vec3f(0.4389, 0.8778, 0.1931);         // towards the sun, under water
+const SUNAIR = vec3f(0.5837, 0.7703, 0.2568);    // the same ray above the surface
+const EXT = vec3f(0.020, 0.0078, 0.0058);         // beam extinction per metre
+const SIG_S = vec3f(0.0010, 0.0024, 0.0034);      // scattering per metre
+const KD = vec3f(0.024, 0.0095, 0.0080);          // downwelling attenuation per metre
+const SUNE = vec3f(7.4, 7.0, 6.3);
+const AMBE = vec3f(0.55, 0.95, 1.25);
+const RUNE = vec3f(0.30, 1.00, 0.86);
+const OB_A = vec3f(0.0, -45.0, 0.0);              // obelisk axis (glow)
+const OB_B = vec3f(0.0, -34.0, 0.0);
+
+// ---------- hashes and noise ----------
+fn hash21(p: vec2f) -> f32 {
+  var p3 = fract(vec3f(p.x, p.y, p.x) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+fn hash31(p: vec3f) -> f32 {
+  var p3 = fract(p * 0.1031);
+  p3 += dot(p3, p3.zyx + 31.32);
+  return fract((p3.x + p3.y) * p3.z);
+}
+fn mod289v3(x: vec3f) -> vec3f { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+fn mod289v2(x: vec2f) -> vec2f { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+fn permute(x: vec3f) -> vec3f { return mod289v3(((x * 34.0) + 1.0) * x); }
+// 2D simplex noise, -1..1
+fn snoise(v: vec2f) -> f32 {
+  let C = vec4f(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
+  var i = floor(v + dot(v, C.yy));
+  let x0 = v - i + dot(i, C.xx);
+  let i1 = select(vec2f(0.0, 1.0), vec2f(1.0, 0.0), x0.x > x0.y);
+  let x1 = x0 + C.xx - i1;
+  let x2 = x0 + C.zz;
+  i = mod289v2(i);
+  let p = permute(permute(i.y + vec3f(0.0, i1.y, 1.0)) + i.x + vec3f(0.0, i1.x, 1.0));
+  var m = max(vec3f(0.5) - vec3f(dot(x0, x0), dot(x1, x1), dot(x2, x2)), vec3f(0.0));
+  m = m * m; m = m * m;
+  let x = 2.0 * fract(p * C.www) - 1.0;
+  let h = abs(x) - 0.5;
+  let a0 = x - floor(x + 0.5);
+  m *= 1.79284291400159 - 0.85373472095314 * (a0 * a0 + h * h);
+  let g = vec3f(a0.x * x0.x + h.x * x0.y, a0.y * x1.x + h.y * x1.y, a0.z * x2.x + h.z * x2.y);
+  return 130.0 * dot(m, g);
+}
+fn vnoise3(p: vec3f) -> f32 {
+  let i = floor(p); let f = fract(p);
+  let w = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(hash31(i), hash31(i + vec3f(1, 0, 0)), w.x), mix(hash31(i + vec3f(0, 1, 0)), hash31(i + vec3f(1, 1, 0)), w.x), w.y),
+             mix(mix(hash31(i + vec3f(0, 0, 1)), hash31(i + vec3f(1, 0, 1)), w.x), mix(hash31(i + vec3f(0, 1, 1)), hash31(i + vec3f(1, 1, 1)), w.x), w.y), w.z);
+}
+fn fbm3(p: vec3f) -> f32 {
+  var f = 0.0; var a = 0.5; var q = p;
+  for (var i = 0; i < 4; i++) { f += a * vnoise3(q); q = q * 2.03 + vec3f(1.7, 9.2, 3.1); a *= 0.5; }
+  return f;
+}
+
+// ---------- distance primitives ----------
+fn rot(a: f32) -> mat2x2f { let c = cos(a); let s = sin(a); return mat2x2f(c, s, -s, c); }
+fn sdBox(p: vec3f, b: vec3f) -> f32 { let q = abs(p) - b; return length(max(q, vec3f(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0); }
+fn sdBox2(p: vec2f, b: vec2f) -> f32 { let q = abs(p) - b; return length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0); }
+fn sdCyl(p: vec3f, r: f32, h: f32) -> f32 { let d = vec2f(length(p.xz) - r, abs(p.y) - h); return min(max(d.x, d.y), 0.0) + length(max(d, vec2f(0.0))); }
+fn sdCapsule(p: vec3f, a: vec3f, b: vec3f, r: f32) -> f32 { let pa = p - a; let ba = b - a; return length(pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0)) - r; }
+fn sdEll(p: vec3f, r: vec3f) -> f32 { let k0 = length(p / r); let k1 = length(p / (r * r)); return k0 * (k0 - 1.0) / max(k1, 1e-4); }
+fn smin(a: f32, b: f32, k: f32) -> f32 { let h = max(k - abs(a - b), 0.0) / k; return min(a, b) - h * h * k * 0.25; }
+fn smax(a: f32, b: f32, k: f32) -> f32 { return -smin(-a, -b, k); }
+fn opU(a: vec2f, b: vec2f) -> vec2f { if (a.x < b.x) { return a; } return b; }
+
+// ---------- sea bed ----------
+fn terrainH(q: vec2f) -> f32 {
+  let r = length(q);
+  var farM = smoothstep(55.0, 140.0, r);
+  let corridor = smoothstep(15.0, 46.0, abs(q.x));
+  farM *= mix(1.0, corridor, smoothstep(-25.0, 25.0, q.y));
+  let dunes = snoise(q * 0.012) * 3.0 + snoise(q * 0.035 + 7.3);
+  let rg = 1.0 - abs(snoise(q * 0.0065 + 3.1));
+  var h = FLOOR + dunes * (0.22 + 0.78 * farM);
+  h += (rg * rg * 26.0 + 5.0 * farM) * farM;
+  h += snoise(q * 0.09) * 1.6 * farM * rg;
+  return h;
+}
+fn sdTerrain(p: vec3f) -> f32 {
+  if (p.y > -11.0) { return p.y + 12.0; }
+  return (p.y - terrainH(p.xz)) * 0.55;
+}
+
+// ---------- architecture ----------
+// a fluted column standing on y = 0; the shaft is broken off above 'cutY'
+fn sdColumn(p: vec3f, r: f32, h: f32, cutY: f32) -> f32 {
+  let rr = length(p.xz);
+  let a = atan2(p.z, p.x);
+  let hs = h - r * 0.9;
+  let ty = clamp(p.y / hs, 0.0, 1.0);
+  let rs = r * (1.0 - 0.17 * ty * ty) - 0.05 * r * (0.5 + 0.5 * cos(a * 20.0));
+  var d = max(rr - rs + 0.02 * smoothstep(0.95, 1.0, fract(p.y / (r * 1.9))), abs(p.y - hs * 0.5) - hs * 0.5);
+  d = min(d, sdCyl(p - vec3f(0.0, r * 0.18, 0.0), r * 1.34, r * 0.18) - 0.03);
+  d = min(d, sdCyl(p - vec3f(0.0, r * 0.50, 0.0), r * 1.17, r * 0.12) - 0.05);
+  let ey = p.y - hs;
+  let er = r * 0.84 + clamp(ey, 0.0, r * 0.45) * 0.95;
+  d = min(d, max(rr - er, abs(ey - r * 0.225) - r * 0.225));
+  d = min(d, sdBox(p - vec3f(0.0, hs + r * 0.67, 0.0), vec3f(r * 1.42, r * 0.22, r * 1.42)) - 0.02);
+  let jag = 0.35 * sin(p.x * 3.1 + 1.0) * sin(p.z * 2.7) + p.x * 0.3;
+  return max(d, p.y + jag - cutY);
+}
+
+fn ruinMask(a: f32) -> f32 { return sin(a + 0.9) + 0.6 * sin(a * 2.0 + 4.0) + 0.45; }
+
+// round sanctuary: stepped platform, ring of columns, broken entablature, obelisk at the heart
+fn sdTholos(p: vec3f) -> vec2f {
+  let rr = length(p.xz);
+  let bd = max(rr - 29.0, p.y - 22.0);
+  if (bd > 2.0) { return vec2f(bd, 3.0); }
+  let q = vec2f(rr, p.y);
+  var d = sdBox2(q - vec2f(0.0, 0.2), vec2f(27.0, 0.5));
+  d = min(d, sdBox2(q - vec2f(0.0, 0.9), vec2f(25.0, 0.5)));
+  d = min(d, sdBox2(q - vec2f(0.0, 1.6), vec2f(23.0, 0.5)));
+  d -= 0.05;
+  // columns
+  let sector = TAU / 20.0;
+  let a = atan2(p.z, p.x);
+  let id = round(a / sector);
+  let ang = id * sector;
+  let ca = cos(ang); let sa = sin(ang);
+  let pc = vec3f(ca * p.x + sa * p.z - 19.0, p.y - 2.1, -sa * p.x + ca * p.z);
+  var cutY = 100.0;
+  let mk = ruinMask(ang);
+  if (mk < 0.12) { cutY = 1.5 + 9.0 * hash21(vec2f(id, 3.7)); }
+  d = min(d, sdColumn(pc, 1.05, 14.0, cutY));
+  // entablature and cornice
+  let q2 = vec2f(rr - 19.0, p.y - 17.3);
+  var de = sdBox2(q2, vec2f(1.45, 1.1)) - 0.06;
+  de = min(de, sdBox2(q2 - vec2f(0.0, 1.35), vec2f(1.95, 0.22)) - 0.04);
+  de = max(de, -sdBox2(vec2f(abs(q2.x) - 1.5, q2.y + 0.25), vec2f(0.12, 0.12)));
+  let jag = 0.6 * sin(p.y * 2.3 + a * 40.0);
+  de = max(de, -(ruinMask(a) * 8.0 + jag));
+  d = min(d, de);
+  // fallen blocks of the entablature
+  var pb = p - vec3f(-21.5, 2.7, 5.0);
+  var pr = rot(0.5) * pb.xz; pb = vec3f(pr.x, pb.y, pr.y);
+  pr = rot(0.22) * pb.xy; pb = vec3f(pr.x, pr.y, pb.z);
+  d = min(d, sdBox(pb, vec3f(2.6, 1.0, 1.4)) - 0.06);
+  pb = p - vec3f(-15.0, 2.6, -8.5);
+  pr = rot(-0.9) * pb.xz; pb = vec3f(pr.x, pb.y, pr.y);
+  pr = rot(-0.3) * pb.yz; pb = vec3f(pb.x, pr.x, pr.y);
+  d = min(d, sdBox(pb, vec3f(2.2, 1.0, 1.3)) - 0.06);
+  var res = vec2f(d, 3.0);
+  // altar and obelisk
+  var da = sdCyl(p - vec3f(0.0, 2.5, 0.0), 4.2, 0.4) - 0.05;
+  da = min(da, sdCyl(p - vec3f(0.0, 3.2, 0.0), 3.2, 0.4) - 0.05);
+  res = opU(res, vec2f(da, 3.0));
+  let po = p - vec3f(0.0, 3.6, 0.0);
+  let pq = rot(0.7854) * po.xz;
+  let wy = mix(1.15, 0.72, clamp(po.y / 10.5, 0.0, 1.0)) - max(po.y - 10.5, 0.0) * 0.5;
+  let dob = max(max(abs(pq.x), abs(pq.y)) - wy, abs(po.y - 6.0) - 6.0) * 0.8;
+  res = opU(res, vec2f(dob, 5.0));
+  return res;
+}
+
+// processional avenue
+fn sdAvenue(p: vec3f) -> f32 {
+  let bd = max(max(abs(p.z - 86.0) - 34.0, abs(abs(p.x) - 11.0) - 2.6), p.y - 14.5);
+  if (bd > 2.0) { return bd; }
+  let iz = clamp(round((p.z - 56.0) / 8.5), 0.0, 7.0);
+  let sx = sign(p.x);
+  let h = hash21(vec2f(iz * 1.7 + 0.3, sx * 3.0 + 7.0));
+  var cutY = 100.0;
+  if (h < 0.42) { cutY = 1.6 + h * 19.0; }
+  let pc = vec3f(abs(p.x) - 11.0, p.y, p.z - (56.0 + iz * 8.5));
+  var d = sdBox(pc, vec3f(1.75, 1.0, 1.75)) - 0.05;
+  d = min(d, sdColumn(pc - vec3f(0.0, 1.0, 0.0), 0.95, 11.5, cutY));
+  return d;
+}
+
+// the Tide Gate: a colossal standing ring, half sunk into the sand
+fn gateLocal(p: vec3f) -> vec3f {
+  var q = p - vec3f(0.0, 11.5, 40.0);
+  let r = rot(0.06) * q.xy;
+  return vec3f(r.x, r.y, q.z);
+}
+fn sdGate(p: vec3f) -> f32 {
+  let q = gateLocal(p);
+  let bd = length(q) - 19.5;
+  if (bd > 2.0) { return bd; }
+  let c = vec2f(length(q.xy) - 15.5, q.z);
+  var d = sdBox2(c, vec2f(1.7, 1.35)) - 0.18;
+  d = max(d, -sdBox2(vec2f(c.x, abs(c.y) - 1.55), vec2f(0.55, 0.16)));
+  let a = atan2(q.y, q.x);
+  let sg = abs(fract(a * 14.0 / TAU) - 0.5);
+  d += smoothstep(0.035, 0.0, sg) * 0.07;
+  let jag = 0.5 * sin(q.x * 2.1) * sin(q.y * 1.7 + 2.0) * sin(q.z * 2.9);
+  d = max(d, -(length(q - vec3f(-11.4, 11.4, 0.3)) - 2.9 + jag));
+  return d;
+}
+
+// toppled column, drums and blocks strewn along the avenue
+fn sdDebris(p: vec3f) -> f32 {
+  let bd = sdBox(p - vec3f(0.0, 1.0, 62.0), vec3f(19.0, 2.6, 23.0));
+  if (bd > 2.0) { return bd; }
+  var q = p - vec3f(7.5, 0.5, 74.0);
+  var r2 = rot(1.25) * q.xz; q = vec3f(r2.x, q.y, r2.y);
+  r2 = rot(-0.04) * q.xy; q = vec3f(r2.x, r2.y, q.z);
+  var d = sdColumn(vec3f(q.y, q.x + 5.5, q.z), 0.95, 11.5, 9.2);
+  q = p - vec3f(-5.5, 0.45, 66.0);
+  r2 = rot(0.5) * q.xz; q = vec3f(r2.x, q.y, r2.y);
+  d = min(d, sdCyl(vec3f(q.y, q.x, q.z), 0.92, 1.1) - 0.03);
+  q = p - vec3f(-3.2, 0.25, 69.5);
+  r2 = rot(0.35) * q.xy; q = vec3f(r2.x, r2.y, q.z);
+  d = min(d, sdCyl(q, 0.92, 0.55) - 0.03);
+  q = p - vec3f(-13.5, 0.7, 45.5);
+  r2 = rot(0.7) * q.xz; q = vec3f(r2.x, q.y, r2.y);
+  r2 = rot(0.35) * q.yz; q = vec3f(q.x, r2.x, r2.y);
+  d = min(d, sdBox(q, vec3f(2.3, 1.2, 1.5)) - 0.15);
+  q = p - vec3f(13.0, 0.3, 50.0);
+  r2 = rot(-0.4) * q.xz; q = vec3f(r2.x, q.y, r2.y);
+  d = min(d, sdBox(q, vec3f(1.2, 0.7, 0.9)) - 0.1);
+  return d;
+}
+
+// a stepped pyramid half swallowed by the reef, far behind the sanctuary
+fn sdZiggurat(p0: vec3f) -> f32 {
+  var p = p0 - vec3f(-88.0, -2.0, -58.0);
+  let bd = length(p - vec3f(0.0, 18.0, 0.0)) - 54.0;
+  if (bd > 2.0) { return bd; }
+  let r2 = rot(0.45) * p.xz; p = vec3f(r2.x, p.y, r2.y);
+  let sh = 5.5;
+  let lv = clamp(floor(p.y / sh), 0.0, 6.0);
+  let w = 34.0 - lv * 4.2;
+  var d = sdBox(p - vec3f(0.0, (lv + 0.5) * sh, 0.0), vec3f(w, sh * 0.5, w));
+  d = min(d, sdBox(p - vec3f(0.0, (lv - 0.5) * sh, 0.0), vec3f(w + 4.2, sh * 0.5, w + 4.2)));
+  d = min(d, sdBox(p - vec3f(0.0, 41.5, 0.0), vec3f(5.0, 3.0, 5.0)));
+  d = max(d, -sdBox(p - vec3f(0.0, 41.0, 5.0), vec3f(1.6, 2.2, 1.5)));
+  // central stair
+  let ps = vec3f(abs(p.x), p.y, p.z);
+  d = min(d, max(sdBox(ps - vec3f(0.0, 19.0, 20.0), vec3f(3.2, 20.0, 18.0)), (p.y * 0.764 + p.z - 36.5) * 0.79));
+  return d - 0.25 * sin(p.x * 0.9) * sin(p.y * 1.3 + 1.0) * sin(p.z * 0.8) - 0.1;
+}
+
+// ---------- the Watcher: a 42 m colossus ----------
+fn sdColossus(pw: vec3f) -> vec2f {
+  let S = 3.8;
+  let p = pw / S;
+  let bd = sdCapsule(p, vec3f(0.0, 0.2, 0.3), vec3f(0.0, 9.6, 0.3), 3.7) * S;
+  if (bd > 2.0) { return vec2f(bd, 4.0); }
+  // pedestal
+  var dped = sdBox(p - vec3f(0.0, -0.45, 0.0), vec3f(2.9, 0.45, 2.9)) - 0.03;
+  dped = min(dped, sdBox(p - vec3f(0.0, -1.0, 0.0), vec3f(3.5, 0.3, 3.5)));
+  dped = max(dped, -sdBox(vec3f(p.x, p.y + 0.45, abs(p.z) - 2.95), vec3f(2.3, 0.22, 0.08)));
+  // robe
+  let a = atan2(p.z, p.x);
+  let ty = clamp(p.y / 5.9, 0.0, 1.0);
+  let foldv = 0.075 * sin(a * 13.0 + sin(p.y * 1.3) * 1.6) * (1.0 - ty * 0.75);
+  let rr = mix(1.9, 1.02, ty * (0.45 + 0.55 * ty)) + foldv;
+  let pe = vec2f(p.x, p.z * 1.22);
+  var b = max(length(pe) - rr, abs(p.y - 2.95) - 2.95) * 0.82;
+  b = smin(b, sdEll(p - vec3f(0.0, 6.35, 0.0), vec3f(1.32, 1.5, 0.84)), 0.5);
+  b = smin(b, sdEll(p - vec3f(0.0, 6.5, -0.5), vec3f(1.6, 2.0, 0.62)), 0.45);       // mantle
+  b = smin(b, sdCapsule(p, vec3f(-1.35, 7.25, 0.0), vec3f(1.35, 7.25, 0.0), 0.5), 0.35);
+  b = smin(b, sdCapsule(p, vec3f(0.0, 7.4, 0.0), vec3f(0.0, 8.2, 0.05), 0.36), 0.22);
+  // belt
+  b = min(b, length(vec2f(length(pe) - rr - 0.02, p.y - 5.05)) - 0.13);
+  // head
+  var hd = sdEll(p - vec3f(0.0, 8.72, 0.08), vec3f(0.52, 0.66, 0.6));
+  hd = smin(hd, sdEll(p - vec3f(0.0, 8.2, 0.4), vec3f(0.36, 0.52, 0.3)), 0.2);       // beard
+  hd = smin(hd, sdCapsule(p, vec3f(0.0, 8.86, 0.66), vec3f(0.0, 8.62, 0.77), 0.07), 0.08);
+  hd = smin(hd, sdCapsule(p, vec3f(-0.3, 8.92, 0.57), vec3f(0.3, 8.92, 0.57), 0.085), 0.1);
+  hd = smax(hd, -sdEll(vec3f(abs(p.x) - 0.2, p.y - 8.79, p.z - 0.67), vec3f(0.13, 0.07, 0.11)), 0.05);
+  hd = smin(hd, sdEll(p - vec3f(0.0, 8.55, -0.22), vec3f(0.64, 0.86, 0.6)), 0.15);   // hair
+  b = smin(b, hd, 0.12);
+  // arms: the right one grips the trident, the left forearm is long gone
+  b = smin(b, sdCapsule(p, vec3f(-1.6, 7.2, 0.0), vec3f(-2.05, 5.75, 0.45), 0.42), 0.25);
+  b = smin(b, sdCapsule(p, vec3f(-2.05, 5.75, 0.45), vec3f(-2.0, 6.2, 1.7), 0.34), 0.2);
+  b = smin(b, length(p - vec3f(-2.0, 6.25, 1.85)) - 0.36, 0.12);
+  b = smin(b, sdCapsule(p, vec3f(1.6, 7.2, 0.0), vec3f(2.1, 5.8, 0.3), 0.42), 0.25);
+  var fa = sdCapsule(p, vec3f(2.1, 5.8, 0.3), vec3f(2.3, 6.5, 1.9), 0.34);
+  fa = max(fa, p.z - 1.0 + 0.14 * sin(p.x * 9.0) * sin(p.y * 7.0));
+  b = smin(b, fa, 0.2);
+  // masonry courses and weathering
+  b += 0.012 * smoothstep(0.93, 1.0, fract(p.y * 1.55));
+  b += 0.02 * sin(p.x * 7.0) * sin(p.y * 9.0 + 1.0) * sin(p.z * 8.0);
+  var res = opU(vec2f(dped * S, 3.0), vec2f(b * S, 4.0));
+  // gilded crown
+  let ph = p - vec3f(0.0, 8.72, 0.0);
+  var g = max(abs(length(ph.xz) - 0.58) - 0.05, abs(ph.y - 0.4) - 0.1);
+  let sec = TAU / 9.0;
+  let ia = round(atan2(ph.z, ph.x) / sec) * sec;
+  let cs = cos(ia); let sn = sin(ia);
+  let pk = vec3f(cs * ph.x + sn * ph.z, ph.y, -sn * ph.x + cs * ph.z);
+  g = min(g, sdCapsule(pk, vec3f(0.58, 0.45, 0.0), vec3f(0.95, 1.3, 0.0), 0.05 - 0.03 * clamp((pk.y - 0.45) / 0.85, 0.0, 1.0)));
+  // trident
+  let pt = p - vec3f(-2.0, 0.0, 1.85);
+  g = min(g, sdCapsule(pt, vec3f(0.0, 0.0, 0.0), vec3f(0.0, 9.9, 0.0), 0.11));
+  g = min(g, sdCapsule(pt, vec3f(-0.62, 9.9, 0.0), vec3f(0.62, 9.9, 0.0), 0.1));
+  g = min(g, sdCapsule(vec3f(abs(pt.x) - 0.62, pt.y, pt.z), vec3f(0.0, 9.9, 0.0), vec3f(0.06, 10.75, 0.0), 0.085));
+  g = min(g, sdCapsule(pt, vec3f(0.0, 9.9, 0.0), vec3f(0.0, 11.0, 0.0), 0.095));
+  res = opU(res, vec2f(g * S, 7.0));
+  return res;
+}
+
+// ---------- the whole world; returns (distance, material) ----------
+fn map(p: vec3f) -> vec2f {
+  var res = vec2f(sdTerrain(p), 1.0);
+  let pf = p - vec3f(0.0, FLOOR, 0.0);
+  res = opU(res, sdTholos(pf));
+  res = opU(res, vec2f(sdAvenue(pf), 3.0));
+  res = opU(res, vec2f(sdGate(pf), 6.0));
+  res = opU(res, vec2f(min(sdDebris(pf), sdZiggurat(pf)), 3.0));
+  res = opU(res, sdColossus(pf - vec3f(0.0, 4.9, -52.0)));
+  return res;
+}
+
+fn calcNormal(p: vec3f, t: f32) -> vec3f {
+  let e = vec2f(1.0, -1.0) * 0.5773 * clamp(0.0012 * t, 0.003, 0.15);
+  return normalize(e.xyy * map(p + e.xyy).x + e.yyx * map(p + e.yyx).x + e.yxy * map(p + e.yxy).x + e.xxx * map(p + e.xxx).x);
+}
+fn softShadow(ro: vec3f, n: i32) -> f32 {
+  var res = 1.0; var t = 0.2;
+  let tmax = min(70.0, -ro.y / SUN.y);
+  for (var i = 0; i < n; i++) {
+    let h = map(ro + SUN * t).x;
+    res = min(res, 9.0 * h / t);
+    t += clamp(h, 0.2, 5.0);
+    if (res < 0.01 || t > tmax) { break; }
+  }
+  res = clamp(res, 0.0, 1.0);
+  return res * res * (3.0 - 2.0 * res);
+}
+fn calcAO(p: vec3f, n: vec3f) -> f32 {
+  var occ = 0.0; var sca = 1.0;
+  for (var i = 0; i < 5; i++) {
+    let h = 0.06 + 0.42 * f32(i) * f32(i) * 0.25 + 0.3 * f32(i);
+    let d = map(p + n * h).x;
+    occ += (h - d) * sca;
+    sca *= 0.72;
+  }
+  return clamp(1.0 - 0.38 * occ, 0.0, 1.0);
+}
+
+// ---------- water optics ----------
+fn sunAt(depth: f32) -> vec3f { return SUNE * exp(-KD * (depth / SUN.y)); }
+fn ambAt(depth: f32) -> vec3f { return AMBE * exp(-KD * depth); }
+// light shafts: slow, broad modulation of the sun as it enters through the waves (q on the surface plane)
+fn beams(q: vec2f, time: f32) -> f32 {
+  let w = q * 0.105 + vec2f(time * 0.045, time * 0.028);
+  let n = snoise(w) * 0.7 + snoise(w * 2.3 + vec2f(11.0 - time * 0.05, 3.0)) * 0.42;
+  let b = smoothstep(-0.25, 0.85, n);
+  return 0.22 + 2.3 * b * b;
+}
+// caustic filaments on surfaces
+fn caustic(q: vec2f, time: f32) -> f32 {
+  var w = q * 0.21;
+  w += 0.33 * vec2f(snoise(w * 0.6 + vec2f(0.0, time * 0.11)), snoise(w * 0.6 + vec2f(7.1, -time * 0.09)));
+  let a = 1.0 - abs(snoise(w + vec2f(time * 0.06, 0.0)));
+  let b = 1.0 - abs(snoise(w * 1.9 + vec2f(3.0, time * 0.09)));
+  let c = pow(a, 7.0) * 1.5 + pow(b, 9.0) * 1.0 + pow(a * b, 3.0) * 0.8;
+  return 0.5 + 1.5 * c;
+}
+fn shadowMap(q: vec2f, sl: f32) -> f32 {
+  let uv = (q - u.smap.xy) * u.smap.w + 0.5;
+  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) { return 1.0; }
+  let th = textureSampleLevel(smapTex, lin, uv, 0.0).r;
+  return smoothstep(-1.2, 0.2, th - sl);
+}
+fn waveH(q: vec2f, time: f32) -> f32 {
+  return snoise(q * 0.07 + vec2f(time * 0.05, time * 0.035)) * 0.7 + snoise(q * 0.19 - vec2f(time * 0.07, -time * 0.05)) * 0.28
+       + snoise(q * 0.47 + vec2f(-time * 0.09, time * 0.11)) * 0.09;
+}
+// the sea surface seen from below: Snell's window with total internal reflection outside it
+fn surfaceCol(ps: vec3f, rd: vec3f, time: f32) -> vec3f {
+  let e = 0.35;
+  let h0 = waveH(ps.xz, time);
+  let n = normalize(vec3f(-(waveH(ps.xz + vec2f(e, 0.0), time) - h0) / e * 0.55, 1.0, -(waveH(ps.xz + vec2f(0.0, e), time) - h0) / e * 0.55));
+  let ci = clamp(dot(rd, n), 0.0, 1.0);
+  let kk = 1.0 - 1.7689 * (1.0 - ci * ci);
+  let win = smoothstep(0.0, 0.16, kk);
+  let tir = ambAt(6.0) * 0.20 + vec3f(0.0, 0.03, 0.05);
+  let r = normalize(refract(rd, -n, 1.33) + vec3f(0.0, 1e-4, 0.0));
+  let fr = 0.02 + 0.98 * pow(1.0 - ci, 5.0);
+  let sd = max(dot(r, SUNAIR), 0.0);
+  var sky = mix(vec3f(0.72, 0.88, 1.0), vec3f(0.30, 0.58, 0.98), clamp(r.y, 0.0, 1.0)) * 2.6;
+  sky += vec3f(1.0, 0.95, 0.85) * (pow(sd, 900.0) * 160.0 + pow(sd, 60.0) * 6.0 + pow(sd, 8.0) * 1.2);
+  return mix(tir, mix(sky, tir, fr), win);
+}
+
+// ---------- materials ----------
+fn bumpN(p: vec3f, n: vec3f, sc: f32, st: f32) -> vec3f {
+  let e = 0.03;
+  let q = p * sc;
+  let f0 = fbm3(q);
+  let g = vec3f(fbm3(q + vec3f(e, 0.0, 0.0)) - f0, fbm3(q + vec3f(0.0, e, 0.0)) - f0, fbm3(q + vec3f(0.0, 0.0, e)) - f0) / e;
+  return normalize(n - st * (g - n * dot(g, n)));
+}
+fn glyph(q: vec2f) -> f32 {
+  let id = floor(q); let f = fract(q) - 0.5; let h = hash21(id + 17.0);
+  let ax = abs(f);
+  var g = 0.0;
+  if (h > 0.25) { g = max(g, step(ax.x, 0.05) * step(ax.y, 0.34)); }
+  if (fract(h * 7.0) > 0.4) { g = max(g, step(ax.y, 0.05) * step(ax.x, 0.34)); }
+  if (fract(h * 13.0) > 0.5) { g = max(g, step(abs(length(f) - 0.25), 0.04)); }
+  if (fract(h * 29.0) > 0.6) { g = max(g, step(abs(ax.x - ax.y), 0.05) * step(max(ax.x, ax.y), 0.34)); }
+  return g;
+}
+fn weather(alb0: vec3f, n: vec3f, nz: f32, nz2: f32, hgt: f32, streak: f32) -> vec3f {
+  var a = mix(alb0 * 0.58, alb0, smoothstep(0.28, 0.62, nz));
+  a = mix(a, a * vec3f(0.62, 0.80, 0.72), streak);
+  let algae = smoothstep(0.46, 0.70, nz2) * (1.0 - smoothstep(1.0, 16.0, hgt)) * 0.6;
+  a = mix(a, vec3f(0.22, 0.34, 0.20), algae);
+  let dep = smoothstep(0.72, 0.95, n.y) * smoothstep(0.30, 0.55, nz);
+  return mix(a, vec3f(0.74, 0.68, 0.54), dep * 0.65);
+}
+
+fn shade(pos: vec3f, n0: vec3f, rd: vec3f, m: f32, t: f32, time: f32) -> vec3f {
+  var n = n0;
+  var alb = vec3f(0.5);
+  var emi = vec3f(0.0);
+  var spec = 0.03; var gloss = 14.0;
+  let pf = pos - vec3f(0.0, FLOOR, 0.0);
+  let nz = fbm3(pos * 0.33);
+  let nz2 = fbm3(pos * 1.6 + vec3f(5.0));
+  let streak = smoothstep(0.5, 0.75, fbm3(vec3f(pos.x * 0.9, pos.y * 0.07, pos.z * 0.9)));
+  let detail = 1.0 - smoothstep(60.0, 140.0, t);
+  if (m < 1.5) {
+    let rock = 1.0 - smoothstep(0.60, 0.86, n0.y);
+    let w = pos.xz + 1.6 * vec2f(snoise(pos.xz * 0.05), snoise(pos.xz * 0.05 + 9.0));
+    let ph = w.x * 4.6 + sin(w.y * 0.9) * 1.5;
+    let rg = cos(ph) * 0.30 * detail * (0.4 + 0.6 * smoothstep(-0.2, 0.5, snoise(pos.xz * 0.02 + 4.0)));
+    let ns = normalize(n0 + vec3f(rg, 0.0, rg * 0.35));
+    let nr = bumpN(pos, n0, 0.8, 0.55 * detail);
+    n = normalize(mix(ns, nr, rock));
+    let sand = vec3f(0.80, 0.72, 0.56) * (0.80 + 0.3 * nz2) * (0.92 + 0.08 * sin(ph)) * (0.9 + 0.2 * hash21(floor(pos.xz * 30.0)) * detail);
+    var rk = mix(vec3f(0.27, 0.26, 0.25), vec3f(0.50, 0.47, 0.41), nz);
+    rk = mix(rk, vec3f(0.20, 0.32, 0.19), smoothstep(0.42, 0.72, nz2) * 0.6);
+    rk = mix(rk, vec3f(0.55, 0.30, 0.34), smoothstep(0.62, 0.8, fbm3(pos * 0.6 + vec3f(40.0))) * 0.5);
+    alb = mix(sand, rk, rock);
+  } else if (m < 3.5) {
+    n = bumpN(pos, n0, 2.2, 0.16 * detail);
+    alb = weather(vec3f(0.80, 0.77, 0.70), n0, nz, nz2, pf.y, streak);
+    spec = 0.05;
+  } else if (m < 4.5) {
+    n = bumpN(pos, n0, 0.9, 0.25 * detail);
+    let pat = clamp(streak * 0.55 + smoothstep(0.42, 0.7, nz) * 0.5, 0.0, 1.0);
+    alb = mix(vec3f(0.22, 0.15, 0.075), vec3f(0.11, 0.31, 0.27), pat);
+    alb = mix(alb, vec3f(0.50, 0.55, 0.50), smoothstep(0.58, 0.78, nz2) * 0.3);
+    alb = mix(alb, vec3f(0.74, 0.68, 0.54), smoothstep(0.75, 0.95, n0.y) * 0.5);
+    spec = 0.22; gloss = 22.0;
+  } else if (m < 5.5) {
+    let po = pf - vec3f(0.0, 3.6, 0.0);
+    let pq = rot(0.7854) * po.xz;
+    let nq = rot(0.7854) * n0.xz;
+    let face = select(pq.x, pq.y, abs(nq.x) > abs(nq.y));
+    let g = glyph(vec2f(face * 1.7 + 0.5, po.y * 1.05)) * step(abs(face), 0.6) * step(po.y, 10.2);
+    let pulse = 0.75 + 0.25 * sin(time * 0.6 - po.y * 0.5);
+    alb = vec3f(0.07, 0.09, 0.11);
+    emi = RUNE * (g * 7.0 * pulse + 0.25);
+    spec = 0.25; gloss = 50.0;
+  } else if (m < 6.5) {
+    let q = gateLocal(pf);
+    let cx = length(q.xy) - 15.5;
+    n = bumpN(pos, n0, 1.2, 0.22 * detail);
+    alb = weather(vec3f(0.40, 0.42, 0.44), n0, nz, nz2, pf.y - 4.0, streak);
+    if (abs(cx) < 0.5 && abs(q.z) > 1.35) {
+      let a = atan2(q.y, q.x);
+      let g = glyph(vec2f(a * 13.0, cx * 1.1 + 0.5));
+      let pulse = 0.7 + 0.3 * sin(time * 0.5 + a * 3.0);
+      emi = RUNE * (g * 5.0 * pulse + 0.12);
+      alb *= 0.4;
+    }
+  } else {
+    n = bumpN(pos, n0, 1.4, 0.15 * detail);
+    alb = mix(vec3f(0.85, 0.58, 0.20), vec3f(0.22, 0.42, 0.36), smoothstep(0.45, 0.7, nz2) * 0.7);
+    spec = 0.5; gloss = 36.0;
+  }
+  let depth = max(-pos.y, 0.0);
+  let sl = depth / SUN.y;
+  let qs = pos.xz + SUN.xz * sl;
+  let sunL = sunAt(depth);
+  let amb = ambAt(depth);
+  let ndl = max(dot(n, SUN), 0.0);
+  var sh = 0.0;
+  if (ndl > 0.0) { sh = softShadow(pos + n0 * 0.06, i32(u.quality.z)); }
+  let ca = mix(1.0, caustic(qs, time), 0.85) * mix(0.75, beams(qs, time), 0.45);
+  let ao = calcAO(pos, n0);
+  var lit = sunL * ndl * sh * ca * 0.70;
+  lit += amb * (0.50 + 0.50 * n.y) * ao * 0.75;
+  lit += vec3f(0.80, 0.72, 0.56) * sunL * (0.5 - 0.5 * n.y) * ao * 0.085;       // light bounced off the sand
+  lit += amb * 0.10 * ao;
+  // the obelisk as a light source
+  let pl = (OB_A + OB_B) * 0.5 - pos;
+  let dl = length(pl);
+  lit += RUNE * max(dot(n, pl / dl), 0.0) * ao * 60.0 / (30.0 + dl * dl);
+  var col = alb * lit + emi;
+  let hv = normalize(SUN - rd);
+  col += sunL * sh * ca * spec * pow(max(dot(n, hv), 0.0), gloss) * 0.35;
+  col += amb * spec * pow(1.0 - max(dot(n, -rd), 0.0), 3.0) * ao * 0.6;
+  return col;
+}
+
+fn ign(p: vec2f) -> f32 { return fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715)))); }
+fn hg(c: f32, g: f32) -> f32 { let g2 = g * g; return (1.0 - g2) / pow(1.0 + g2 - 2.0 * g * c, 1.5); }
+
+@fragment fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
+  let px = fc.xy + u.jitter.xy;
+  let ndc = vec2f(px.x * u.res.z * 2.0 - 1.0, 1.0 - px.y * u.res.w * 2.0);
+  let ro = u.camPos.xyz;
+  let rd = normalize(u.camFwd.xyz + u.camRight.xyz * (ndc.x * u.camRight.w) + u.camUp.xyz * (ndc.y * u.camUp.w));
+  let time = u.camPos.w;
+
+  var tSurf = 1e5;
+  if (rd.y > 0.0005) { tSurf = -ro.y / rd.y; }
+  let tLim = min(TMAX, tSurf);
+  var t = 0.05; var m = 0.0; var hit = false;
+  let steps = i32(u.quality.x);
+  for (var i = 0; i < steps; i++) {
+    let h = map(ro + rd * t);
+    if (h.x < 0.0007 * t + 0.0015) { hit = true; m = h.y; break; }
+    t += h.x * 0.88;
+    if (t > tLim) { break; }
+  }
+  var col = vec3f(0.0);
+  var tEnd = tLim;
+  if (hit && t < tLim) {
+    let pos = ro + rd * t;
+    col = shade(pos, calcNormal(pos, t), rd, m, t, time);
+    tEnd = t;
+  } else if (tSurf < TMAX) {
+    col = surfaceCol(ro + rd * tSurf, rd, time);
+  } else {
+    let dEnd = max(-(ro.y + rd.y * TMAX), 0.0);
+    col = SIG_S * (ambAt(dEnd) + sunAt(dEnd) * 0.6) / EXT;
+  }
+  col *= exp(-EXT * tEnd);
+
+  // single scattering along the view ray: shadowed, caustic-modulated sunlight plus ambient and rune glow
+  let nv = i32(u.quality.y);
+  let k = 0.014;
+  let c = 1.0 - exp(-k * tEnd);
+  let jit = fract(ign(fc.xy) + u.camFwd.w * 0.61803399);
+  let ph = 0.5 * hg(dot(rd, SUN), 0.6) + 0.5;
+  var scat = vec3f(0.0);
+  for (var i = 0; i < nv; i++) {
+    let x = (f32(i) + jit) / f32(nv);
+    let s = -log(1.0 - x * c) / k;
+    let ds = c / (f32(nv) * k * (1.0 - x * c));
+    let ps = ro + rd * s;
+    let dp = max(-ps.y, 0.0);
+    let sl = dp / SUN.y;
+    let qs = ps.xz + SUN.xz * sl;
+    var li = sunAt(dp) * (shadowMap(qs, sl) * beams(qs, time) * ph) + ambAt(dp);
+    li *= SIG_S;
+    let pa = ps - OB_A; let ba = OB_B - OB_A;
+    let dq = pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    li += RUNE * (0.05 / (1.5 + dot(dq, dq)));
+    scat += exp(-EXT * s) * li * ds;
+  }
+  col += scat;
+  return vec4f(col, tEnd);
+}
+
+// sun-space depth of the first occluder under each point of the sea surface
+@fragment fn fsShadow(@builtin(position) fc: vec4f) -> @location(0) vec4f {
+  let uv = fc.xy / u.misc.x;
+  let q = u.smap.xy + (uv - 0.5) * u.smap.z;
+  let ro = vec3f(q.x, 0.0, q.y);
+  var t = 3.0;
+  for (var i = 0; i < 140; i++) {
+    let h = map(ro - SUN * t).x;
+    if (h < 0.03) { break; }
+    t += h * 0.9;
+    if (t > 110.0) { break; }
+  }
+  return vec4f(t, 0.0, 0.0, 1.0);
+}
+`;
+
+/* =====================================================================================
+   WGSL — temporal accumulation, bloom, final grade
+   ===================================================================================== */
+const WGSL_TAA = /* wgsl */`
+@group(0) @binding(1) var cur: texture_2d<f32>;
+@group(0) @binding(2) var hist: texture_2d<f32>;
+@group(0) @binding(3) var lin: sampler;
+@fragment fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
+  let ip = vec2i(fc.xy);
+  let c = textureLoad(cur, ip, 0);
+  let ndc = vec2f(fc.x * u.res.z * 2.0 - 1.0, 1.0 - fc.y * u.res.w * 2.0);
+  let rd = normalize(u.camFwd.xyz + u.camRight.xyz * (ndc.x * u.camRight.w) + u.camUp.xyz * (ndc.y * u.camUp.w));
+  let v = u.camPos.xyz + rd * c.a - u.pPos.xyz;
+  let z = dot(v, u.pFwd.xyz);
+  let puv = vec2f(dot(v, u.pRight.xyz) / (z * u.pRight.w), -dot(v, u.pUp.xyz) / (z * u.pUp.w)) * 0.5 + 0.5;
+  var h = textureSampleLevel(hist, lin, puv, 0.0).rgb;
+  var alpha = u.jitter.z;
+  if (z < 0.01 || puv.x < 0.0 || puv.y < 0.0 || puv.x > 1.0 || puv.y > 1.0) { alpha = 1.0; }
+  if (u.jitter.w > 0.5) {
+    let lim = vec2i(u.res.xy) - 1;
+    var mn = c.rgb; var mx = c.rgb;
+    for (var j = -1; j <= 1; j++) { for (var i = -1; i <= 1; i++) {
+      let s = textureLoad(cur, clamp(ip + vec2i(i, j), vec2i(0), lim), 0).rgb;
+      mn = min(mn, s); mx = max(mx, s);
+    } }
+    let pad = (mx - mn) * 0.25;
+    h = clamp(h, mn - pad, mx + pad);
+  }
+  return vec4f(mix(h, c.rgb, alpha), c.a);
+}
+`;
+
+const WGSL_DOWN = /* wgsl */`
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var lin: sampler;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+}
+fn tap(uv: vec2f, o: vec2f) -> vec3f {
+  return (textureSampleLevel(src, lin, uv + vec2f(-o.x, -o.y), 0.0).rgb + textureSampleLevel(src, lin, uv + vec2f(o.x, -o.y), 0.0).rgb +
+          textureSampleLevel(src, lin, uv + vec2f(-o.x, o.y), 0.0).rgb + textureSampleLevel(src, lin, uv + vec2f(o.x, o.y), 0.0).rgb) * 0.25;
+}
+@fragment fn fsFirst(@builtin(position) fc: vec4f) -> @location(0) vec4f {
+  let o = 1.0 / vec2f(textureDimensions(src));
+  let c = tap(fc.xy * 2.0 * o, o);
+  let l = dot(c, vec3f(0.2126, 0.7152, 0.0722));
+  return vec4f(c * (0.05 + smoothstep(1.6, 5.0, l)), 1.0);
+}
+@fragment fn fsDown(@builtin(position) fc: vec4f) -> @location(0) vec4f {
+  let o = 1.0 / vec2f(textureDimensions(src));
+  return vec4f(tap(fc.xy * 2.0 * o, o), 1.0);
+}
+`;
+
+const WGSL_FINAL = /* wgsl */`
+@group(0) @binding(1) var sc: texture_2d<f32>;
+@group(0) @binding(2) var lin: sampler;
+@group(0) @binding(3) var b1: texture_2d<f32>;
+@group(0) @binding(4) var b2: texture_2d<f32>;
+@group(0) @binding(5) var b3: texture_2d<f32>;
+@group(0) @binding(6) var b4: texture_2d<f32>;
+fn aces(x: vec3f) -> vec3f { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3f(0.0), vec3f(1.0)); }
+@fragment fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
+  let uv = fc.xy / u.misc.yz;
+  let d = uv - 0.5;
+  let ca = d * dot(d, d) * 0.010;
+  var col = vec3f(textureSampleLevel(sc, lin, uv + ca, 0.0).r, textureSampleLevel(sc, lin, uv, 0.0).g, textureSampleLevel(sc, lin, uv - ca, 0.0).b);
+  let bl = textureSampleLevel(b1, lin, uv, 0.0).rgb * 0.30 + textureSampleLevel(b2, lin, uv, 0.0).rgb * 0.30 +
+           textureSampleLevel(b3, lin, uv, 0.0).rgb * 0.22 + textureSampleLevel(b4, lin, uv, 0.0).rgb * 0.18;
+  col += bl * 1.1;
+  col *= u.quality.w;
+  col *= 1.0 - 0.55 * dot(d, d);
+  col = aces(col);
+  col = pow(col, vec3f(1.0 / 2.2));
+  let g = fract(52.9829189 * fract(dot(fc.xy + u.camFwd.w * 7.31, vec2f(0.06711056, 0.00583715)))) - 0.5;
+  col += g * 0.018;
+  return vec4f(col, 1.0);
+}
+`;
+
+/* =====================================================================================
+   JavaScript
+   ===================================================================================== */
+(async () => {
+const $ = id => document.getElementById(id);
+const Q = new URLSearchParams(location.search);
+const CAP = Q.has('shot');
+if (CAP) document.body.classList.add('capture');
+window.__state = 'init';
+const fail = msg => {
+  window.__state = 'error'; window.__error = msg;
+  const g = $('gmsg'); g.className = 'err'; g.textContent = msg;
+  $('gate').classList.remove('off'); $('gate').style.display = 'flex';
+  console.error(msg);
+};
+
+if (!navigator.gpu) return fail('此浏览器不支持 WebGPU。请使用最新版 Chrome / Edge（桌面端），或在 Safari 中开启 WebGPU。');
+const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+if (!adapter) return fail('未找到可用的 WebGPU 显卡适配器。');
+const device = await adapter.requestDevice();
+device.lost.then(e => fail('WebGPU 设备丢失：' + e.message));
+const canvas = $('cv');
+const ctx = canvas.getContext('webgpu');
+// capture mode renders the final image into a texture and reads it back, so it also works without a presentable surface
+// (?offscreen=1 runs the live loop the same way, for testing on machines that cannot present)
+const OFF = CAP || Q.has('offscreen');
+const canvasFormat = OFF ? 'rgba8unorm' : navigator.gpu.getPreferredCanvasFormat();
+if (!OFF) ctx.configure({ device, format: canvasFormat, alphaMode: 'opaque' });
+let capTex = null;
+
+// ---------- pipelines ----------
+async function module(label, code) {
+  const mod = device.createShaderModule({ label, code });
+  const info = await mod.getCompilationInfo();
+  const errs = info.messages.filter(m => m.type === 'error');
+  if (errs.length) {
+    const lines = code.split('\n');
+    throw new Error('WGSL ' + label + ': ' + errs.map(e => `${e.lineNum}:${e.linePos} ${e.message}\n    ${lines[e.lineNum - 1]}`).join('\n'));
+  }
+  return mod;
+}
+let mScene, mTaa, mDown, mFinal;
+try {
+  [mScene, mTaa, mDown, mFinal] = await Promise.all([
+    module('scene', WGSL_COMMON + WGSL_SCENE), module('taa', WGSL_COMMON + WGSL_TAA),
+    module('down', WGSL_DOWN), module('final', WGSL_COMMON + WGSL_FINAL)]);
+} catch (e) { return fail(String(e.message || e)); }
+const HDR = 'rgba16float';
+const pipe = (mod, entry, format, vmod) => device.createRenderPipeline({
+  layout: 'auto', vertex: { module: vmod || mod, entryPoint: 'vs' },
+  fragment: { module: mod, entryPoint: entry, targets: [{ format }] }, primitive: { topology: 'triangle-list' } });
+const pShadow = pipe(mScene, 'fsShadow', 'r16float');
+const pScene = pipe(mScene, 'fs', HDR);
+const pTaa = pipe(mTaa, 'fs', HDR);
+const pDown0 = pipe(mDown, 'fsFirst', HDR);
+const pDown = pipe(mDown, 'fsDown', HDR);
+const pFinal = pipe(mFinal, 'fs', canvasFormat);
+const linear = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
+
+const UN = 52;
+const ubuf = device.createBuffer({ size: UN * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+const ud = new Float32Array(UN);
+
+// ---------- quality ----------
+const TIERS = [
+  { name: '流畅', steps: 72, vol: 14, sh: 10, smap: 1024 },
+  { name: '均衡', steps: 100, vol: 22, sh: 16, smap: 1024 },
+  { name: '高', steps: 130, vol: 32, sh: 24, smap: 2048 },
+  { name: '电影', steps: 190, vol: 56, sh: 40, smap: 2048 },
+];
+const SCALES = [0.42, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+let tier = Q.has('tier') ? +Q.get('tier') : 1;
+let scaleIdx = Q.has('scale') ? SCALES.findIndex(s => s >= +Q.get('scale')) : 3;
+if (scaleIdx < 0) scaleIdx = SCALES.length - 1;
+let cine = false, autoTier = tier;
+const SMAP_EXTENT = 380;
+let smapSize = 0, smapTex = null, smapView = null, smapCenter = [1e9, 1e9], smapDirty = true;
+
+// ---------- render targets ----------
+let cw = 0, ch = 0, rw = 0, rh = 0, T = null, BG = null, histIdx = 0, histValid = false;
+const tex = (w, h, format = HDR) => device.createTexture({ size: [Math.max(1, w), Math.max(1, h)], format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+const bg = (p, entries) => device.createBindGroup({ layout: p.getBindGroupLayout(0), entries: entries.map((r, i) => ({ binding: Array.isArray(r) ? r[0] : i, resource: Array.isArray(r) ? r[1] : r })) });
+function allocShadow() {
+  const want = TIERS[tier].smap;
+  if (want === smapSize) return;
+  if (smapTex) smapTex.destroy();
+  smapSize = want; smapTex = tex(want, want, 'r16float'); smapView = smapTex.createView(); smapDirty = true;
+  if (T) allocTargets(true);
+}
+function allocTargets(force) {
+  const dpr = CAP ? 1 : Math.min(window.devicePixelRatio || 1, 1.5);
+  const w = CAP ? +(Q.get('w') || 1280) : Math.max(64, Math.round(canvas.clientWidth * dpr));
+  const h = CAP ? +(Q.get('h') || 720) : Math.max(64, Math.round(canvas.clientHeight * dpr));
+  const nrw = Math.max(32, Math.round(w * SCALES[scaleIdx])), nrh = Math.max(32, Math.round(h * SCALES[scaleIdx]));
+  if (!force && w === cw && h === ch && nrw === rw && nrh === rh) return;
+  cw = w; ch = h; rw = nrw; rh = nrh;
+  if (!OFF) { canvas.width = cw; canvas.height = ch; }
+  if (capTex) { capTex.destroy(); capTex = null; }
+  if (T) for (const t of [T.scene, T.hist[0], T.hist[1], ...T.bloom]) t.destroy();
+  T = { scene: tex(rw, rh), hist: [tex(rw, rh), tex(rw, rh)], bloom: [2, 4, 8, 16].map(d => tex(Math.ceil(rw / d), Math.ceil(rh / d))) };
+  const V = { scene: T.scene.createView(), hist: T.hist.map(t => t.createView()), bloom: T.bloom.map(t => t.createView()) };
+  const ub = { buffer: ubuf };
+  BG = {
+    V,
+    shadow: bg(pShadow, [ub]),
+    scene: bg(pScene, [ub, smapView, linear]),
+    taa: [0, 1].map(i => bg(pTaa, [ub, V.scene, V.hist[1 - i], linear])),      // writes hist[i], reads hist[1 - i]
+    down0: [0, 1].map(i => bg(pDown0, [V.hist[i], linear])),
+    down: [0, 1, 2].map(i => bg(pDown, [V.bloom[i], linear])),
+    final: [0, 1].map(i => bg(pFinal, [ub, V.hist[i], linear, ...V.bloom])),
+  };
+  histValid = false;
+}
+
+// ---------- terrain mirror on the CPU (camera collision) ----------
+const fr = x => x - Math.floor(x), m289 = x => x - Math.floor(x / 289) * 289, perm = x => m289((x * 34 + 1) * x);
+function snoise(x, y) {
+  const C0 = 0.211324865405187, C1 = 0.366025403784439, C2 = -0.577350269189626, C3 = 0.024390243902439;
+  const s = (x + y) * C1; let ix = Math.floor(x + s), iy = Math.floor(y + s);
+  const t = (ix + iy) * C0; const x0 = x - ix + t, y0 = y - iy + t;
+  const i1x = x0 > y0 ? 1 : 0, i1y = 1 - i1x;
+  const x1 = x0 + C0 - i1x, y1 = y0 + C0 - i1y, x2 = x0 + C2, y2 = y0 + C2;
+  ix = m289(ix); iy = m289(iy);
+  const p = [perm(perm(iy) + ix), perm(perm(iy + i1y) + ix + i1x), perm(perm(iy + 1) + ix + 1)];
+  const xs = [x0, x1, x2], ys = [y0, y1, y2]; let n = 0;
+  for (let k = 0; k < 3; k++) {
+    let m = Math.max(0.5 - xs[k] * xs[k] - ys[k] * ys[k], 0); m *= m; m *= m;
+    const gx = 2 * fr(p[k] * C3) - 1, h = Math.abs(gx) - 0.5, a0 = gx - Math.floor(gx + 0.5);
+    n += m * (1.79284291400159 - 0.85373472095314 * (a0 * a0 + h * h)) * (a0 * xs[k] + h * ys[k]);
+  }
+  return 130 * n;
+}
+const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+function terrainH(x, z) {
+  const r = Math.hypot(x, z);
+  let far = sstep(55, 140, r);
+  const corridor = sstep(15, 46, Math.abs(x)), kz = sstep(-25, 25, z);
+  far *= 1 + (corridor - 1) * kz;
+  const dunes = snoise(x * 0.012, z * 0.012) * 3 + snoise(x * 0.035 + 7.3, z * 0.035 + 7.3);
+  const rg = 1 - Math.abs(snoise(x * 0.0065 + 3.1, z * 0.0065 + 3.1));
+  return -50 + dunes * (0.22 + 0.78 * far) + (rg * rg * 26 + 5 * far) * far + snoise(x * 0.09, z * 0.09) * 1.6 * far * rg;
+}
+
+// ---------- camera, input ----------
+const SPOTS = [
+  { name: '潮汐之门', pos: [3.5, -45.4, 97], yaw: -0.024, pitch: 0.105 },
+  { name: '圆殿祭坛', pos: [5.5, -46.3, 14.5], yaw: -0.2, pitch: 0.38 },
+  { name: '守望巨像', pos: [-15, -45.5, -27], yaw: 0.54, pitch: 0.80 },
+  { name: '遗迹俯瞰', pos: [46, -24, 62], yaw: -0.62, pitch: -0.24 },
+];
+const cam = { pos: [3.5, -45.4, 97], yaw: -0.024, pitch: 0.105, vel: [0, 0, 0] };
+let fly = null, time = +(Q.get('t') || 0), frame = 0, frozen = false, accum = 0;
+const keys = new Set();
+function goSpot(i, instant) {
+  const s = SPOTS[i]; if (!s) return;
+  if (instant) { cam.pos = [...s.pos]; cam.yaw = s.yaw; cam.pitch = s.pitch; histValid = false; }
+  else fly = { t: 0, p0: [...cam.pos], y0: cam.yaw, pi0: cam.pitch, s };
+  const el = $('place'); el.textContent = s.name; el.classList.add('on');
+  clearTimeout(goSpot.tm); goSpot.tm = setTimeout(() => el.classList.remove('on'), 3200);
+}
+addEventListener('keydown', e => {
+  keys.add(e.code);
+  if (e.code.startsWith('Digit')) goSpot(+e.code.slice(5) - 1);
+  if (e.code === 'KeyC') { cine = !cine; tier = cine ? 3 : autoTier; allocShadow(); }
+  if (e.code === 'KeyP') { frozen = !frozen; accum = 0; }
+  if (e.code === 'KeyH') for (const el of document.querySelectorAll('.hud')) el.style.display = el.style.display === 'none' ? '' : 'none';
+});
+addEventListener('keyup', e => keys.delete(e.code));
+addEventListener('blur', () => keys.clear());
+$('gate').addEventListener('click', () => { $('gate').classList.add('off'); canvas.requestPointerLock?.(); });
+canvas.addEventListener('click', () => canvas.requestPointerLock?.());
+addEventListener('mousemove', e => {
+  if (document.pointerLockElement !== canvas) return;
+  cam.yaw += e.movementX * 0.0022;
+  cam.pitch = Math.max(-1.5, Math.min(1.5, cam.pitch - e.movementY * 0.0022));
+});
+function basis(yaw, pitch) {
+  const cp = Math.cos(pitch), f = [Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp];
+  const r = [Math.cos(yaw), 0, Math.sin(yaw)];
+  const up = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+  return { f, r, up };
+}
+function updateCamera(dt) {
+  if (fly) {
+    fly.t = Math.min(1, fly.t + dt / 2.2);
+    const k = fly.t * fly.t * (3 - 2 * fly.t), s = fly.s;
+    for (let i = 0; i < 3; i++) cam.pos[i] = fly.p0[i] + (s.pos[i] - fly.p0[i]) * k;
+    cam.yaw = fly.y0 + (s.yaw - fly.y0) * k; cam.pitch = fly.pi0 + (s.pitch - fly.pi0) * k;
+    cam.vel = [0, 0, 0];
+    if (fly.t >= 1) fly = null;
+    return;
+  }
+  const { f, r } = basis(cam.yaw, cam.pitch);
+  const ax = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0), az = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
+  const ay = (keys.has('KeyE') ? 1 : 0) - (keys.has('KeyQ') ? 1 : 0);
+  const sp = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 26 : 8;
+  const want = [(f[0] * az + r[0] * ax) * sp, (f[1] * az + ay) * sp, (f[2] * az + r[2] * ax) * sp];
+  const k = 1 - Math.exp(-dt * 4);
+  for (let i = 0; i < 3; i++) { cam.vel[i] += (want[i] - cam.vel[i]) * k; cam.pos[i] += cam.vel[i] * dt; }
+  const lim = Math.hypot(cam.pos[0], cam.pos[2]);
+  if (lim > 230) { cam.pos[0] *= 230 / lim; cam.pos[2] *= 230 / lim; }
+  cam.pos[1] = Math.min(-1.5, Math.max(terrainH(cam.pos[0], cam.pos[2]) + 1.4, cam.pos[1]));
+}
+
+// ---------- frame ----------
+const halton = (i, b) => { let f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % b); i = Math.floor(i / b); } return r; };
+let prev = null, last = performance.now(), ema = 16.7, slow = 0, fast = 0, holdUntil = 0, raisedAt = -1e9, backoff = 6000, statT = 0;
+const photoN = +(Q.get('photo') || 0);
+let skipFrame = false;
+document.addEventListener('visibilitychange', () => { skipFrame = true; });
+window.__dbg = () => ({ tier, scale: SCALES[scaleIdx], ms: +ema.toFixed(1), rw, rh, pos: cam.pos.map(v => +v.toFixed(1)), frame });
+
+function adapt(dtMs, now) {
+  if (skipFrame) { skipFrame = false; return; }      // the first frame after the tab was hidden says nothing
+  ema += (Math.min(dtMs, 400) - ema) * 0.08;
+  if (CAP || frozen || cine || now < holdUntil) return;
+  if (ema > 19.5) { slow++; fast = 0; } else if (ema < 17.3) { fast++; slow = 0; } else { slow = 0; fast = 0; }
+  if (slow > 30) {
+    if (now - raisedAt < 4000) backoff = Math.min(backoff * 2, 120000);
+    if (scaleIdx > 0) scaleIdx--; else if (tier > 0) { tier--; autoTier = tier; allocShadow(); }
+    slow = 0; holdUntil = now + 700;
+  } else if (fast > 150 && now - raisedAt > backoff) {
+    if (scaleIdx < SCALES.length - 1) scaleIdx++; else if (tier < 2) { tier++; autoTier = tier; allocShadow(); scaleIdx = 3; }
+    fast = 0; raisedAt = now; holdUntil = now + 1200;
+  }
+}
+
+function render(now) {
+  const dtMs = now - last; last = now;
+  const dt = Math.min(dtMs / 1000, 0.1);
+  adapt(dtMs, now);
+  allocShadow(); allocTargets(false);
+  if (!CAP) updateCamera(dt);
+  if (!frozen && !CAP) time += dt;
+  const moved = prev && (Math.abs(prev.yaw - cam.yaw) + Math.abs(prev.pitch - cam.pitch) + Math.hypot(...cam.pos.map((v, i) => v - prev.pos[i])) > 1e-5);
+  if (moved) accum = 0;
+  const still = frozen || CAP;
+  const { f, r, up } = basis(cam.yaw, cam.pitch);
+  const th = 0.6, ta = th * cw / ch;
+  if (!prev) prev = { pos: [...cam.pos], f, r, up, yaw: cam.yaw, pitch: cam.pitch };
+  const q = TIERS[tier];
+  const j = (frame % 16) + 1;
+  ud.set([...cam.pos, time, ...r, ta, ...up, th, ...f, frame % 4096], 0);
+  ud.set([...prev.pos, 0, ...prev.r, ta, ...prev.up, th, ...prev.f, 0], 16);
+  ud.set([rw, rh, 1 / rw, 1 / rh], 32);
+  const alpha = !histValid ? 1 : still ? 1 / (accum + 1) : 0.1;
+  ud.set([halton(still ? accum + 1 : j, 2) - 0.5, halton(still ? accum + 1 : j, 3) - 0.5, alpha, still ? 0 : 1], 36);
+  ud.set([q.steps, q.vol, q.sh, +(Q.get('exp') || 0.62)], 40);
+  // keep the sun-space shadow map centred near the camera
+  const snap = SMAP_EXTENT / 8;
+  const cx = Math.round(cam.pos[0] / snap) * snap, cz = Math.round(cam.pos[2] / snap) * snap;
+  if (smapDirty || Math.abs(cam.pos[0] - smapCenter[0]) > SMAP_EXTENT * 0.2 || Math.abs(cam.pos[2] - smapCenter[1]) > SMAP_EXTENT * 0.2) {
+    smapCenter = [cx, cz]; smapDirty = true;
+  }
+  ud.set([smapCenter[0], smapCenter[1], SMAP_EXTENT, 1 / SMAP_EXTENT], 44);
+  ud.set([smapSize, cw, ch, 0], 48);
+  device.queue.writeBuffer(ubuf, 0, ud);
+
+  const enc = device.createCommandEncoder();
+  const pass = (view, p, g) => {
+    const rp = enc.beginRenderPass({ colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+    rp.setPipeline(p); rp.setBindGroup(0, g); rp.draw(3); rp.end();
+  };
+  if (smapDirty) { pass(smapView, pShadow, BG.shadow); smapDirty = false; histValid = false; }
+  pass(BG.V.scene, pScene, BG.scene);
+  histIdx = 1 - histIdx;
+  pass(BG.V.hist[histIdx], pTaa, BG.taa[histIdx]);
+  pass(BG.V.bloom[0], pDown0, BG.down0[histIdx]);
+  for (let i = 0; i < 3; i++) pass(BG.V.bloom[i + 1], pDown, BG.down[i]);
+  if (OFF && !capTex) capTex = device.createTexture({ size: [cw, ch], format: canvasFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+  pass((OFF ? capTex : ctx.getCurrentTexture()).createView(), pFinal, BG.final[histIdx]);
+  device.queue.submit([enc.finish()]);
+
+  histValid = true; accum = Math.min(accum + 1, 4096); frame++;
+  prev = { pos: [...cam.pos], f, r, up, yaw: cam.yaw, pitch: cam.pitch };
+
+  if (CAP) {
+    window.__progress = accum + '/' + photoN;
+    if (accum >= Math.max(1, photoN)) {
+      readback();
+      window.__info = `${cw}x${ch} render ${rw}x${rh} tier ${tier} adapter ${adapter.info?.vendor || ''} ${adapter.info?.architecture || ''} ${adapter.info?.description || ''}`;
+      return;
+    }
+  } else if (now - statT > 500) {
+    statT = now;
+    $('stat').textContent = `${Math.round(1000 / ema)} fps · ${rw}×${rh} · ${TIERS[tier].name}` + (frozen ? ` · 定格 ${accum}` : '');
+  }
+  requestAnimationFrame(render);
+}
+
+async function readback() {
+  const bpr = Math.ceil(cw * 4 / 256) * 256;
+  const buf = device.createBuffer({ size: bpr * ch, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  const enc = device.createCommandEncoder();
+  enc.copyTextureToBuffer({ texture: capTex }, { buffer: buf, bytesPerRow: bpr }, [cw, ch]);
+  device.queue.submit([enc.finish()]);
+  await buf.mapAsync(GPUMapMode.READ);
+  const src = new Uint8Array(buf.getMappedRange());
+  const img = new ImageData(cw, ch);
+  for (let y = 0; y < ch; y++) img.data.set(src.subarray(y * bpr, y * bpr + cw * 4), y * cw * 4);
+  const c2 = document.createElement('canvas'); c2.width = cw; c2.height = ch;
+  c2.getContext('2d').putImageData(img, 0, 0);
+  window.__shot = c2.toDataURL('image/png');
+  window.__state = 'done';
+}
+allocShadow(); allocTargets(true);
+if (CAP) goSpot(Math.max(0, +Q.get('shot') - 1), true);
+if (Q.has('pos')) { const v = Q.get('pos').split(',').map(Number); cam.pos = v.slice(0, 3); cam.yaw = v[3] || 0; cam.pitch = v[4] || 0; }
+device.addEventListener('uncapturederror', e => console.error('GPU: ' + e.error.message));
+window.__state = 'running';
+requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>
