@@ -245,38 +245,41 @@ fn sdCrystals(p0: vec3f) -> f32 {
   d = min(d, sdCrystal(q, 0.9, 5.5));
   return d;
 }
-// coral heads scattered over the reef zones, seated on the sea bed
-fn coralCell(q: vec2f) -> vec3f {      // (hash, inside a reef zone, unused)
-  let id = floor(q / 5.0);
-  let c = (id + 0.5) * 5.0;
+// coral heads scattered over the reef zones, one per 5 m cell at most, seated on the sea bed
+fn reefZone(c: vec2f) -> f32 {
   var dz = min(length(c - vec2f(-62.0, 62.0)) - 42.0, length(c - vec2f(66.0, -70.0)) - 40.0);
   dz = min(dz, min(length(c - vec2f(100.0, -30.0)) - 30.0, length(c - vec2f(118.0, 30.0)) - 50.0));
-  dz = min(dz, length(c - vec2f(-78.0, 8.0)) - 24.0);
-  return vec3f(hash21(id + 3.0), dz, 0.0);
+  return min(dz, length(c - vec2f(-78.0, 8.0)) - 24.0);
 }
-fn sdCoral(p: vec3f, ha: f32) -> f32 {
-  if (ha > 4.5) { return ha * 0.5; }
-  let cc = coralCell(p.xz);
-  let h = cc.x;
-  let f = p.xz - (floor(p.xz / 5.0) + 0.5) * 5.0;
-  let bw = 3.0 - max(abs(f.x), abs(f.y));
-  if (h > 0.34 || cc.y > 0.0) { return bw; }
+fn coralAt(p: vec3f, ha: f32, id: vec2f) -> f32 {
+  let c = (id + 0.5) * 5.0;
+  let h = hash21(id + 3.0);
+  if (h > 0.34 || reefZone(c) > 0.0) { return 9.0; }
+  let f = p.xz - c;
   let r = 0.45 + 1.25 * fract(h * 37.0) * fract(h * 37.0);
   let o = (vec2f(fract(h * 113.0), fract(h * 271.0)) - 0.5) * (1.9 - r) * 1.4;
   let q = vec3f(f.x - o.x, ha - r * 0.3, f.y - o.y);
-  var d = length(q * vec3f(1.0, 1.3, 1.0)) - r;
   if (fract(h * 53.0) > 0.5) {
-    d += 0.07 * r * sin(q.x * 8.0 / r) * sin(q.y * 8.0 / r + 1.0) * sin(q.z * 8.0 / r);
-  } else {
-    let sec = TAU / 6.0;
-    let ia = round(atan2(q.z, q.x) / sec) * sec;
-    let cs = cos(ia); let sn = sin(ia);
-    let pk = vec3f(cs * q.x + sn * q.z, q.y + r * 0.3, -sn * q.x + cs * q.z);
-    d = min(sdCapsule(pk, vec3f(0.2 * r, 0.0, 0.0), vec3f(0.8 * r, 1.5 * r, 0.0), 0.2 * r),
-            sdCapsule(pk, vec3f(0.0), vec3f(0.0, 1.9 * r, 0.0), 0.22 * r));
-    d = min(d, length(pk - vec3f(0.8 * r, 1.5 * r, 0.0)) - 0.3 * r);
+    return (length(q * vec3f(1.0, 1.3, 1.0)) - r + 0.07 * r * sin(q.x * 8.0 / r) * sin(q.y * 8.0 / r + 1.0) * sin(q.z * 8.0 / r)) * 0.6;
   }
-  return min(d * 0.6, bw);
+  let sec = TAU / 6.0;
+  let ia = round(atan2(q.z, q.x) / sec) * sec;
+  let cs = cos(ia); let sn = sin(ia);
+  let pk = vec3f(cs * q.x + sn * q.z, q.y + r * 0.3, -sn * q.x + cs * q.z);
+  var d = min(sdCapsule(pk, vec3f(0.2 * r, 0.0, 0.0), vec3f(0.8 * r, 1.5 * r, 0.0), 0.2 * r),
+              sdCapsule(pk, vec3f(0.0), vec3f(0.0, 1.9 * r, 0.0), 0.22 * r));
+  d = min(d, length(pk - vec3f(0.8 * r, 1.5 * r, 0.0)) - 0.3 * r);
+  return d * 0.6;
+}
+// the four nearest cells are evaluated so that the field stays a true distance (ambient occlusion relies on it)
+fn sdCoral(p: vec3f, ha: f32) -> f32 {
+  if (ha > 4.5) { return ha * 0.5; }
+  let dz = reefZone(p.xz);
+  if (dz > 4.0) { return dz - 1.9; }
+  let i0 = floor(p.xz / 5.0 - 0.5);
+  var d = min(coralAt(p, ha, i0), coralAt(p, ha, i0 + vec2f(1.0, 0.0)));
+  d = min(d, min(coralAt(p, ha, i0 + vec2f(0.0, 1.0)), coralAt(p, ha, i0 + vec2f(1.0, 1.0))));
+  return min(d, 3.1);
 }
 
 // ---------- wreck ----------
@@ -337,13 +340,13 @@ fn sdHead(q: vec3f) -> f32 {
   return hd;
 }
 fn sdFallenHead(p0: vec3f) -> f32 {
-  var p = p0 - vec3f(22.0, 4.0, -98.0);
+  var p = p0 - vec3f(22.0, 2.5, -98.0);
   let S = 10.0;
   let bd = length(p) - 1.15 * S;
   if (bd > 2.0) { return bd; }
-  var r2 = rot(-0.5) * p.xz; p = vec3f(r2.x, p.y, r2.y);
-  r2 = rot(0.6) * p.xy; p = vec3f(r2.x, r2.y, p.z);
-  r2 = rot(0.3) * p.yz; p = vec3f(p.x, r2.x, r2.y);
+  var r2 = rot(0.3) * p.xz; p = vec3f(r2.x, p.y, r2.y);
+  r2 = rot(0.35) * p.xy; p = vec3f(r2.x, r2.y, p.z);
+  r2 = rot(0.85) * p.yz; p = vec3f(p.x, r2.x, r2.y);
   let q = p / S;
   var d = sdHead(q);
   d = smin(d, sdCapsule(q, vec3f(0.0, -0.5, -0.05), vec3f(0.0, -1.15, -0.1), 0.36), 0.15);
@@ -759,7 +762,7 @@ fn shade(pos: vec3f, n0: vec3f, rd: vec3f, m: f32, t: f32, time: f32) -> vec3f {
     emi = PURPLE * (0.35 + 2.2 * fr + 0.9 * smoothstep(0.35, 0.75, nz2)) * (0.8 + 0.2 * sin(time * 0.8 + pos.y));
     spec = 0.6; gloss = 60.0;
   } else if (m < 9.5) {
-    let h = coralCell(pos.xz).x;
+    let h = hash21(floor(pos.xz / 5.0) + 3.0);
     let k = fract(h * 91.0);
     n = bumpN(pos, n0, 5.0, 0.3 * detail);
     alb = vec3f(0.95, 0.38, 0.45);
@@ -1452,7 +1455,6 @@ const fishData = [];
 SCHOOLS.forEach(([x, y, z, R, n, size], sid) => {
   const dir = rnd() > 0.5 ? 1 : -1, v = rr(1.3, 2.4), sp = Math.min(5, 1.6 + R * 0.12);
   const shoals = [0, 1, 2].map(() => rr(0, 6.283));          // each school travels as three shoals along its loop
-  if (CAP && sid === 1) { const a = shoals[0], e = 0.6 + 0.4 * ((sid * 0.37) % 1); console.log('shoal at', (x + Math.cos(a) * R).toFixed(1), (y + Math.sin(a * 2 + sid * 1.7) * R * 0.1).toFixed(1), (z + Math.sin(a) * R * e).toFixed(1)); }
   for (let i = 0; i < n; i++) {
     const g = () => (rnd() + rnd() + rnd() - 1.5) * 1.2;
     fishData.push([x + g() * sp, y + g() * sp * 0.45, z + g() * sp, R, shoals[i % 3] + g() * 5 / R, dir * v / R, size * rr(0.75, 1.3), sid + rnd() * 0.999]);
@@ -1485,7 +1487,7 @@ function stand(cx, cz, R, plants, hMin, hMax) {
     i++;
   }
 }
-stand(112, 28, 46, 330, 16, 36); stand(-62, 62, 30, 40, 9, 20); stand(74, -84, 18, 18, 8, 16); stand(-92, 12, 16, 16, 8, 16);
+stand(112, 28, 46, 330, 16, 36); stand(-84, 40, 16, 30, 9, 20); stand(74, -84, 18, 18, 8, 16); stand(-92, 12, 16, 16, 8, 16);
 for (let i = kelpData.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [kelpData[i], kelpData[j]] = [kelpData[j], kelpData[i]]; }
 const kelpI = vbuf(new Float32Array(kelpData.flat()));
 
