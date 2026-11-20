@@ -28,11 +28,11 @@
 <div id="place" class="hud"></div>
 <div id="help" class="hud">
   <b>鼠标</b> 视角　<b>W A S D</b> 移动　<b>Q / E</b> 升降　<b>Shift</b> 加速<br>
-  <b>1 – 4</b> 打卡视角　<b>C</b> 电影模式　<b>P</b> 定格精修　<b>H</b> 隐藏界面
+  <b>1 – 9</b> 打卡视角　<b>C</b> 电影模式　<b>P</b> 定格精修　<b>H</b> 隐藏界面
 </div>
 <div id="gate">
   <h1>深蓝遗境</h1>
-  <p>程序化 WebGPU 海底漫游 · 样片：潮汐之门与守望巨像</p>
+  <p>程序化 WebGPU 海底漫游 · 亚特兰蒂斯遗迹、巨藻森林、紫晶洞窟与沉船</p>
   <p id="gmsg" class="go">点击潜入</p>
 </div>
 
@@ -83,6 +83,8 @@ const AMBE = vec3f(0.55, 0.95, 1.25);
 const RUNE = vec3f(0.30, 1.00, 0.86);
 const OB_A = vec3f(0.0, -45.0, 0.0);              // obelisk axis (glow)
 const OB_B = vec3f(0.0, -34.0, 0.0);
+const PURPLE = vec3f(0.62, 0.22, 1.0);
+const CAVE_C = vec3f(-125.0, -44.0, 5.0);         // heart of the glowing cave
 
 // ---------- hashes and noise ----------
 fn hash21(p: vec2f) -> f32 {
@@ -141,21 +143,212 @@ fn smax(a: f32, b: f32, k: f32) -> f32 { return -smin(-a, -b, k); }
 fn opU(a: vec2f, b: vec2f) -> vec2f { if (a.x < b.x) { return a; } return b; }
 
 // ---------- sea bed ----------
+// 0 where the sea bed is kept open and sandy, 1 where the reef ridges rise
+fn zoneMask(q: vec2f) -> f32 {
+  var f = smoothstep(55.0, 140.0, length(q));
+  f *= mix(1.0, smoothstep(15.0, 46.0, abs(q.x)), smoothstep(-25.0, 25.0, q.y));
+  f *= smoothstep(34.0, 62.0, length(q - vec2f(112.0, 28.0)));     // kelp forest
+  f *= smoothstep(22.0, 46.0, length(q - vec2f(66.0, -70.0)));     // wreck
+  f *= smoothstep(16.0, 38.0, length(q - vec2f(100.0, -30.0)));    // whale tail
+  f *= smoothstep(14.0, 34.0, length(q - vec2f(22.0, -98.0)));     // fallen head
+  f *= smoothstep(22.0, 46.0, length(q - vec2f(-62.0, 62.0)));     // rock arch
+  f *= smoothstep(46.0, 78.0, length(q - vec2f(-125.0, 5.0)));     // cave
+  return f;
+}
+fn trench(q: vec2f) -> f32 { let d = (q.x - 172.0 - 16.0 * sin(q.y * 0.017)) / 20.0; return exp(-d * d); }
 fn terrainH(q: vec2f) -> f32 {
-  let r = length(q);
-  var farM = smoothstep(55.0, 140.0, r);
-  let corridor = smoothstep(15.0, 46.0, abs(q.x));
-  farM *= mix(1.0, corridor, smoothstep(-25.0, 25.0, q.y));
+  let farM = zoneMask(q);
   let dunes = snoise(q * 0.012) * 3.0 + snoise(q * 0.035 + 7.3);
   let rg = 1.0 - abs(snoise(q * 0.0065 + 3.1));
   var h = FLOOR + dunes * (0.22 + 0.78 * farM);
   h += (rg * rg * 26.0 + 5.0 * farM) * farM;
   h += snoise(q * 0.09) * 1.6 * farM * rg;
-  return h;
+  return h - 64.0 * trench(q);
 }
-fn sdTerrain(p: vec3f) -> f32 {
-  if (p.y > -11.0) { return p.y + 12.0; }
-  return (p.y - terrainH(p.xz)) * 0.55;
+// (distance, height above the sea bed)
+fn sdTerrain(p: vec3f) -> vec2f {
+  if (p.y > -11.0) { return vec2f(p.y + 12.0, 50.0); }
+  let ha = p.y - terrainH(p.xz);
+  return vec2f(ha * mix(0.55, 0.33, trench(p.xz)), ha);
+}
+
+// ---------- natural rock ----------
+fn rockDisp(p: vec3f) -> f32 {
+  return (vnoise3(p * 0.16) - 0.5) * 4.5 + (vnoise3(p * 0.5 + 7.0) - 0.5) * 1.5 + 0.22 * sin(p.y * 1.9 + 3.0 * vnoise3(p * 0.3));
+}
+fn sdArch(p0: vec3f) -> f32 {
+  var p = p0 - vec3f(-62.0, 0.0, 62.0);
+  let bd = length(p - vec3f(0.0, 8.0, 0.0)) - 31.0;
+  if (bd > 3.0) { return bd; }
+  let r2 = rot(-0.785) * p.xz; p = vec3f(r2.x, p.y, r2.y);
+  let a = atan2(p.y - 1.0, p.x);
+  let c = vec2f(length(p.xy - vec2f(0.0, 1.0)) - 15.0, p.z * 0.75);
+  var d = length(c) - (4.6 + 1.2 * sin(a * 3.0 + 1.0));
+  d = smin(d, sdEll(p - vec3f(-18.0, 1.0, 3.0), vec3f(9.0, 7.0, 8.0)), 3.0);
+  d = smin(d, sdEll(p - vec3f(19.0, 0.0, -4.0), vec3f(10.0, 6.0, 9.0)), 3.0);
+  return (d + rockDisp(p0)) * 0.6;
+}
+fn caveVoid(p: vec3f) -> f32 {
+  var c = length((p - vec3f(0.0, 6.0, 0.0)) * vec3f(1.0, 1.3, 1.0)) - 15.0;
+  c = smin(c, sdCapsule(p, vec3f(8.0, 4.5, 0.0), vec3f(52.0, 4.0, 5.0), 6.0), 4.0);
+  return smin(c, sdCapsule(p, vec3f(-3.0, 13.0, -2.0), vec3f(11.5, 42.0, 4.3), 5.0), 3.0);
+}
+// a rock massif with a chamber, a tunnel towards the ruins and a skylight aligned with the sun
+fn sdCaveRock(p0: vec3f) -> f32 {
+  let p = p0 - vec3f(-125.0, 0.0, 5.0);
+  let bd = sdEll(p - vec3f(4.0, 4.0, 3.0), vec3f(50.0, 34.0, 44.0));
+  if (bd > 3.0) { return bd; }
+  var d = sdEll(p - vec3f(0.0, 3.0, 0.0), vec3f(40.0, 27.0, 34.0));
+  d = smin(d, sdEll(p - vec3f(26.0, 1.0, 20.0), vec3f(18.0, 13.0, 16.0)), 6.0);
+  let nd = rockDisp(p0);
+  d += nd;
+  return smax(d, -(caveVoid(p) - nd * 0.35), 2.5) * 0.6;
+}
+// how much open-water light reaches a point in or near the cave (1 outside)
+fn caveSky(pos: vec3f) -> f32 {
+  let p = pos - vec3f(-125.0, FLOOR, 5.0);
+  if (dot(p, p) > 3600.0 || caveVoid(p) > 6.0) { return 1.0; }
+  return mix(0.06, 1.0, max(smoothstep(18.0, 46.0, p.x), smoothstep(18.0, 32.0, p.y)));
+}
+fn sdCrystal(p: vec3f, r: f32, h: f32) -> f32 {
+  let q = abs(p.xz);
+  let hex = max(q.x * 0.866 + q.y * 0.5, q.y);
+  return max(hex - r * min(1.0, (h - p.y) / (r * 1.6)), -p.y - 2.0) * 0.6;
+}
+fn sdCrystals(p0: vec3f) -> f32 {
+  let p = p0 - vec3f(-125.0, 0.0, 5.0);
+  let bd = length(p - vec3f(0.0, 5.0, 0.0)) - 18.0;
+  if (bd > 2.0) { return bd; }
+  let sec = TAU / 7.0;
+  let id = round((atan2(p.z, p.x) - sec * 0.5) / sec);
+  let ang = id * sec + sec * 0.5;
+  let h = hash21(vec2f(id, 5.0));
+  let ca = cos(ang); let sa = sin(ang);
+  let pc = vec3f(ca * p.x + sa * p.z - (9.5 + 2.5 * h), p.y + 0.5, -sa * p.x + ca * p.z);
+  var q = pc;
+  var r2 = rot(0.3 - 0.5 * h) * q.xy; q = vec3f(r2.x, r2.y, q.z);
+  var d = sdCrystal(q, 0.8 + 0.5 * h, 4.5 + 4.0 * h);
+  q = pc - vec3f(0.9, 0.0, 1.1);
+  r2 = rot(-0.5) * q.xy; q = vec3f(r2.x, r2.y, q.z);
+  r2 = rot(0.4) * q.yz; q = vec3f(q.x, r2.x, r2.y);
+  d = min(d, sdCrystal(q, 0.5, 3.0 + 2.0 * h));
+  q = pc - vec3f(-0.5, 0.0, -1.2);
+  r2 = rot(-0.45) * q.yz; q = vec3f(q.x, r2.x, r2.y);
+  d = min(d, sdCrystal(q, 0.45, 2.6));
+  q = p - vec3f(-2.0, -0.5, 1.5);
+  r2 = rot(0.15) * q.xy; q = vec3f(r2.x, r2.y, q.z);
+  d = min(d, sdCrystal(q, 1.5, 8.5));
+  q = p - vec3f(-1.0, -0.5, 3.0);
+  r2 = rot(-0.55) * q.yz; q = vec3f(q.x, r2.x, r2.y);
+  d = min(d, sdCrystal(q, 0.9, 5.5));
+  return d;
+}
+// coral heads scattered over the reef zones, seated on the sea bed
+fn coralCell(q: vec2f) -> vec3f {      // (hash, inside a reef zone, unused)
+  let id = floor(q / 5.0);
+  let c = (id + 0.5) * 5.0;
+  var dz = min(length(c - vec2f(-62.0, 62.0)) - 42.0, length(c - vec2f(66.0, -70.0)) - 40.0);
+  dz = min(dz, min(length(c - vec2f(100.0, -30.0)) - 30.0, length(c - vec2f(118.0, 30.0)) - 50.0));
+  dz = min(dz, length(c - vec2f(-78.0, 8.0)) - 24.0);
+  return vec3f(hash21(id + 3.0), dz, 0.0);
+}
+fn sdCoral(p: vec3f, ha: f32) -> f32 {
+  if (ha > 4.5) { return ha * 0.5; }
+  let cc = coralCell(p.xz);
+  let h = cc.x;
+  let f = p.xz - (floor(p.xz / 5.0) + 0.5) * 5.0;
+  let bw = 3.0 - max(abs(f.x), abs(f.y));
+  if (h > 0.34 || cc.y > 0.0) { return bw; }
+  let r = 0.45 + 1.25 * fract(h * 37.0) * fract(h * 37.0);
+  let o = (vec2f(fract(h * 113.0), fract(h * 271.0)) - 0.5) * (1.9 - r) * 1.4;
+  let q = vec3f(f.x - o.x, ha - r * 0.3, f.y - o.y);
+  var d = length(q * vec3f(1.0, 1.3, 1.0)) - r;
+  if (fract(h * 53.0) > 0.5) {
+    d += 0.07 * r * sin(q.x * 8.0 / r) * sin(q.y * 8.0 / r + 1.0) * sin(q.z * 8.0 / r);
+  } else {
+    let sec = TAU / 6.0;
+    let ia = round(atan2(q.z, q.x) / sec) * sec;
+    let cs = cos(ia); let sn = sin(ia);
+    let pk = vec3f(cs * q.x + sn * q.z, q.y + r * 0.3, -sn * q.x + cs * q.z);
+    d = min(sdCapsule(pk, vec3f(0.2 * r, 0.0, 0.0), vec3f(0.8 * r, 1.5 * r, 0.0), 0.2 * r),
+            sdCapsule(pk, vec3f(0.0), vec3f(0.0, 1.9 * r, 0.0), 0.22 * r));
+    d = min(d, length(pk - vec3f(0.8 * r, 1.5 * r, 0.0)) - 0.3 * r);
+  }
+  return min(d * 0.6, bw);
+}
+
+// ---------- wreck ----------
+fn wreckLocal(p0: vec3f) -> vec3f {
+  var p = p0 - vec3f(66.0, -0.8, -70.0);
+  let r1 = rot(0.9) * p.xz; p = vec3f(r1.x, p.y, r1.y);
+  let r2 = rot(0.28) * p.yz;
+  return vec3f(p.x, r2.x, r2.y);
+}
+fn sdWreck(p0: vec3f) -> f32 {
+  let p = wreckLocal(p0);
+  let bd = sdBox(p - vec3f(-2.0, 10.0, 2.0), vec3f(25.0, 14.0, 11.0));
+  if (bd > 2.0) { return bd; }
+  let k = clamp(1.0 - p.x * p.x / 324.0, 0.0, 1.0);
+  let wx = max(4.4 * sqrt(k) * (0.75 + 0.25 * k), 0.35);
+  let deckY = 5.4 + 0.010 * p.x * p.x + 2.4 * smoothstep(8.0, 10.0, p.x);
+  let dh = (length(vec2f(p.z / wx, min(p.y - 5.6, 0.0) / 5.6)) - 1.0) * min(wx, 4.4);
+  let ends = abs(p.x) - 17.9;
+  let hole = sin(p.x * 0.55 + 1.3) * sin(p.y * 0.8 + 0.5) * sin(p.z * 0.3 + p.x * 0.21);
+  var d = max(max(max(abs(dh) - 0.13, p.y - deckY), (hole - 0.25) * 1.5), ends);
+  let rx = abs(p.x - round(p.x / 1.7) * 1.7) - 0.14;
+  d = min(d, max(max(max(abs(dh + 0.22) - 0.2, rx), p.y - deckY + 0.3), ends + 0.8));
+  d = min(d, sdBox(p - vec3f(0.0, 0.1, 0.0), vec3f(17.6, 0.45, 0.28)));
+  let hole2 = sin(p.x * 0.4 + 2.0) * sin(p.z * 0.9 + 1.0);
+  d = min(d, max(max(max(dh, abs(p.y - deckY + 0.5) - 0.1), (hole2 - 0.45) * 1.5), ends));
+  d = min(d, sdCapsule(p, vec3f(1.5, 1.0, 0.0), vec3f(2.2, 21.0, 0.0), 0.42));
+  d = min(d, sdCapsule(p, vec3f(2.0, 15.5, -5.0), vec3f(2.0, 15.0, 5.0), 0.2));
+  d = min(d, sdCyl(p - vec3f(2.05, 17.2, 0.0), 0.95, 0.12));
+  d = min(d, sdCapsule(p, vec3f(-8.5, 1.0, 0.0), vec3f(-8.8, 12.5, 0.0), 0.36));
+  d = min(d, sdCapsule(p, vec3f(9.0, 7.5, 0.5), vec3f(20.0, 5.5, 10.5), 0.3));
+  d = min(d, sdCapsule(p, vec3f(-17.0, 6.2, 0.0), vec3f(-24.5, 9.2, 0.0), 0.24));
+  return d * 0.6;
+}
+
+// ---------- colossal sculpture ----------
+// a 26 m whale fluke of dressed basalt rising from the sand
+fn sdWhaleTail(p0: vec3f) -> f32 {
+  var p = p0 - vec3f(100.0, 0.0, -30.0);
+  let bd = length(p - vec3f(0.0, 12.0, 0.0)) - 20.0;
+  if (bd > 2.0) { return bd; }
+  let r1 = rot(-0.5) * p.xz;
+  let q = vec3f(r1.x, p.y, r1.y - 0.012 * p.y * p.y);
+  let ty = clamp(q.y / 19.0, 0.0, 1.0);
+  var d = max(length(vec2f(q.x * 1.35, q.z)) - mix(4.6, 1.1, pow(ty, 0.6)), q.y - 20.0) * 0.7;
+  let rf = rot(-0.42) * (vec2f(abs(q.x), q.y - 20.2) - vec2f(5.6, 1.2));
+  d = smin(d, sdEll(vec3f(rf.x, rf.y, q.z + 0.02 * rf.x * rf.x), vec3f(6.6, 2.5, 0.5)), 1.6);
+  d = smax(d, -(length(vec3f(q.x, q.y - 23.8, q.z)) - 1.5), 0.8);
+  return d + 0.03 * smoothstep(0.9, 1.0, fract(q.y * 0.55));
+}
+// head of a bearded god; q is relative to the centre of the skull, about 1.7 units tall
+fn sdHead(q: vec3f) -> f32 {
+  var hd = sdEll(q - vec3f(0.0, 0.0, 0.08), vec3f(0.52, 0.66, 0.6));
+  hd = smin(hd, sdEll(q - vec3f(0.0, -0.52, 0.4), vec3f(0.36, 0.52, 0.3)), 0.2);        // beard
+  hd = smin(hd, sdCapsule(q, vec3f(0.0, 0.14, 0.66), vec3f(0.0, -0.10, 0.77), 0.07), 0.08);
+  hd = smin(hd, sdCapsule(q, vec3f(-0.3, 0.20, 0.57), vec3f(0.3, 0.20, 0.57), 0.085), 0.1);
+  hd = smax(hd, -sdEll(vec3f(abs(q.x) - 0.2, q.y - 0.07, q.z - 0.67), vec3f(0.13, 0.07, 0.11)), 0.05);
+  hd = smin(hd, sdEll(q - vec3f(0.0, -0.17, -0.22), vec3f(0.64, 0.86, 0.6)), 0.15);     // hair
+  return hd;
+}
+fn sdFallenHead(p0: vec3f) -> f32 {
+  var p = p0 - vec3f(22.0, 4.0, -98.0);
+  let S = 10.0;
+  let bd = length(p) - 1.15 * S;
+  if (bd > 2.0) { return bd; }
+  var r2 = rot(-0.5) * p.xz; p = vec3f(r2.x, p.y, r2.y);
+  r2 = rot(0.6) * p.xy; p = vec3f(r2.x, r2.y, p.z);
+  r2 = rot(0.3) * p.yz; p = vec3f(p.x, r2.x, r2.y);
+  let q = p / S;
+  var d = sdHead(q);
+  d = smin(d, sdCapsule(q, vec3f(0.0, -0.5, -0.05), vec3f(0.0, -1.15, -0.1), 0.36), 0.15);
+  d = smin(d, sdCapsule(q, vec3f(-0.13, -0.24, 0.66), vec3f(0.13, -0.24, 0.66), 0.045), 0.05);
+  d = smin(d, length(vec3f(abs(q.x) - 0.2, q.y - 0.07, q.z - 0.6)) - 0.075, 0.02);
+  d += 0.012 * sin(q.x * 23.0 + sin(q.y * 9.0) * 2.0) * smoothstep(0.2, -0.3, q.z);
+  return d * S * 0.85;
 }
 
 // ---------- architecture ----------
@@ -332,13 +525,7 @@ fn sdColossus(pw: vec3f) -> vec2f {
   b = smin(b, sdCapsule(p, vec3f(0.0, 7.4, 0.0), vec3f(0.0, 8.2, 0.05), 0.36), 0.22);
   // belt
   b = min(b, length(vec2f(length(pe) - rr - 0.02, p.y - 5.05)) - 0.13);
-  // head
-  var hd = sdEll(p - vec3f(0.0, 8.72, 0.08), vec3f(0.52, 0.66, 0.6));
-  hd = smin(hd, sdEll(p - vec3f(0.0, 8.2, 0.4), vec3f(0.36, 0.52, 0.3)), 0.2);       // beard
-  hd = smin(hd, sdCapsule(p, vec3f(0.0, 8.86, 0.66), vec3f(0.0, 8.62, 0.77), 0.07), 0.08);
-  hd = smin(hd, sdCapsule(p, vec3f(-0.3, 8.92, 0.57), vec3f(0.3, 8.92, 0.57), 0.085), 0.1);
-  hd = smax(hd, -sdEll(vec3f(abs(p.x) - 0.2, p.y - 8.79, p.z - 0.67), vec3f(0.13, 0.07, 0.11)), 0.05);
-  hd = smin(hd, sdEll(p - vec3f(0.0, 8.55, -0.22), vec3f(0.64, 0.86, 0.6)), 0.15);   // hair
+  let hd = sdHead(p - vec3f(0.0, 8.72, 0.0));
   b = smin(b, hd, 0.12);
   // arms: the right one grips the trident, the left forearm is long gone
   b = smin(b, sdCapsule(p, vec3f(-1.6, 7.2, 0.0), vec3f(-2.05, 5.75, 0.45), 0.42), 0.25);
@@ -372,13 +559,18 @@ fn sdColossus(pw: vec3f) -> vec2f {
 
 // ---------- the whole world; returns (distance, material) ----------
 fn map(p: vec3f) -> vec2f {
-  var res = vec2f(sdTerrain(p), 1.0);
   let pf = p - vec3f(0.0, FLOOR, 0.0);
+  let tr = sdTerrain(p);
+  var res = vec2f(smin(smin(tr.x, sdArch(pf), 2.5), sdCaveRock(pf), 3.0), 1.0);
+  res = opU(res, vec2f(sdCoral(p, tr.y), 9.0));
   res = opU(res, sdTholos(pf));
   res = opU(res, vec2f(sdAvenue(pf), 3.0));
   res = opU(res, vec2f(sdGate(pf), 6.0));
-  res = opU(res, vec2f(min(sdDebris(pf), sdZiggurat(pf)), 3.0));
+  res = opU(res, vec2f(min(min(sdDebris(pf), sdZiggurat(pf)), sdFallenHead(pf)), 3.0));
   res = opU(res, sdColossus(pf - vec3f(0.0, 4.9, -52.0)));
+  res = opU(res, vec2f(sdCrystals(pf), 8.0));
+  res = opU(res, vec2f(sdWreck(pf), 10.0));
+  res = opU(res, vec2f(sdWhaleTail(pf), 11.0));
   return res;
 }
 
@@ -473,6 +665,17 @@ fn glyph(q: vec2f) -> f32 {
   if (fract(h * 29.0) > 0.6) { g = max(g, step(abs(ax.x - ax.y), 0.05) * step(max(ax.x, ax.y), 0.34)); }
   return g;
 }
+fn crackle(p: vec3f) -> f32 {
+  let ip = floor(p); let fp = fract(p);
+  var f1 = 9.0; var f2 = 9.0;
+  for (var k = -1; k <= 1; k++) { for (var j = -1; j <= 1; j++) { for (var i = -1; i <= 1; i++) {
+    let g = vec3f(f32(i), f32(j), f32(k));
+    let c = ip + g;
+    let d = length(g + vec3f(hash31(c), hash31(c + 17.3), hash31(c + 41.7)) - fp);
+    if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) { f2 = d; }
+  } } }
+  return 1.0 - smoothstep(0.0, 0.06, f2 - f1);
+}
 fn weather(alb0: vec3f, n: vec3f, nz: f32, nz2: f32, hgt: f32, streak: f32) -> vec3f {
   var a = mix(alb0 * 0.58, alb0, smoothstep(0.28, 0.62, nz));
   a = mix(a, a * vec3f(0.62, 0.80, 0.72), streak);
@@ -505,9 +708,15 @@ fn shade(pos: vec3f, n0: vec3f, rd: vec3f, m: f32, t: f32, time: f32) -> vec3f {
     rk = mix(rk, vec3f(0.20, 0.32, 0.19), smoothstep(0.42, 0.72, nz2) * 0.6);
     rk = mix(rk, vec3f(0.55, 0.30, 0.34), smoothstep(0.62, 0.8, fbm3(pos * 0.6 + vec3f(40.0))) * 0.5);
     alb = mix(sand, rk, rock);
+    let dc = length(pos - CAVE_C);
+    if (dc < 26.0) {
+      let v = 1.0 - abs(fbm3(pos * 0.45 + vec3f(3.0)) * 2.0 - 1.0);
+      emi = PURPLE * pow(v, 40.0) * 2.0 * smoothstep(0.42, 0.6, nz) * (1.0 - smoothstep(15.0, 25.0, dc)) * (0.7 + 0.3 * sin(time * 0.7 + pos.y * 0.6));
+    }
   } else if (m < 3.5) {
     n = bumpN(pos, n0, 2.2, 0.16 * detail);
     alb = weather(vec3f(0.80, 0.77, 0.70), n0, nz, nz2, pf.y, streak);
+    alb *= 1.0 - 0.4 * crackle(pos * 0.4) * detail;
     spec = 0.05;
   } else if (m < 4.5) {
     n = bumpN(pos, n0, 0.9, 0.25 * detail);
@@ -538,29 +747,64 @@ fn shade(pos: vec3f, n0: vec3f, rd: vec3f, m: f32, t: f32, time: f32) -> vec3f {
       emi = RUNE * (g * 5.0 * pulse + 0.12);
       alb *= 0.4;
     }
-  } else {
+  } else if (m < 7.5) {
     n = bumpN(pos, n0, 1.4, 0.15 * detail);
     alb = mix(vec3f(0.85, 0.58, 0.20), vec3f(0.22, 0.42, 0.36), smoothstep(0.45, 0.7, nz2) * 0.7);
     spec = 0.5; gloss = 36.0;
+  } else if (m < 8.5) {
+    let fr = pow(1.0 - max(dot(n0, -rd), 0.0), 2.0);
+    alb = vec3f(0.10, 0.04, 0.16);
+    emi = PURPLE * (0.35 + 2.2 * fr + 0.9 * smoothstep(0.35, 0.75, nz2)) * (0.8 + 0.2 * sin(time * 0.8 + pos.y));
+    spec = 0.6; gloss = 60.0;
+  } else if (m < 9.5) {
+    let h = coralCell(pos.xz).x;
+    let k = fract(h * 91.0);
+    n = bumpN(pos, n0, 5.0, 0.3 * detail);
+    alb = vec3f(0.95, 0.38, 0.45);
+    if (k > 0.8) { alb = vec3f(0.85, 0.85, 0.30); } else if (k > 0.6) { alb = vec3f(0.62, 0.38, 0.92); }
+    else if (k > 0.4) { alb = vec3f(1.0, 0.52, 0.16); } else if (k > 0.2) { alb = vec3f(0.30, 0.80, 0.72); }
+    alb *= 0.55 + 0.6 * nz2;
+  } else if (m < 10.5) {
+    let q = wreckLocal(pf);
+    n = bumpN(pos, n0, 3.0, 0.3 * detail);
+    let seam = smoothstep(0.40, 0.5, abs(fract(q.y * 1.6 + 0.15 * sin(q.x * 0.3)) - 0.5));
+    alb = mix(vec3f(0.34, 0.24, 0.15), vec3f(0.17, 0.12, 0.08), nz) * (1.0 - 0.5 * seam);
+    alb *= 0.75 + 0.5 * fbm3(vec3f(q.x * 0.5, q.y * 6.0, q.z * 6.0));
+    alb = mix(alb, vec3f(0.20, 0.34, 0.22), smoothstep(0.42, 0.7, nz2) * 0.6);
+    alb = mix(alb, vec3f(0.74, 0.68, 0.54), smoothstep(0.75, 0.95, n0.y) * 0.5);
+  } else {
+    n = bumpN(pos, n0, 1.0, 0.3 * detail);
+    alb = weather(vec3f(0.36, 0.38, 0.41), n0, nz, nz2, pf.y - 8.0, streak);
+    alb *= 1.0 - 0.45 * crackle(pos * 0.3) * detail;
+    spec = 0.08;
   }
   let depth = max(-pos.y, 0.0);
   let sl = depth / SUN.y;
   let qs = pos.xz + SUN.xz * sl;
   let sunL = sunAt(depth);
-  let amb = ambAt(depth);
+  let amb = ambAt(depth) * caveSky(pos);
   let ndl = max(dot(n, SUN), 0.0);
   var sh = 0.0;
   if (ndl > 0.0) { sh = softShadow(pos + n0 * 0.06, i32(u.quality.z)); }
+  // the kelp canopy is not in the distance field: dapple the ground under it
+  let dk = length(pos.xz - vec2f(112.0, 28.0));
+  sh *= 1.0 - 0.5 * (1.0 - smoothstep(30.0, 50.0, dk)) * smoothstep(-0.3, 0.5, snoise(pos.xz * 0.13 + vec2f(time * 0.05, 0.0)));
   let ca = mix(1.0, caustic(qs, time), 0.85) * mix(0.75, beams(qs, time), 0.45);
   let ao = calcAO(pos, n0);
   var lit = sunL * ndl * sh * ca * 0.70;
   lit += amb * (0.50 + 0.50 * n.y) * ao * 0.75;
-  lit += vec3f(0.80, 0.72, 0.56) * sunL * (0.5 - 0.5 * n.y) * ao * 0.085;       // light bounced off the sand
+  lit += vec3f(0.80, 0.72, 0.56) * sunL * (0.5 - 0.5 * n.y) * ao * 0.085 * caveSky(pos);       // light bounced off the sand
   lit += amb * 0.10 * ao;
   // the obelisk as a light source
   let pl = (OB_A + OB_B) * 0.5 - pos;
   let dl = length(pl);
   lit += RUNE * max(dot(n, pl / dl), 0.0) * ao * 60.0 / (30.0 + dl * dl);
+  let pcv = CAVE_C - pos;
+  let dcv = length(pcv);
+  if (dcv < 34.0) {
+    let vis = smoothstep(-0.4, 1.2, map(pos + pcv * 0.5).x);
+    lit += PURPLE * (0.25 + 0.75 * max(dot(n, pcv / dcv), 0.0)) * ao * vis * (1.0 - smoothstep(22.0, 34.0, dcv)) * 110.0 / (30.0 + dcv * dcv);
+  }
   var col = alb * lit + emi;
   let hv = normalize(SUN - rd);
   col += sunL * sh * ca * spec * pow(max(dot(n, hv), 0.0), gloss) * 0.35;
@@ -618,11 +862,14 @@ fn hg(c: f32, g: f32) -> f32 { let g2 = g * g; return (1.0 - g2) / pow(1.0 + g2 
     let dp = max(-ps.y, 0.0);
     let sl = dp / SUN.y;
     let qs = ps.xz + SUN.xz * sl;
-    var li = sunAt(dp) * (shadowMap(qs, sl) * beams(qs, time) * ph) + ambAt(dp);
+    var li = sunAt(dp) * (shadowMap(qs, sl) * beams(qs, time) * ph) + ambAt(dp) * caveSky(ps);
     li *= SIG_S;
     let pa = ps - OB_A; let ba = OB_B - OB_A;
     let dq = pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
     li += RUNE * (0.05 / (1.5 + dot(dq, dq)));
+    let dv = ps - CAVE_C;
+    let d2 = dot(dv, dv);
+    li += PURPLE * (0.010 / (1.0 + 0.03 * d2)) * (1.0 - smoothstep(110.0, 300.0, d2));
     scat += exp(-EXT * s) * li * ds;
   }
   col += scat;
@@ -635,11 +882,11 @@ fn hg(c: f32, g: f32) -> f32 { let g2 = g * g; return (1.0 - g2) / pow(1.0 + g2 
   let q = u.smap.xy + (uv - 0.5) * u.smap.z;
   let ro = vec3f(q.x, 0.0, q.y);
   var t = 3.0;
-  for (var i = 0; i < 140; i++) {
+  for (var i = 0; i < 200; i++) {
     let h = map(ro - SUN * t).x;
     if (h < 0.03) { break; }
     t += h * 0.9;
-    if (t > 110.0) { break; }
+    if (t > 150.0) { break; }
   }
   return vec4f(t, 0.0, 0.0, 1.0);
 }
@@ -859,18 +1106,24 @@ function snoise(x, y) {
   return 130 * n;
 }
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const ZONES = [[112, 28, 34, 62], [66, -70, 22, 46], [100, -30, 16, 38], [22, -98, 14, 34], [-62, 62, 22, 46], [-125, 5, 46, 78]];
 function terrainH(x, z) {
-  const r = Math.hypot(x, z);
-  let far = sstep(55, 140, r);
-  const corridor = sstep(15, 46, Math.abs(x)), kz = sstep(-25, 25, z);
-  far *= 1 + (corridor - 1) * kz;
+  let far = sstep(55, 140, Math.hypot(x, z));
+  far *= 1 + (sstep(15, 46, Math.abs(x)) - 1) * sstep(-25, 25, z);
+  for (const [zx, zz, a, b] of ZONES) far *= sstep(a, b, Math.hypot(x - zx, z - zz));
   const dunes = snoise(x * 0.012, z * 0.012) * 3 + snoise(x * 0.035 + 7.3, z * 0.035 + 7.3);
   const rg = 1 - Math.abs(snoise(x * 0.0065 + 3.1, z * 0.0065 + 3.1));
-  return -50 + dunes * (0.22 + 0.78 * far) + (rg * rg * 26 + 5 * far) * far + snoise(x * 0.09, z * 0.09) * 1.6 * far * rg;
+  const d = (x - 172 - 16 * Math.sin(z * 0.017)) / 20;
+  return -50 + dunes * (0.22 + 0.78 * far) + (rg * rg * 26 + 5 * far) * far + snoise(x * 0.09, z * 0.09) * 1.6 * far * rg - 64 * Math.exp(-d * d);
 }
 
 // ---------- camera, input ----------
 const SPOTS = [
+  { name: '巨藻森林', pos: [88, -45, 40], yaw: 1.107, pitch: 0.25 },
+  { name: '深渊海沟', pos: [166, -56, -80], yaw: 3.05, pitch: -0.42 },
+  { name: '天生石拱', pos: [-82, -44.5, 82], yaw: 0.785, pitch: 0.1 },
+  { name: '紫晶洞窟', pos: [-103, -46.2, 7], yaw: -1.5708, pitch: 0.12 },
+  { name: '沉船与鲸尾', pos: [40, -44, -98], yaw: 2.33, pitch: 0.12 },
   { name: '潮汐之门', pos: [3.5, -45.4, 97], yaw: -0.024, pitch: 0.105 },
   { name: '圆殿祭坛', pos: [5.5, -46.3, 14.5], yaw: -0.2, pitch: 0.38 },
   { name: '守望巨像', pos: [-15, -45.5, -27], yaw: 0.54, pitch: 0.80 },
