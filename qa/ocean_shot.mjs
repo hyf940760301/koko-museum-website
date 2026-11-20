@@ -49,7 +49,9 @@ await send('Page.enable');
 await send('Page.navigate', { url });
 const t0 = Date.now();
 if (live) {
-  await sleep(2500);
+  // the gate only listens once the bakes are done
+  for (let i = 0; i < 240 && (await evalJs('window.__state')) !== 'running'; i++) await sleep(250);
+  await sleep(500);
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 400, y: 300, button: 'left', clickCount: 1 });
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 400, y: 300, button: 'left', clickCount: 1 });
   for (const code of keys.split(',').filter(Boolean)) {
