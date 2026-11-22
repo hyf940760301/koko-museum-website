@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>LaserCyber L1 Pro — One Beam (opening prototype)</title>
+  <meta name="description" content="Interactive opening for the LaserCyber L1 Pro: clean the rust off the plate to reveal the page.">
+  <meta name="theme-color" content="#1a0d07">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <lc-workshop>
+    <section class="lc-act" aria-label="Act one: clean">
+      <div class="lc-stage">
+        <div class="lc-copy">
+          <p class="lc-eyebrow" data-lc-engrave>LaserCyber L1 Pro &middot; 1200 W</p>
+          <h1 class="lc-title" data-lc-engrave>One beam.<br>Clean. Cut. Weld.</h1>
+          <p class="lc-lede" data-lc-engrave>A handheld fiber laser that strips rust in a 100 mm pass, then mounts on the C1 CNC and cuts what you just cleaned.</p>
+          <dl class="lc-stats" data-lc-engrave>
+            <div><dt>Cleaning width</dt><dd>100 mm</dd></div>
+            <div><dt>Laser power</dt><dd>1200 W</dd></div>
+            <div><dt>Kickstarter backers</dt><dd>317</dd></div>
+            <div><dt>Pledged</dt><dd>HK$9,884,268</dd></div>
+          </dl>
+        </div>
+
+        <span class="lc-dim" aria-hidden="true">100 mm</span>
+
+        <p class="lc-hint">
+          <span class="lc-hint__todo">Sweep the beam across the plate</span>
+          <span class="lc-hint__done">Plate clean. Keep scrolling to cut it.</span>
+        </p>
+
+        <div class="lc-hud" aria-hidden="true">
+          <span>Act 01 &mdash; Clean</span>
+          <span class="lc-hud__meter">
+            Rust removed <b><span data-lc-pct>000</span>%</b>
+            <i class="lc-hud__track"><i data-lc-bar></i></i>
+          </span>
+        </div>
+      </div>
+    </section>
+  </lc-workshop>
+
+  <section class="demo-next">
+    <p class="demo-next__label">Prototype note</p>
+    <h2>Act 02 &mdash; Cut</h2>
+    <p>Not built yet. This is where the same plate gets cut on the C1 CNC, and where the rest of the store page would continue.</p>
+  </section>
+</body>
+</html>

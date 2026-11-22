@@ -1,0 +1,219 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: #0b0b0c;
+  color: #e9e6e1;
+  font-family: Inter, "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- lc-workshop ---------- */
+
+lc-workshop {
+  --lc-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --lc-pad: clamp(20px, 5.5vw, 96px);
+  display: block;
+}
+
+.lc-act {
+  position: relative;
+  height: 260vh;
+  height: 260svh;
+}
+
+.lc-stage {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100svh;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  /* Shown as-is when WebGL2 is unavailable. */
+  background:
+    radial-gradient(120% 90% at 28% 30%, #8d949c 0%, #50555c 45%, #1e2023 100%);
+  color: #101113;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  /* Vertical drags still scroll the page; the beam follows the finger either way. */
+  touch-action: pan-y;
+}
+
+.lc-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.lc-live .lc-stage { cursor: none; background: #1a0d07; }
+
+.lc-copy {
+  position: relative;
+  width: 100%;
+  padding: 0 var(--lc-pad);
+  margin-top: -3vh;
+}
+
+/* The copy stays in the DOM for search engines and assistive tech; once the canvas is live the
+   plate shader draws it engraved in the steel, so the DOM glyphs themselves go transparent. */
+.lc-live [data-lc-engrave] { color: transparent; }
+
+.lc-eyebrow {
+  margin: 0 0 clamp(14px, 2.2vw, 30px);
+  font-family: var(--lc-mono);
+  font-size: clamp(11px, 1.05vw, 15px);
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.lc-title {
+  margin: 0;
+  font-size: clamp(42px, 8.3vw, 150px);
+  font-weight: 800;
+  line-height: 0.9;
+  letter-spacing: -0.035em;
+  text-transform: uppercase;
+}
+
+.lc-lede {
+  max-width: 34em;
+  margin: clamp(18px, 2.6vw, 38px) 0 0;
+  font-size: clamp(15px, 1.45vw, 22px);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.lc-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(14px, 2vw, 26px) clamp(24px, 4.5vw, 72px);
+  margin: clamp(22px, 3.4vw, 52px) 0 0;
+}
+.lc-stats div { display: flex; flex-direction: column-reverse; }
+.lc-stats dd {
+  margin: 0;
+  font-size: clamp(20px, 2.5vw, 40px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.lc-stats dt {
+  margin-top: 6px;
+  font-family: var(--lc-mono);
+  font-size: clamp(11px, 0.85vw, 13px);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.lc-hud,
+.lc-hint,
+.lc-dim {
+  font-family: var(--lc-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #f3ece4;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.75);
+  pointer-events: none;
+}
+
+.lc-hud {
+  position: absolute;
+  left: var(--lc-pad);
+  right: var(--lc-pad);
+  bottom: clamp(16px, 3.2vh, 34px);
+  display: none;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+}
+.lc-live .lc-hud { display: flex; }
+.lc-hud b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.lc-hud__meter { text-align: right; }
+.lc-hud__track {
+  display: block;
+  width: clamp(120px, 16vw, 220px);
+  height: 2px;
+  margin: 8px 0 0 auto;
+  background: rgba(255, 255, 255, 0.22);
+}
+.lc-hud__track i {
+  display: block;
+  height: 100%;
+  background: #ffb86b;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.25s ease-out;
+}
+
+.lc-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: clamp(18px, 4vh, 40px);
+  margin: 0;
+  text-align: center;
+  display: none;
+  transition: opacity 0.6s ease;
+}
+.lc-live .lc-hint { display: block; }
+.lc-hint__done { display: none; }
+.lc-touched:not(.lc-done) .lc-hint { opacity: 0; }
+.lc-done .lc-hint__todo { display: none; }
+.lc-done .lc-hint__done { display: inline; }
+.lc-done .lc-hint { color: #17181a; text-shadow: none; font-weight: 700; }
+
+.lc-dim {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding-left: 18px;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  will-change: transform;
+  white-space: nowrap;
+}
+.lc-dim::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 12px;
+  height: 1px;
+  background: currentColor;
+}
+.lc-dim.is-on { opacity: 0.9; }
+
+@media (max-width: 640px) {
+  .lc-copy { margin-top: -6vh; }
+  .lc-hud > span:first-child { display: none; }
+  .lc-hud { justify-content: flex-end; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lc-hint, .lc-hud__track i, .lc-dim { transition: none; }
+}
+
+/* ---------- demo page only ---------- */
+
+.demo-next {
+  min-height: 70vh;
+  padding: clamp(60px, 12vh, 140px) clamp(20px, 5.5vw, 96px);
+  border-top: 1px solid #222;
+}
+.demo-next__label {
+  margin: 0 0 18px;
+  font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #ffb86b;
+}
+.demo-next h2 { margin: 0 0 16px; font-size: clamp(32px, 6vw, 84px); font-weight: 800; letter-spacing: -0.03em; }
+.demo-next p:last-child { max-width: 36em; margin: 0; font-size: 18px; line-height: 1.5; color: #a8a49e; }
