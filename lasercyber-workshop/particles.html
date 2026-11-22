@@ -3,87 +3,189 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>LaserCyber — particle workshop</title>
-<meta name="theme-color" content="#07080a">
+<title>LaserCyber — Optical Particle Lab</title>
+<meta name="theme-color" content="#050608">
 <style>
   *, *::before, *::after { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: #07080a; color: #e8e6e1; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: #050608; color: #eceae4; overflow: hidden; }
   body {
-    font-family: Inter, "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    --pad: clamp(18px, 3.2vw, 44px);
-    --hot: #ffa24a;
+    --pad: clamp(20px, 3.4vw, 48px);
+    --hot: #ff9d42;
+    --ice: #8be0ff;
+    --line: rgba(236, 234, 228, 0.16);
   }
-  #stage { position: fixed; inset: 0; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  #stage {
+    position: fixed; inset: 0;
+    touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  }
   #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-  .live #stage { cursor: none; }
+  .live #stage, .live .ui button { cursor: none; }
 
   .ui { position: absolute; inset: 0; pointer-events: none; }
-  .ui button { pointer-events: auto; font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
-  .live .ui button { cursor: none; }
-  .mono { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; }
+  .ui button { pointer-events: auto; font: inherit; color: inherit; background: none; border: 0; padding: 0; }
+  .mono { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
 
-  .brand { position: absolute; left: var(--pad); top: var(--pad); font-weight: 800; font-size: 17px; letter-spacing: 0.14em; }
-  .brand span { color: var(--hot); }
-  .hint { position: absolute; right: var(--pad); top: calc(var(--pad) + 3px); opacity: 0.55; transition: opacity 0.8s; }
-  .touched .hint { opacity: 0; }
+  .top {
+    position: absolute; left: var(--pad); right: var(--pad); top: var(--pad);
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 12px; font-weight: 800; font-size: 16px; letter-spacing: 0.18em; }
+  .brand b { color: var(--hot); font-weight: 800; }
+  .brand em { font-style: normal; font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em; color: rgba(236, 234, 228, 0.42); }
 
-  .info { position: absolute; left: var(--pad); bottom: calc(var(--pad) + 62px); max-width: min(420px, 78vw); transition: opacity 0.45s, transform 0.45s; }
-  .info.swap { opacity: 0; transform: translateY(8px); }
-  .info .idx { color: var(--hot); margin: 0 0 12px; }
-  .info h1 { margin: 0; font-size: clamp(26px, 3.6vw, 50px); font-weight: 800; line-height: 1; letter-spacing: -0.02em; }
-  .info p { margin: 12px 0 0; font-size: clamp(13px, 1.1vw, 16px); line-height: 1.45; color: #a9a6a0; }
+  .power {
+    display: flex; align-items: center; gap: 2px;
+    padding: 3px; border: 1px solid var(--line); background: rgba(8, 10, 14, 0.55);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  }
+  .power span { padding: 0 10px 0 8px; color: rgba(236, 234, 228, 0.42); }
+  .power button {
+    position: relative; padding: 6px 11px; color: rgba(236, 234, 228, 0.52);
+    transition: color 0.25s ease, background 0.25s ease;
+  }
+  .power button:hover, .power button:focus-visible { color: #fff; outline: none; }
+  .power button[aria-pressed="true"] { color: #090b0e; background: #eceae4; font-weight: 600; }
+  .firing .power button[aria-pressed="true"] { background: var(--hot); color: #090b0e; }
+
+  .info {
+    position: absolute; left: var(--pad); bottom: calc(var(--pad) + 66px);
+    max-width: min(430px, 82vw);
+    transition: opacity 0.42s cubic-bezier(0.22, 1, 0.36, 1), transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), filter 0.42s ease;
+  }
+  .info.swap { opacity: 0; transform: translateY(10px); filter: blur(6px); }
+  .info .idx { display: flex; align-items: center; gap: 10px; color: var(--ice); margin: 0 0 12px; }
+  .info .idx::before { content: ""; width: 18px; height: 1px; background: currentColor; opacity: 0.7; }
+  .info h1 { margin: 0; font-size: clamp(26px, 3.4vw, 46px); font-weight: 700; line-height: 1.02; letter-spacing: -0.025em; }
+  .info p { margin: 12px 0 0; font-size: clamp(13px, 1.05vw, 15.5px); line-height: 1.52; color: rgba(236, 234, 228, 0.62); }
   .info ul { list-style: none; margin: 18px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 22px; }
-  .info li { color: #d9d6d0; }
-  .info li::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 9px; background: var(--hot); vertical-align: 2px; }
+  .info li { color: rgba(236, 234, 228, 0.86); display: flex; align-items: center; gap: 8px; }
+  .info li::before { content: ""; width: 4px; height: 4px; border: 1px solid var(--hot); transform: rotate(45deg); }
 
-  .nav { position: absolute; left: 0; right: 0; bottom: var(--pad); display: flex; justify-content: center; gap: clamp(14px, 3vw, 40px); }
-  .nav button { position: relative; padding: 10px 14px; opacity: 0.42; transition: opacity 0.3s; }
-  .nav button:hover, .nav button:focus-visible { opacity: 0.85; outline: none; }
-  .nav button[aria-current="true"] { opacity: 1; }
+  .legend {
+    position: absolute; right: var(--pad); bottom: calc(var(--pad) + 68px);
+    display: flex; flex-direction: column; align-items: flex-end; gap: 7px;
+    color: rgba(236, 234, 228, 0.44); transition: opacity 0.6s ease;
+  }
+  .legend div { display: flex; align-items: center; gap: 9px; }
+  .legend kbd {
+    font: inherit; padding: 2px 6px; border: 1px solid rgba(236, 234, 228, 0.2);
+    color: rgba(236, 234, 228, 0.78); background: rgba(255, 255, 255, 0.03);
+  }
+  .touched .legend { opacity: 0.26; }
+
+  .nav {
+    position: absolute; left: 0; right: 0; bottom: var(--pad);
+    display: flex; justify-content: center; align-items: center; gap: clamp(10px, 2.6vw, 34px);
+  }
+  .nav button {
+    position: relative; padding: 10px 16px; color: rgba(236, 234, 228, 0.42);
+    transition: color 0.3s ease, opacity 0.3s ease;
+  }
+  .nav button:hover, .nav button:focus-visible { color: rgba(236, 234, 228, 0.86); outline: none; }
+  .nav button[aria-current="true"] { color: #fff; }
   .nav button::before, .nav button::after {
-    content: ""; position: absolute; top: 2px; bottom: 2px; width: 7px; border: 1px solid currentColor; opacity: 0; transition: opacity 0.3s, transform 0.3s;
+    content: ""; position: absolute; top: 3px; bottom: 3px; width: 6px;
+    border: 1px solid rgba(236, 234, 228, 0.72); opacity: 0;
+    transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1), transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
   }
   .nav button::before { left: 0; border-right: 0; transform: translateX(6px); }
   .nav button::after { right: 0; border-left: 0; transform: translateX(-6px); }
   .nav button[aria-current="true"]::before, .nav button[aria-current="true"]::after { opacity: 1; transform: none; }
+  .nav button i {
+    position: absolute; left: 16px; right: 16px; bottom: 3px; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--ice), transparent);
+    transform: scaleX(0); transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .nav button[aria-current="true"] i { transform: scaleX(1); }
 
-  .arrow { position: absolute; top: 50%; width: 64px; height: 64px; margin-top: -32px; opacity: 0.5; transition: opacity 0.3s; }
-  .arrow:hover, .arrow:focus-visible { opacity: 1; outline: none; }
-  .arrow::before { content: ""; position: absolute; left: 12px; right: 12px; top: 50%; height: 1px; background: currentColor; }
-  .arrow::after { content: ""; position: absolute; top: 50%; width: 9px; height: 9px; margin-top: -5px; border-top: 1px solid currentColor; }
-  .arrow.prev { left: calc(var(--pad) - 12px); }
-  .arrow.prev::after { left: 12px; border-left: 1px solid currentColor; transform: rotate(-45deg); }
-  .arrow.next { right: calc(var(--pad) - 12px); }
-  .arrow.next::after { right: 12px; border-right: 1px solid currentColor; transform: rotate(45deg); }
+  .arrow {
+    position: absolute; top: 50%; width: 68px; height: 68px; margin-top: -34px;
+    opacity: 0.38; transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .arrow:hover, .arrow:focus-visible { opacity: 0.95; outline: none; }
+  .arrow.prev:hover { transform: translateX(-4px); }
+  .arrow.next:hover { transform: translateX(4px); }
+  .arrow::before { content: ""; position: absolute; left: 14px; right: 14px; top: 50%; height: 1px; background: currentColor; }
+  .arrow::after { content: ""; position: absolute; top: 50%; width: 8px; height: 8px; margin-top: -4.5px; border-top: 1px solid currentColor; }
+  .arrow.prev { left: calc(var(--pad) - 14px); }
+  .arrow.prev::after { left: 14px; border-left: 1px solid currentColor; transform: rotate(-45deg); }
+  .arrow.next { right: calc(var(--pad) - 14px); }
+  .arrow.next::after { right: 14px; border-right: 1px solid currentColor; transform: rotate(45deg); }
 
-  .reticle { position: absolute; left: 0; top: 0; width: 0; height: 0; opacity: 0; transition: opacity 0.3s; will-change: transform; }
-  .reticle.on { opacity: 1; }
-  .reticle i { position: absolute; left: -17px; top: -17px; width: 34px; height: 34px; border: 1px solid rgba(255, 190, 120, 0.75); border-radius: 50%; }
-  .reticle i::after { content: ""; position: absolute; left: 50%; top: 50%; width: 3px; height: 3px; margin: -1.5px; background: #fff; border-radius: 50%; }
-  .reticle b { position: absolute; left: 26px; top: -6px; font-weight: 500; white-space: nowrap; color: #ffd2a3; }
+  /* Two-part optical reticle + silky vector ribbon trail */
+  .trail { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity 0.3s ease; }
+  .cursor-on .trail { opacity: 1; }
+  .trail path {
+    fill: none; stroke: rgba(139, 224, 255, 0.42); stroke-width: 1.25; stroke-linecap: round;
+    filter: drop-shadow(0 0 6px rgba(139, 224, 255, 0.55));
+    transition: stroke 0.2s ease, stroke-width 0.2s ease, filter 0.2s ease;
+  }
+  .firing .trail path {
+    stroke: rgba(255, 196, 120, 0.85); stroke-width: 1.9;
+    filter: drop-shadow(0 0 10px rgba(255, 145, 48, 0.9));
+  }
+  .pin, .ring { position: absolute; left: 0; top: 0; width: 0; height: 0; opacity: 0; transition: opacity 0.28s ease; will-change: transform; }
+  .cursor-on .pin, .cursor-on .ring { opacity: 1; }
+  .pin::before {
+    content: ""; position: absolute; left: -2.5px; top: -2.5px; width: 5px; height: 5px;
+    border-radius: 50%; background: #fff; box-shadow: 0 0 10px rgba(139, 224, 255, 0.9);
+    transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+  }
+  .firing .pin::before {
+    transform: scale(1.45); background: #fffdf8;
+    box-shadow: 0 0 16px #ffb15e, 0 0 32px rgba(255, 130, 36, 0.9);
+  }
+  .ring svg {
+    position: absolute; left: -32px; top: -32px; width: 64px; height: 64px; overflow: visible;
+    transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .ring .r-outer { stroke: rgba(236, 234, 228, 0.36); transition: stroke 0.25s ease; }
+  .ring .r-ticks { stroke: rgba(139, 224, 255, 0.78); transition: stroke 0.25s ease, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1); transform-origin: 32px 32px; }
+  .locked .ring svg { transform: scale(0.84); }
+  .locked .ring .r-ticks { transform: rotate(45deg); stroke: #b8ecff; }
+  .firing .ring svg { transform: scale(0.68); }
+  .firing .ring .r-outer { stroke: rgba(255, 168, 76, 0.75); }
+  .firing .ring .r-ticks { transform: rotate(90deg); stroke: #ffd39b; }
+  .orbiting .ring svg { transform: scale(1.06); }
+  .ring .tele {
+    position: absolute; left: 30px; top: -13px; display: flex; flex-direction: column; gap: 2px;
+    white-space: nowrap; font-size: 9.5px; letter-spacing: 0.16em;
+  }
+  .ring .tele b { font-weight: 600; color: var(--ice); transition: color 0.2s ease; }
+  .ring .tele small { font-size: 9px; color: rgba(236, 234, 228, 0.5); }
+  .firing .ring .tele b { color: #ffc583; }
 
   .nogl { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; padding: var(--pad); text-align: center; color: #a9a6a0; }
   .failed .nogl { display: flex; }
-  .failed .hint, .failed .arrow, .failed .nav { display: none; }
+  .failed .top .power, .failed .legend, .failed .arrow, .failed .nav { display: none; }
 
-  @media (max-width: 640px) {
-    .hint { display: none; }
-    .arrow { display: none; }
-    .info { bottom: calc(var(--pad) + 54px); }
+  @media (max-width: 760px) {
+    .brand em, .legend, .arrow, .power span { display: none; }
+    .info { bottom: calc(var(--pad) + 56px); }
     .nav { gap: 2px; }
-    .nav button { padding: 10px 10px; }
+    .nav button { padding: 9px 10px; font-size: 9.5px; }
   }
-  @media (prefers-reduced-motion: reduce) { .info, .nav button, .hint { transition: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .info, .nav button, .legend, .ring svg, .ring .r-ticks { transition: none; }
+  }
 </style>
 </head>
 <body>
 <div id="stage">
   <canvas id="gl" aria-hidden="true"></canvas>
   <div class="ui">
-    <div class="brand">LASER<span>CYBER</span></div>
-    <div class="hint mono">Your pointer is the beam &middot; &larr; &rarr; to morph</div>
+    <header class="top">
+      <div class="brand"><span>LASER<b>CYBER</b></span><em>OPTICAL LAB // 1080 NM</em></div>
+      <div class="power mono" id="power" role="group" aria-label="Laser output power">
+        <span>OUTPUT</span>
+        <button type="button" data-w="600" data-k="0.66">600W</button>
+        <button type="button" data-w="900" data-k="0.86">900W</button>
+        <button type="button" data-w="1200" data-k="1.14" aria-pressed="true">1200W</button>
+      </div>
+    </header>
 
     <div class="info" id="info" aria-live="polite">
       <p class="idx mono" id="idx"></p>
@@ -92,12 +194,30 @@
       <ul class="mono" id="specs"></ul>
     </div>
 
-    <button class="arrow prev" id="prev" aria-label="Previous"></button>
-    <button class="arrow next" id="next" aria-label="Next"></button>
-    <nav class="nav mono" id="nav" aria-label="Product views"></nav>
+    <div class="legend mono" aria-hidden="true">
+      <div><span>AI VISION SCAN</span><kbd>HOVER</kbd></div>
+      <div><span>FIRE FIBER BEAM</span><kbd>HOLD ON MODEL</kbd></div>
+      <div><span>360° INERTIA ORBIT</span><kbd>DRAG SPACE</kbd></div>
+    </div>
 
-    <div class="reticle mono" id="reticle" aria-hidden="true"><i></i><b>1200 W</b></div>
-    <p class="nogl">This view needs WebGL2, which this browser does not provide.</p>
+    <button class="arrow prev" id="prev" type="button" aria-label="Previous system"></button>
+    <button class="arrow next" id="next" type="button" aria-label="Next system"></button>
+    <nav class="nav mono" id="nav" aria-label="Product configurations"></nav>
+
+    <svg class="trail" aria-hidden="true"><path id="trailPath" d="" /></svg>
+    <div class="pin" id="pin" aria-hidden="true"></div>
+    <div class="ring mono" id="ring" aria-hidden="true">
+      <svg viewBox="0 0 64 64" fill="none">
+        <circle class="r-outer" cx="32" cy="32" r="21" stroke-width="0.9" stroke-dasharray="18 15" />
+        <g class="r-ticks" stroke-width="1.15" stroke-linecap="square">
+          <path d="M32 6v5M32 53v5M6 32h5M53 32h5" />
+          <path d="M16 20v-4h4M48 20v-4h-4M16 44v4h4M48 44v4h-4" stroke-width="0.95" />
+        </g>
+      </svg>
+      <div class="tele"><b id="teleMode">AI-VIS · SCAN</b><small id="teleSub">1200 W READY</small></div>
+    </div>
+
+    <p class="nogl">This interactive particle view requires WebGL2.</p>
   </div>
 </div>
 
@@ -106,16 +226,36 @@
 'use strict';
 
 const VIEWS = [
-  { nav: 'Welding gun', title: 'AI Vision Welding Gun', lede: 'One handheld head welds, cleans and cuts. Everything else on this page is built around it.',
-    specs: ['1080p camera', 'Built-in wire feed', '0.2–4 mm metal'], yaw: 0.12, pitch: 0.10, dist: 6.0, size: 0.0056, ty: 0.14 },
-  { nav: 'L1 Pro', title: 'L1 Pro laser source', lede: 'The 1200 W fiber laser the gun plugs into, with the gun holstered on its side.',
-    specs: ['1200 W', '366+ presets', '100 mm cleaning width'], yaw: 0.62, pitch: 0.20, dist: 6.2, size: 0.0072, ty: -0.06 },
-  { nav: 'C1 CNC', title: 'C1 InterLinked CNC', lede: 'Mount the same gun on the gantry and it becomes a CNC cutter. No second laser.',
-    specs: ['600 × 400 mm', '1000 mm/s', '±0.05 mm'], yaw: 0.58, pitch: 0.27, dist: 7.4, size: 0.0074, ty: 0.04 },
+  {
+    nav: 'Welding Gun',
+    tag: '01 // HANDHELD HEAD',
+    title: 'AI Vision Welding Gun',
+    lede: 'A coaxial 1080p optical head with integrated wire feed—welds, cleans rust and cuts sheet metal from one trigger.',
+    specs: ['1080p coaxial vision', 'Auto wire retraction', '0.2–4.0 mm metal'],
+    yaw: 0.16, pitch: 0.12, dist: 5.95, size: 0.0054, ty: 0.13,
+  },
+  {
+    nav: 'L1 Pro Source',
+    tag: '02 // FIBER ENGINE',
+    title: 'L1 Pro 1200 W Source',
+    lede: 'Compact air-cooled fiber laser engine with 366+ material presets and real-time lens contamination diagnostics.',
+    specs: ['1200 W continuous', '100 mm cleaning pass', '366+ smart presets'],
+    yaw: 0.60, pitch: 0.19, dist: 6.15, size: 0.0068, ty: -0.05,
+  },
+  {
+    nav: 'C1 CNC',
+    tag: '03 // INTERLINKED GANTRY',
+    title: 'C1 InterLinked CNC',
+    lede: 'Dock the exact same handheld gun onto the enclosed gantry in seconds for automated 0.05 mm precision cutting.',
+    specs: ['600 × 400 mm bed', '1000 mm/s travel', '±0.05 mm accuracy'],
+    yaw: 0.56, pitch: 0.25, dist: 7.25, size: 0.0070, ty: 0.04,
+  },
 ];
-const FLOOR = -0.62;
 
-/* ---------- small vector helpers ---------- */
+const FLOOR = -0.62;
+const EMITTER_Y = 2.42;
+
+/* ---------- math ---------- */
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const mul = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
@@ -125,7 +265,8 @@ const len = (a) => Math.hypot(a[0], a[1], a[2]);
 const norm = (a) => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const mix = (a, b, t) => a + (b - a) * t;
-const smooth = (t) => t * t * (3 - 2 * t);
+const mix3 = (a, b, t) => [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2], t)];
+const damp = (dt, rate) => 1 - Math.exp(-dt * rate);
 
 function mulberry(seed) {
   let a = seed >>> 0;
@@ -138,11 +279,13 @@ function mulberry(seed) {
   };
 }
 
-/* ---------- procedural models, sampled into points ----------
-   Everything is built from a handful of primitives. Each primitive knows its area, so points
-   land with even density; box edges get extra points, which is what makes a point cloud read
-   as a crisp object rather than a fog. */
-const EDGE = 0.03; // surface area an edge is worth per unit length
+/* ---------- procedural point-cloud geometry ----------
+   Material encoding in accent:
+   < 0     : optical cyan/ice highlights (vision optics, displays, status arcs)
+   0..0.45 : dark titanium -> machined brushed silver
+   0.45..0.82 : warm copper / brass nozzles & hardware
+   > 0.85  : active weld seam / hot arc core */
+const EDGE = 0.032;
 let prims = null;
 let cur = { r: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0], s: 1 };
 const mulM = (a, b) => {
@@ -173,7 +316,7 @@ function rect(c, u, v, n, { d = 1, acc = 0 } = {}) {
 function line(a, b, { w = 1, acc = 0, n = null } = {}) {
   const ab = sub(b, a);
   prim(len(ab) * EDGE * w, 1, acc, (r) => {
-    const j = [(r() - 0.5) * 0.008, (r() - 0.5) * 0.008, (r() - 0.5) * 0.008];
+    const j = [(r() - 0.5) * 0.006, (r() - 0.5) * 0.006, (r() - 0.5) * 0.006];
     return [add(add(a, mul(ab, r())), j), n || norm([r() - 0.5, r() - 0.2, r() + 0.2])];
   });
 }
@@ -221,7 +364,7 @@ function cyl(a, b, r1, r2, { d = 1, acc = 0, caps = true } = {}) {
 function ring(c, axis, r, { w = 1, acc = 0 } = {}) {
   const [u, v] = basis(axis);
   prim(6.2832 * r * EDGE * w, 1, acc, (rn) => {
-    const a = rn() * 6.2832, q = r + (rn() - 0.5) * 0.008;
+    const a = rn() * 6.2832, q = r + (rn() - 0.5) * 0.006;
     return [add(c, add(mul(u, Math.cos(a) * q), mul(v, Math.sin(a) * q))), axis];
   });
 }
@@ -239,124 +382,170 @@ function tube(pts, r, o = {}) {
 }
 function sparks(c, r, acc = 1, w = 1) {
   prim(r * r * 0.5 * w, 2, acc, (rn) => {
-    const a = rn() * 6.2832, up = rn() * 0.9 + 0.1, q = Math.pow(rn(), 2.2) * r, s = Math.sqrt(1 - up * up);
+    const a = rn() * 6.2832, up = rn() * 0.9 + 0.1, q = Math.pow(rn(), 2.3) * r, s = Math.sqrt(1 - up * up);
     const dir = [Math.cos(a) * s, up, Math.sin(a) * s];
     return [add(c, mul(dir, q)), dir];
   });
 }
 
-// The gun in its own frame: the beam leaves along +x, the grip hangs down at the back.
-const GUN_TIP = [1.24, 0, 0];
+const GUN_TIP = [1.26, 0, 0];
 function gun(base = 0) {
-  box([-0.36, 0.03, 0], [0.66, 0.25, 0.19], { e: 1.2, acc: base });
-  box([-0.30, 0.20, 0], [0.34, 0.09, 0.13], { acc: base });
-  cyl([-0.13, 0.20, 0], [-0.07, 0.20, 0], 0.04, 0.04, { acc: base + 0.3, d: 1.5 });
-  cyl([-0.03, 0, 0], [0.52, 0, 0], 0.088, 0.078, { acc: base });
-  cyl([0.05, 0, 0], [0.11, 0, 0], 0.102, 0.102, { acc: base + 0.15 });
-  cyl([0.43, 0, 0], [0.49, 0, 0], 0.096, 0.096, { acc: base + 0.15 });
-  cyl([0.52, 0, 0], [0.80, 0, 0], 0.07, 0.056, { acc: base });
-  cyl([0.80, 0, 0], [1.14, 0, 0], 0.052, 0.02, { acc: Math.max(base, 0.55), d: 1.3 });
-  cyl([1.14, 0, 0], GUN_TIP, 0.02, 0.012, { acc: 0.78, d: 2 });
-  box([0.05, -0.13, 0], [0.17, 0.1, 0.1], { acc: base });
-  tube([[0.1, -0.17, 0], [0.45, -0.17, 0], [0.86, -0.12, 0], [1.2, -0.035, 0]], 0.014, { acc: base + 0.25, d: 1.6 });
-  push([-0.5, -0.12, 0], [0, 0, -0.26], 1, () => {
-    box([0, -0.31, 0], [0.19, 0.6, 0.15], { e: 1.2, acc: base });
-    box([0.13, -0.09, 0], [0.045, 0.17, 0.05], { acc: base + 0.35 });
+  // Main optical housing + chamfered upper AI camera pod
+  box([-0.36, 0.03, 0], [0.68, 0.25, 0.19], { e: 1.35, acc: base });
+  for (let i = 0; i < 5; i++) line([-0.58 + i * 0.07, 0.06, 0.098], [-0.54 + i * 0.07, -0.04, 0.098], { w: 0.9, acc: base + 0.18, n: [0, 0, 1] });
+  for (let i = 0; i < 5; i++) line([-0.58 + i * 0.07, 0.06, -0.098], [-0.54 + i * 0.07, -0.04, -0.098], { w: 0.9, acc: base + 0.18, n: [0, 0, -1] });
+  box([-0.28, 0.205, 0], [0.38, 0.095, 0.135], { e: 1.2, acc: base + 0.08 });
+  // Coaxial 1080p AI vision lens barrel & cyan coated optics
+  cyl([-0.09, 0.205, 0], [0.04, 0.205, 0], 0.042, 0.038, { acc: base + 0.28, d: 1.6 });
+  ring([0.042, 0.205, 0], [1, 0, 0], 0.032, { w: 2.6, acc: -0.85 });
+  disc([0.041, 0.205, 0], [1, 0, 0], 0.026, { d: 3.0, acc: -0.65 });
+  // Rear status OLED strip
+  rect([-0.695, 0.09, 0], [0, 0.055, 0], [0, 0, 0.055], [-1, 0, 0], { d: 2.8, acc: -0.55 });
+  // Collimator barrel + knurled locking collars + copper nozzle
+  cyl([-0.02, 0, 0], [0.52, 0, 0], 0.088, 0.078, { acc: base + 0.06 });
+  cyl([0.05, 0, 0], [0.12, 0, 0], 0.104, 0.104, { acc: base + 0.22, d: 1.3 });
+  ring([0.05, 0, 0], [1, 0, 0], 0.105, { w: 1.4, acc: -0.4 });
+  cyl([0.43, 0, 0], [0.50, 0, 0], 0.096, 0.096, { acc: base + 0.22, d: 1.3 });
+  cyl([0.52, 0, 0], [0.80, 0, 0], 0.070, 0.055, { acc: base + 0.12 });
+  cyl([0.80, 0, 0], [1.15, 0, 0], 0.052, 0.021, { acc: Math.max(base, 0.58), d: 1.4 });
+  cyl([1.15, 0, 0], GUN_TIP, 0.020, 0.012, { acc: 0.78, d: 2.2 });
+  // Integrated wire-feed guide tube
+  box([0.05, -0.13, 0], [0.17, 0.10, 0.10], { acc: base + 0.1 });
+  tube([[0.10, -0.17, 0], [0.46, -0.17, 0], [0.88, -0.12, 0], [1.22, -0.032, 0]], 0.014, { acc: 0.56, d: 1.7 });
+  // Ergonomic grip & dual-stage safety trigger
+  push([-0.50, -0.12, 0], [0, 0, -0.26], 1, () => {
+    box([0, -0.31, 0], [0.19, 0.60, 0.15], { e: 1.25, acc: base });
+    box([0.13, -0.09, 0], [0.045, 0.17, 0.05], { acc: 0.62 });
   });
 }
 
 function buildGunView() {
-  let tip, grip;
-  push([-0.02, 0.33, 0], [0, 0, -0.66], 1, () => {
-    gun(0.1);
+  let tip, grip, lens;
+  push([-0.02, 0.34, 0], [0, 0, -0.66], 1, () => {
+    gun(0.10);
     tip = toWorld(cur, GUN_TIP);
     grip = toWorld(cur, [-0.66, -0.72, 0]);
+    lens = toWorld(cur, [0.05, 0.205, 0]);
   });
-  tube([grip, add(grip, [-0.26, -0.2, 0.04]), add(grip, [-0.36, -0.62, 0.14]), [grip[0] - 0.1, FLOOR + 0.06, 0.34], [grip[0] + 0.5, FLOOR + 0.05, 0.62]], 0.05, { d: 0.8 });
-  const top = FLOOR + 0.2;
-  box([tip[0] - 0.02, top - 0.02, 0], [1.25, 0.04, 1.15], { d: 0.55, e: 1.2 });
-  box([tip[0] - 0.02, FLOOR + 0.09, 0], [1.0, 0.18, 0.9], { d: 0.12, e: 0.8 });
-  line([tip[0], top + 0.004, -0.575], [tip[0], top + 0.004, 0.575], { w: 1.2 });
-  line([tip[0], top + 0.01, -0.575], [tip[0], top + 0.01, 0], { w: 4, acc: 0.72, n: [0, 1, 0] });
-  line(tip, [tip[0] + 0.03, top + 0.01, 0], { w: 2.5, acc: 1 });
-  sparks([tip[0] + 0.03, top + 0.01, 0], 0.34, 1, 0.5);
+  tube([grip, add(grip, [-0.26, -0.2, 0.04]), add(grip, [-0.36, -0.62, 0.14]), [grip[0] - 0.1, FLOOR + 0.06, 0.34], [grip[0] + 0.52, FLOOR + 0.05, 0.64]], 0.05, { d: 0.85 });
+  const top = FLOOR + 0.20;
+  // Workpiece: Lap/T-joint metal assembly on fixture block
+  box([tip[0] - 0.02, top - 0.02, 0], [1.30, 0.04, 1.16], { d: 0.56, e: 1.35, acc: 0.14 });
+  box([tip[0] - 0.26, top + 0.13, 0], [0.036, 0.26, 1.06], { d: 0.48, e: 1.25, acc: 0.18 });
+  box([tip[0] - 0.02, FLOOR + 0.08, 0], [1.02, 0.16, 0.90], { d: 0.12, e: 0.9 });
+  line([tip[0], top + 0.005, -0.58], [tip[0], top + 0.005, 0.58], { w: 1.3, acc: 0.25 });
+  // Completed glowing weld bead + active arc + faint AI vision cone line
+  line([tip[0], top + 0.011, -0.56], [tip[0], top + 0.011, 0.0], { w: 4.5, acc: 0.74, n: [0, 1, 0] });
+  line(tip, [tip[0] + 0.028, top + 0.01, 0], { w: 2.8, acc: 1 });
+  line(lens, [tip[0] + 0.028, top + 0.01, 0], { w: 0.65, acc: -0.75 });
+  sparks([tip[0] + 0.028, top + 0.01, 0], 0.34, 1, 0.55);
 }
 
 function buildSourceView() {
-  push([-0.12, FLOOR + 0.55, 0], [0, 0, 0], 1, () => {
+  push([-0.12, FLOOR + 0.56, 0], [0, 0, 0], 1, () => {
     const z = 0.55;
-    box([0, 0, 0], [1.5, 1.0, 1.1], { d: 0.5, e: 1.5 });
-    for (const sx of [-0.6, 0.6]) for (const sz of [-0.42, 0.42]) box([sx, -0.525, sz], [0.16, 0.05, 0.16], { e: 0.5 });
-    rect([-0.2, 0.2, z + 0.004], [0.33, 0, 0], [0, 0.19, 0], [0, 0, 1], { d: 2.6, acc: 0.4 });
-    outline([-0.2, 0.2, z], [0.5, 0, 0], [0, 0.26, 0], [0, 0, 1], { w: 1.2 });
-    for (let i = 0; i < 22; i++) rect([-0.67 + i * 0.047, -0.28, z + 0.02], [0, 0.17, 0], [0, 0, 0.04], [0.35, 0.2, 1], { d: 1.5, acc: 0.15 });
-    outline([-0.18, -0.28, z + 0.06], [0.52, 0, 0], [0, 0.18, 0], [0, 0, 1], { w: 0.8 });
-    [-0.12, 0.06, 0.24].forEach((x, i) => cyl([x, -0.04, z], [x, -0.04, z + 0.05], 0.034, 0.034, { d: 2, acc: i === 2 ? 0.8 : 0.1 }));
-    for (let i = 0; i < 8; i++) line([0.47, -0.42 + i * 0.055, z + 0.004], [0.55, -0.37 + i * 0.055, z + 0.004], { w: 2.2, acc: 0.7, n: [0, 0, 1] });
-    for (let i = 0; i < 7; i++) line([-0.5 + i * 0.09, 0.5, -0.3], [-0.5 + i * 0.09, 0.5, 0.05], { w: 0.8, n: [0, 1, 0] });
-    box([0.66, 0.05, z + 0.03], [0.14, 0.2, 0.06], {});
+    box([0, 0, 0], [1.52, 1.02, 1.12], { d: 0.48, e: 1.6, acc: 0.08 });
+    for (const sx of [-0.61, 0.61]) for (const sz of [-0.42, 0.42]) box([sx, -0.535, sz], [0.16, 0.05, 0.16], { e: 0.6 });
+    // Angled industrial touchscreen + cyan telemetry waveform
+    rect([-0.20, 0.21, z + 0.005], [0.34, 0, 0], [0, 0.19, 0], [0, 0, 1], { d: 2.2, acc: -0.45 });
+    outline([-0.20, 0.21, z + 0.006], [0.36, 0, 0], [0, 0.21, 0], [0, 0, 1], { w: 1.5, acc: 0.32 });
+    outline([-0.20, 0.21, z], [0.50, 0, 0], [0, 0.27, 0], [0, 0, 1], { w: 1.1, acc: 0.18 });
+    for (let i = 0; i < 12; i++) {
+      const x0 = -0.48 + i * 0.046, x1 = x0 + 0.046;
+      const y0 = 0.19 + Math.sin(i * 0.9) * 0.055, y1 = 0.19 + Math.sin((i + 1) * 0.9) * 0.055;
+      line([x0, y0, z + 0.01], [x1, y1, z + 0.01], { w: 1.5, acc: -0.9, n: [0, 0, 1] });
+    }
+    // Precision intake louvers
+    for (let i = 0; i < 22; i++) rect([-0.67 + i * 0.047, -0.28, z + 0.02], [0, 0.17, 0], [0, 0, 0.04], [0.35, 0.2, 1], { d: 1.45, acc: 0.16 });
+    outline([-0.18, -0.28, z + 0.06], [0.52, 0, 0], [0, 0.18, 0], [0, 0, 1], { w: 0.9, acc: 0.24 });
+    // Quick-control physical knob & E-stop
+    [-0.12, 0.06, 0.24].forEach((x, i) => {
+      cyl([x, -0.04, z], [x, -0.04, z + 0.052], 0.036, 0.034, { d: 2.2, acc: i === 2 ? 0.76 : 0.28 });
+      if (i === 2) ring([x, -0.04, z + 0.054], [0, 0, 1], 0.042, { w: 2.2, acc: -0.8 });
+    });
+    for (let i = 0; i < 8; i++) line([0.47, -0.42 + i * 0.055, z + 0.004], [0.55, -0.37 + i * 0.055, z + 0.004], { w: 2.2, acc: 0.68, n: [0, 0, 1] });
+    for (let i = 0; i < 7; i++) line([-0.5 + i * 0.09, 0.51, -0.3], [-0.5 + i * 0.09, 0.51, 0.05], { w: 0.9, n: [0, 1, 0], acc: 0.2 });
+    // Side holster with docked gun & armored fiber umbilical
+    box([0.66, 0.05, z + 0.03], [0.14, 0.20, 0.06], { acc: 0.22 });
     let grip;
-    push([0.66, 0.06, z + 0.13], [0, 0, -1.66], 0.38, () => { gun(0.35); grip = toWorld(cur, [-0.7, 0.03, 0]); });
+    push([0.66, 0.06, z + 0.13], [0, 0, -1.66], 0.38, () => { gun(0.32); grip = toWorld(cur, [-0.7, 0.03, 0]); });
     const g = sub(grip, cur.t);
-    tube([g, add(g, [0.2, 0.12, -0.02]), [1.12, 0.05, 0.5], [1.14, -0.36, 0.2], [0.9, -0.5, -0.25]], 0.04, { d: 0.9 });
-    tube([[-0.75, -0.12, 0.3], [-0.98, -0.08, 0.42], [-1.08, -0.4, 0.46], [-0.9, -0.52, 0.2], [-0.76, -0.4, 0.0]], 0.04, { d: 0.9 });
+    tube([g, add(g, [0.2, 0.12, -0.02]), [1.12, 0.05, 0.5], [1.14, -0.36, 0.2], [0.9, -0.5, -0.25]], 0.04, { d: 0.95, acc: 0.14 });
+    tube([[-0.76, -0.12, 0.3], [-0.98, -0.08, 0.42], [-1.08, -0.4, 0.46], [-0.9, -0.52, 0.2], [-0.76, -0.4, 0.0]], 0.04, { d: 0.9 });
   });
 }
 
 function buildCncView() {
   push([0, FLOOR + 0.69, 0], [0, 0, 0], 1, () => {
     const z = 0.825, n = [0, 0, 1];
-    box([0, 0, 0], [1.75, 1.32, 1.65], { d: 0.07, e: 1.8, skip: 'z+' });
-    rect([-0.84, 0.2, z], [0.035, 0, 0], [0, 0.46, 0], n, { d: 0.9 });
-    rect([-0.23, 0.615, z], [0.575, 0, 0], [0, 0.045, 0], n, { d: 0.9 });
-    rect([0.61, 0.23, z], [0.265, 0, 0], [0, 0.43, 0], n, { d: 0.45 });
-    rect([0, -0.43, z], [0.875, 0, 0], [0, 0.23, 0], n, { d: 0.4 });
-    outline([-0.23, 0.2, z], [0.57, 0, 0], [0, 0.37, 0], n, { w: 1.8 });
-    outline([-0.23, 0.2, z], [0.52, 0, 0], [0, 0.32, 0], n, { w: 1 });
-    line([0.42, -0.2, z], [0.42, 0.66, z], { n });
-    rect([0.64, 0.31, z + 0.004], [0.11, 0, 0], [0, 0.085, 0], n, { d: 3, acc: 0.4 });
-    outline([0.64, 0.31, z], [0.14, 0, 0], [0, 0.115, 0], n, { w: 0.8 });
-    cyl([0.64, 0.08, z], [0.64, 0.08, z + 0.05], 0.04, 0.04, { d: 3, acc: 0.82 });
-    line([-0.875, -0.2, z], [0.875, -0.2, z], { w: 1.8, n });
-    line([-0.875, -0.26, z], [0.875, -0.26, z], { w: 1, n });
-    outline([-0.3, -0.44, z], [0.52, 0, 0], [0, 0.13, 0], n, { w: 0.9 });
-    outline([0.64, -0.44, z], [0.1, 0, 0], [0, 0.06, 0], n, { w: 0.8 });
-    outline([-0.25, 0.66, 0.12], [0.56, 0, 0], [0, 0, 0.62], [0, 1, 0], { w: 0.9 });
+    box([0, 0, 0], [1.76, 1.32, 1.65], { d: 0.065, e: 1.85, skip: 'z+', acc: 0.10 });
+    rect([-0.84, 0.20, z], [0.035, 0, 0], [0, 0.46, 0], n, { d: 0.9, acc: 0.16 });
+    rect([-0.23, 0.615, z], [0.575, 0, 0], [0, 0.045, 0], n, { d: 0.9, acc: 0.16 });
+    rect([0.61, 0.23, z], [0.265, 0, 0], [0, 0.43, 0], n, { d: 0.45, acc: 0.12 });
+    rect([0, -0.43, z], [0.88, 0, 0], [0, 0.23, 0], n, { d: 0.42, acc: 0.10 });
+    // Viewing window frame with OD8+ optical tint border
+    outline([-0.23, 0.20, z], [0.57, 0, 0], [0, 0.37, 0], n, { w: 1.9, acc: 0.30 });
+    outline([-0.23, 0.20, z], [0.52, 0, 0], [0, 0.32, 0], n, { w: 1.1, acc: -0.55 });
+    line([0.42, -0.20, z], [0.42, 0.66, z], { n, acc: 0.22 });
+    // CNC control display & rotary encoder
+    rect([0.64, 0.31, z + 0.004], [0.11, 0, 0], [0, 0.085, 0], n, { d: 3.0, acc: -0.65 });
+    outline([0.64, 0.31, z], [0.14, 0, 0], [0, 0.115, 0], n, { w: 0.9, acc: 0.3 });
+    cyl([0.64, 0.08, z], [0.64, 0.08, z + 0.05], 0.04, 0.04, { d: 3, acc: 0.78 });
+    ring([0.64, 0.08, z + 0.052], n, 0.046, { w: 2.0, acc: -0.75 });
+    line([-0.88, -0.20, z], [0.88, -0.20, z], { w: 1.8, n, acc: 0.26 });
+    line([-0.88, -0.26, z], [0.88, -0.26, z], { w: 1.0, n, acc: -0.4 });
+    outline([-0.30, -0.44, z], [0.52, 0, 0], [0, 0.13, 0], n, { w: 0.9, acc: 0.18 });
+    outline([0.64, -0.44, z], [0.10, 0, 0], [0, 0.06, 0], n, { w: 0.8, acc: 0.22 });
+    outline([-0.25, 0.66, 0.12], [0.56, 0, 0], [0, 0, 0.62], [0, 1, 0], { w: 0.9, acc: 0.2 });
 
+    // Slat bed + sheet metal + active precision toolpath kerf
     for (let i = 0; i < 17; i++) rect([-0.74 + i * 0.08, -0.15, 0], [0, 0.05, 0], [0, 0, 0.64], [1, 0.4, 0], { d: 0.7 });
-    box([-0.1, -0.08, 0], [1.24, 0.022, 1.02], { d: 0.9, e: 1.2 });
-    const py = -0.066, cut = [-0.08, py, 0.1];
-    ring([-0.3, py, 0.1], [0, 1, 0], 0.22, { w: 5, acc: 0.95 });
-    outline([0.22, py, -0.18], [0.16, 0, 0], [0, 0, 0.22], [0, 1, 0], { w: 2.5, acc: 0.62 });
-    ring([0.22, py, 0.3], [0, 1, 0], 0.1, { w: 2.5, acc: 0.62 });
+    box([-0.10, -0.08, 0], [1.24, 0.022, 1.02], { d: 0.92, e: 1.25, acc: 0.16 });
+    const py = -0.066, cut = [-0.08, py, 0.10];
+    ring([-0.30, py, 0.10], [0, 1, 0], 0.22, { w: 5.0, acc: 0.94 });
+    ring([-0.30, py, 0.10], [0, 1, 0], 0.11, { w: 2.6, acc: 0.68 });
+    outline([0.22, py, -0.18], [0.16, 0, 0], [0, 0, 0.22], [0, 1, 0], { w: 2.5, acc: 0.64 });
+    ring([0.22, py, 0.30], [0, 1, 0], 0.10, { w: 2.5, acc: -0.65 });
 
-    for (const x of [-0.8, 0.8]) box([x, 0.22, 0], [0.07, 0.07, 1.5], {});
-    box([0, 0.22, -0.02], [1.62, 0.13, 0.12], { e: 1.3 });
-    box([cut[0], 0.24, cut[2] - 0.04], [0.2, 0.26, 0.1], { e: 1.2 });
-    push([cut[0], py + 0.045 + GUN_TIP[0] * 0.33, cut[2]], [0, 0, -Math.PI / 2], 0.33, () => gun(0.42));
-    line([cut[0], py + 0.045, cut[2]], cut, { w: 4, acc: 1 });
-    sparks(cut, 0.3, 1, 0.8);
-    tube([[cut[0] + 0.02, 0.5, cut[2] - 0.06], [0.25, 0.6, -0.2], [0.62, 0.52, -0.5], [0.78, 0.3, -0.7]], 0.032, { d: 0.9 });
+    // Dual Y-rails, X-gantry beam, Z-dock & mounted handheld gun
+    for (const x of [-0.80, 0.80]) box([x, 0.22, 0], [0.07, 0.07, 1.50], { acc: 0.24 });
+    box([0, 0.22, -0.02], [1.62, 0.13, 0.12], { e: 1.4, acc: 0.26 });
+    box([cut[0], 0.24, cut[2] - 0.04], [0.20, 0.26, 0.10], { e: 1.3, acc: 0.30 });
+    push([cut[0], py + 0.045 + GUN_TIP[0] * 0.33, cut[2]], [0, 0, -Math.PI / 2], 0.33, () => gun(0.40));
+    line([cut[0], py + 0.045, cut[2]], cut, { w: 4.0, acc: 1 });
+    sparks(cut, 0.30, 1, 0.85);
+    tube([[cut[0] + 0.02, 0.50, cut[2] - 0.06], [0.25, 0.60, -0.20], [0.62, 0.52, -0.50], [0.78, 0.30, -0.70]], 0.032, { d: 0.9 });
   });
 }
 
-function sampleShape(build, count, seed) {
+function sampleShape(build, bodyCount, totalCount, seed) {
   prims = [];
   build();
   const rnd = mulberry(seed);
   const cum = new Float64Array(prims.length);
   let total = 0;
   prims.forEach((p, i) => { total += p.w; cum[i] = total; });
-  const pos = new Float32Array(count * 4), nor = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
+  const pos = new Float32Array(totalCount * 4);
+  const nor = new Float32Array(totalCount * 3);
+  const landmarks = new Float32Array(512 * 3);
+  const step = Math.max(1, Math.floor(bodyCount / 512));
+  let li = 0;
+  for (let i = 0; i < bodyCount; i++) {
     const x = rnd() * total;
     let lo = 0, hi = prims.length - 1;
     while (lo < hi) { const m = (lo + hi) >> 1; if (cum[m] < x) lo = m + 1; else hi = m; }
     const [p, n] = prims[lo].fn(rnd);
-    pos.set([p[0], p[1], p[2], Math.min(1, prims[lo].acc)], i * 4);
+    pos.set([p[0], p[1], p[2], clamp(prims[lo].acc, -1, 1)], i * 4);
     nor.set(norm(n), i * 3);
+    if (li < 512 && i % step === 0) { landmarks.set(p, li * 3); li++; }
   }
-  return { pos, nor };
+  // Trailing slice: free-floating optical dust motes in the light cone.
+  for (let i = bodyCount; i < totalCount; i++) {
+    const a = rnd() * 6.2832, r = 0.35 + Math.sqrt(rnd()) * 2.45, y = FLOOR + 0.08 + rnd() * 2.55;
+    pos.set([Math.cos(a) * r, y, Math.sin(a) * r, 0.15], i * 4);
+    nor.set([0, 1, 0], i * 3);
+  }
+  return { pos, nor, landmarks };
 }
 
 /* ---------- shaders ---------- */
@@ -365,62 +554,136 @@ uniform int uFrom, uTo;
 uniform float uProg;
 vec4 pick(int i, vec4 a, vec4 b, vec4 c){ return i == 0 ? a : (i == 1 ? b : c); }
 vec3 pick3(int i, vec3 a, vec3 b, vec3 c){ return i == 0 ? a : (i == 1 ? b : c); }
-// Each particle leaves on its own schedule: partly random, partly a sweep across the object.
-float localProg(float seed, float x){
-  float delay = clamp(0.5*seed + 0.5*(x*0.42 + 0.5), 0.0, 1.0);
-  float l = clamp(uProg*1.8 - delay*0.8, 0.0, 1.0);
-  return l*l*(3.0 - 2.0*l);
+// Coherent spatial scan-wavefront: sweeps across the volume so morphs read as an engineered laser reconstruction.
+float localProg(float seed, vec3 p){
+  float wave = clamp((p.x*0.34 + p.y*0.14 + 0.52)*0.72 + seed*0.28, 0.0, 1.0);
+  float l = clamp(uProg*1.72 - wave*0.72, 0.0, 1.0);
+  return l*l*l*(l*(l*6.0 - 15.0) + 10.0);
 }`;
 
 const VS_SIM = `#version 300 es
 precision highp float;
-layout(location=0) in vec4 aPos;   // xyz, heat
-layout(location=1) in vec4 aVel;
+layout(location=0) in vec4 aPos;   // xyz, thermal heat
+layout(location=1) in vec4 aVel;   // xyz, optical scan/shockwave excitation
 layout(location=2) in vec4 aA;
 layout(location=3) in vec4 aB;
 layout(location=4) in vec4 aC;
-layout(location=5) in vec4 aSeed;
-uniform float uDt, uTime, uGate, uLaser, uCalm;
-uniform vec3 uRayO, uRayD, uSweep;
+layout(location=5) in vec4 aSeed;  // xyz random, w < 0 marks ambient motes
+layout(location=6) in vec3 aNa;
+layout(location=7) in vec3 aNb;
+layout(location=8) in vec3 aNc;
+uniform float uDt, uTime, uGate, uScan, uFire, uPower, uCalm, uFloor;
+uniform vec3 uHitA, uHitB, uRayO, uRayD, uSweep;
+uniform vec4 uWave; // xyz origin, w radius; negative w disables
+uniform float uWaveAmp;
 out vec4 vPos; out vec4 vVel;
 ${COMMON}
-vec3 flow(vec3 p, float t){
-  return vec3(sin(p.y*3.1 + t) + sin(p.z*2.3 + t*1.7), sin(p.z*3.3 + t*1.3) + sin(p.x*2.7 - t), sin(p.x*3.0 + t*0.7) + sin(p.y*2.9 + t*1.1));
+
+vec3 curlFlow(vec3 p, float t){
+  float x = sin(p.y*2.7 + t*1.1) - cos(p.z*2.3 - t*0.9);
+  float y = sin(p.z*2.9 - t*0.8) - cos(p.x*2.5 + t*1.2);
+  float z = sin(p.x*2.6 + t*0.9) - cos(p.y*2.8 - t*1.1);
+  return vec3(x, y, z);
 }
+
+float segDist3(vec3 p, vec3 a, vec3 b){
+  vec3 ab = b - a;
+  float h = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-5), 0.0, 1.0);
+  return length(p - a - ab*h);
+}
+
 void main(){
   vec3 p = aPos.xyz, v = aVel.xyz;
-  float heat = aPos.w;
+  float heat = aPos.w, scan = aVel.w;
+  bool mote = aSeed.w < 0.0;
+
   vec4 ta = pick(uFrom, aA, aB, aC), tb = pick(uTo, aA, aB, aC);
-  float l = localProg(aSeed.x, ta.x);
-  float mid = sin(3.14159*l);
+  float l = localProg(aSeed.x, ta.xyz);
+  float mid = sin(3.14159265 * l);
   vec3 sd = normalize(aSeed.xyz*2.0 - 1.0 + 1e-3);
+
+  if (mote) {
+    vec3 drift = ta.xyz + vec3(sin(uTime*0.22 + aSeed.x*12.0)*0.22, mod(uTime*0.07 + aSeed.y*2.6, 2.6) - 1.1, cos(uTime*0.19 + aSeed.z*12.0)*0.22);
+    vec3 acc = (drift - p)*1.8 - v*2.4 + curlFlow(p*0.8, uTime*0.35)*0.18*uCalm;
+    float rd = length((p - uRayO) - uRayD*dot(p - uRayO, uRayD));
+    float near = max(uScan, uFire)*smoothstep(0.55, 0.0, rd);
+    acc += normalize((p - uRayO) - uRayD*dot(p - uRayO, uRayD) + sd*0.02)*near*3.5;
+    scan = clamp(max(scan*exp(-uDt*3.0), near*0.75), 0.0, 1.2);
+    heat *= exp(-uDt*1.5);
+    v += acc*uDt;
+    p += v*uDt;
+    vPos = vec4(p, heat);
+    vVel = vec4(v, scan);
+    return;
+  }
+
+  vec3 nrm = normalize(mix(pick3(uFrom, aNa, aNb, aNc), pick3(uTo, aNa, aNb, aNc), l) + 1e-4);
   vec3 target = mix(ta.xyz, tb.xyz, l);
-  // In transit the cloud lifts, swells and turns before it settles.
-  target += (sd*0.34 + vec3(0.0, 0.3, 0.0))*mid;
-  float ang = mid*0.9*(aSeed.w - 0.3);
-  target.xz = mat2(cos(ang), -sin(ang), sin(ang), cos(ang))*target.xz;
-  target += flow(target*1.7, uTime*0.6)*0.0035*uCalm;
+  // Coherent vortex arc during morph transitions
+  float swirl = mid * 1.15 * (0.45 + 0.55*aSeed.z);
+  mat2 rot = mat2(cos(swirl), -sin(swirl), sin(swirl), cos(swirl));
+  target.xz = rot * target.xz;
+  target += (nrm*0.16 + sd*0.20 + vec3(0.0, 0.24, 0.0)) * mid;
+  target += curlFlow(target*1.6, uTime*0.55) * 0.0028 * uCalm;
 
-  // On load the dust is released a little at a time, low parts first.
-  float gate = smoothstep(0.0, 0.7, uGate - (aSeed.x*1.5 + (ta.y + 0.62)*0.55));
-  vec3 acc = (target - p)*58.0*gate - v*mix(1.4, 10.5, gate);
-  acc += flow(p*1.3 + sd, uTime*0.8)*(mid*2.6 + (1.0 - gate)*0.5);
+  float gate = smoothstep(0.0, 0.72, uGate - (aSeed.x*1.35 + (ta.y + 0.62)*0.52));
+  // Airborne sparks temporarily decouple from the spring so they can arc and bounce on the pedestal
+  float freeFlight = smoothstep(0.55, 1.15, heat) * step(0.88, aSeed.y);
+  float kSpring = mix(64.0, 4.5, freeFlight) * gate;
+  float kDamp = mix(mix(1.6, 11.8, gate), 1.35, freeFlight);
+  vec3 acc = (target - p)*kSpring - v*kDamp;
+  acc += curlFlow(p*1.35 + sd*0.6, uTime*0.85) * (mid*2.2 + (1.0 - gate)*0.45);
 
-  // The beam: distance from this particle to the pointer ray.
-  vec3 rel = p - uRayO;
-  vec3 perp = rel - uRayD*dot(rel, uRayD);
-  float d = length(perp);
-  float infl = uLaser*smoothstep(0.24, 0.0, d);
-  infl *= infl;
-  acc += (perp/(d + 1e-3))*infl*24.0 + uSweep*infl*9.0;
-  acc += (sd*52.0 + vec3(0.0, 30.0, 0.0))*infl*step(0.93, aSeed.y);
-  heat = min(1.6, heat + infl*uDt*11.0)*exp(-uDt*1.15);
-  acc.y += heat*1.3;
+  // Swept 3D interaction: combines surface capsule (uHitA->uHitB) with view ray so fast pointer sweeps never gap
+  float dSeg = segDist3(p, uHitA, uHitB);
+  vec3 relR = p - uRayO;
+  vec3 perpR = relR - uRayD*dot(relR, uRayD);
+  float dRay = length(perpR);
+  float d = min(dSeg, dRay*1.12 + 0.03);
+  vec3 pushDir = normalize(mix(perpR/(dRay + 1e-3), p - 0.5*(uHitA + uHitB) + nrm*0.08, 0.65) + 1e-4);
 
-  v += acc*uDt;
-  p += v*uDt;
+  // Mode A: Silk ferrofluid-like hover scan (gentle normal lift + tangential glide, preserves crisp silhouette)
+  float scanZone = uScan * (1.0 - uFire*0.65) * smoothstep(0.40, 0.0, d);
+  float ripple = sin(d*20.0 - uTime*7.5)*0.5 + 0.5;
+  acc += nrm * scanZone * (5.2 + 3.4*ripple) + uSweep * (scanZone*scanZone) * 2.4;
+  float waveFront = pow(mid, 1.4) * 0.65;
+  scan = max(scan * exp(-uDt*5.2), max(scanZone*0.95, waveFront));
+
+  // Mode B: Active high-power fiber beam (molten vortex + tangential spark ejection + gravity bounce)
+  float rFire = 0.25 * uPower;
+  float fireZone = uFire * smoothstep(rFire, 0.0, d);
+  fireZone *= fireZone;
+  vec3 swirlDir = cross(uRayD, pushDir);
+  acc += (pushDir*22.0 + swirlDir*14.0 + uSweep*8.5) * fireZone * uPower;
+  if (aSeed.y > 0.88 && fireZone > 0.08) {
+    acc += (nrm*34.0 + sd*44.0 + vec3(0.0, 26.0, 0.0) + uSweep*6.0) * fireZone * uPower;
+  }
+  heat = min(1.85, heat + fireZone * uDt * 15.0 * uPower) * exp(-uDt * 1.05);
+  acc.y += heat * 0.9 - freeFlight * 9.6;
+
+  // Mode C: Spherical resonance shockwave on trigger release
+  if (uWave.w >= 0.0 && uWaveAmp > 0.002) {
+    vec3 wp = p - uWave.xyz;
+    float wd = length(wp);
+    float band = exp(-pow((wd - uWave.w) / 0.22, 2.0)) * uWaveAmp;
+    acc += (wp / (wd + 1e-3)) * band * 26.0;
+    scan = max(scan, band * 1.15);
+  }
+
+  v += acc * uDt;
+  p += v * uDt;
+
+  // Physical bounce against the machined pedestal floor
+  if (p.y < uFloor + 0.012) {
+    p.y = uFloor + 0.012;
+    if (v.y < 0.0) {
+      v.y = -v.y * (0.32 + 0.25*freeFlight);
+      v.xz *= 0.84;
+    }
+  }
+
   vPos = vec4(p, heat);
-  vVel = vec4(v, 0.0);
+  vVel = vec4(v, clamp(scan, 0.0, 1.5));
 }`;
 
 const VS_POINTS = `#version 300 es
@@ -436,62 +699,112 @@ layout(location=7) in vec3 aNb;
 layout(location=8) in vec3 aNc;
 uniform mat4 uViewProj;
 uniform vec3 uCam;
-uniform float uPx, uSize, uMirror, uFloor, uFog;
-out vec3 vCol; out float vGlow;
+uniform float uPx, uSize, uMirror, uFloor, uFog, uFocus;
+out vec3 vCol; out float vGlow; out float vBlur; out float vAlpha;
 ${COMMON}
+
+// Physical blackbody-inspired thermal ramp: deep crimson -> molten amber -> incandescent white
+vec3 blackbody(float h){
+  vec3 c1 = vec3(0.95, 0.14, 0.02);
+  vec3 c2 = vec3(1.00, 0.52, 0.10);
+  vec3 c3 = vec3(1.00, 0.94, 0.84);
+  vec3 r = mix(c1, c2, smoothstep(0.08, 0.62, h));
+  return mix(r, c3, smoothstep(0.68, 1.48, h));
+}
+
 void main(){
   vec3 p = aPos.xyz;
-  float heat = aPos.w;
+  float heat = aPos.w, scan = aVel.w;
+  bool mote = aSeed.w < 0.0;
+
   vec4 ta = pick(uFrom, aA, aB, aC), tb = pick(uTo, aA, aB, aC);
-  float l = localProg(aSeed.x, ta.x);
+  float l = localProg(aSeed.x, ta.xyz);
   float accent = mix(ta.w, tb.w, l);
   vec3 n = normalize(mix(pick3(uFrom, aNa, aNb, aNc), pick3(uTo, aNa, aNb, aNc), l) + 1e-4);
   float speed = length(aVel.xyz);
 
   vec3 V = normalize(uCam - p);
-  if (dot(n, V) < 0.0) n = mix(n, -n, 0.75);
-  float key = max(dot(n, normalize(vec3(-0.45, 0.8, 0.5))), 0.0);
-  float fill = max(dot(n, normalize(vec3(0.7, 0.1, 0.6))), 0.0);
-  float rim = pow(1.0 - max(dot(n, V), 0.0), 3.0);
-  vec3 steel = mix(vec3(0.50, 0.54, 0.60), vec3(0.72, 0.75, 0.80), aSeed.z);
-  vec3 copper = vec3(1.0, 0.52, 0.22);
-  // accent: up to 0.45 lifts the steel, then copper, and the top end glows.
-  vec3 base = mix(steel*(1.0 + 1.1*min(accent, 0.45)), copper, smoothstep(0.45, 0.75, accent));
-  vec3 col = base*(0.17 + 1.15*key + 0.34*fill) + vec3(0.55, 0.68, 0.9)*rim*0.26;
-  col += steel*min(speed*0.16, 0.5);
+  if (dot(n, V) < 0.0) n = mix(n, -n, 0.78);
 
-  float emit = smoothstep(0.86, 1.0, accent)*(0.75 + 0.25*sin(aSeed.w*40.0 + heat));
-  float h = clamp(heat, 0.0, 1.6);
-  vec3 ramp = mix(vec3(1.0, 0.16, 0.02), vec3(1.0, 0.55, 0.12), smoothstep(0.15, 0.6, h));
-  ramp = mix(ramp, vec3(1.0, 0.93, 0.78), smoothstep(0.75, 1.4, h));
-  col = col*(1.0 - 0.6*min(h, 1.0)) + ramp*min(h*1.5, 1.0) + vec3(1.0, 0.72, 0.38)*emit;
-  float glow = clamp(h*0.9 + emit*0.55, 0.0, 1.0);
+  // Overhead halo studio lighting + cool rim + warm floor bounce
+  float overhead = max(dot(n, normalize(vec3(0.0, 1.0, 0.18))), 0.0);
+  float key = max(dot(n, normalize(vec3(-0.48, 0.76, 0.44))), 0.0);
+  float fill = max(dot(n, normalize(vec3(0.72, 0.14, 0.66))), 0.0);
+  float rim = pow(1.0 - max(dot(n, V), 0.0), 3.2);
 
-  float fade = 1.0;
+  vec3 titanium = mix(vec3(0.40, 0.44, 0.50), vec3(0.78, 0.82, 0.88), aSeed.z);
+  vec3 copper = vec3(0.98, 0.54, 0.24);
+  vec3 iceOptic = vec3(0.48, 0.86, 1.00);
+
+  float posAcc = max(accent, 0.0);
+  float optMask = smoothstep(-0.15, -0.75, accent);
+  vec3 base = mix(titanium*(0.92 + 1.15*min(posAcc, 0.45)), copper, smoothstep(0.46, 0.76, posAcc));
+  base = mix(base, iceOptic, optMask);
+
+  vec3 col = base*(0.14 + 0.92*key + 0.42*overhead + 0.28*fill) + vec3(0.62, 0.78, 0.98)*rim*0.32;
+  col += iceOptic * optMask * 0.42;
+  col += mix(titanium, iceOptic, 0.55) * min(speed*0.13, 0.42);
+
+  // Coaxial AI-Vision scan sheen (cool precision cyan-silver)
+  col += mix(vec3(0.56, 0.88, 1.0), vec3(0.92, 0.97, 1.0), rim) * scan * 0.62;
+
+  // Constant weld/cut focal glow + interactive laser blackbody heat
+  float emit = smoothstep(0.86, 1.0, posAcc)*(0.78 + 0.22*sin(aSeed.x*42.0 + heat*3.0));
+  float h = clamp(heat, 0.0, 1.8);
+  col = col*(1.0 - 0.58*min(h, 1.0)) + blackbody(h)*min(h*1.45, 1.35) + vec3(1.0, 0.70, 0.36)*emit*1.1;
+  float glow = clamp(h*0.88 + emit*0.62 + optMask*0.26 + scan*0.24, 0.0, 1.2);
+
+  if (mote) {
+    col = mix(vec3(0.32, 0.44, 0.60), iceOptic, aSeed.z*0.65)*(0.28 + 0.95*scan + 0.65*min(h, 1.0));
+    glow = scan*0.28;
+  }
+
+  float fade = mote ? 0.55 : 1.0;
   if (uMirror > 0.5) {
     float hgt = p.y - uFloor;
     p.y = uFloor - hgt;
-    fade = 0.30*exp(-max(hgt, 0.0)*1.5);
+    fade *= 0.26 * exp(-max(hgt, 0.0)*1.5);
   }
+
   float dist = length(uCam - p);
-  float fog = exp(-max(dist - uFog, 0.0)*0.20);
-  vCol = col*fog*fade;
-  vGlow = glow*fade;
-  gl_Position = uViewProj*vec4(p, 1.0);
-  float size = uSize*(0.62 + 0.76*aSeed.z)*(1.0 + 0.7*min(h, 1.0) + emit*0.4);
-  gl_PointSize = max(1.0, uPx*size/gl_Position.w);
+  float fog = exp(-max(dist - uFog, 0.0)*0.19);
+  gl_Position = uViewProj * vec4(p, 1.0);
+
+  // Optical depth-of-field: particles away from the focal plane widen into soft energy-conserving bokeh
+  float basePt = uSize * (mote ? 0.85 : (0.60 + 0.78*aSeed.z)) * (1.0 + 0.62*min(h, 1.0) + emit*0.35 + scan*0.18);
+  float screenR = max(1.05, uPx * basePt / max(gl_Position.w, 0.1));
+  float coc = mote ? clamp(0.25 + abs(dist - uFocus)*0.32, 0.25, 1.0) : clamp((abs(dist - uFocus) - 1.05) * 0.34, 0.0, 1.0);
+  if (uMirror > 0.5) coc = clamp(coc + 0.32, 0.0, 1.0);
+  float bokehR = screenR + coc * (mote ? 6.5 : 3.0);
+  float conserve = clamp((screenR * screenR) / max(bokehR * bokehR, 1.0), mote ? 0.08 : 0.42, 1.0);
+
+  vCol = col * fog * fade * conserve;
+  vGlow = glow * fade * conserve;
+  vBlur = mote ? max(coc, 0.75) : coc;
+  vAlpha = mote ? 0.0 : fade;
+  gl_PointSize = bokehR;
 }`;
 
 const FS_POINTS = `#version 300 es
 precision mediump float;
-in vec3 vCol; in float vGlow;
+in vec3 vCol; in float vGlow; in float vBlur; in float vAlpha;
 out vec4 o;
 void main(){
   vec2 q = gl_PointCoord*2.0 - 1.0;
   float r2 = dot(q, q);
   if (r2 > 1.0) discard;
-  float z = sqrt(1.0 - r2);
-  o = vec4(vCol*(0.55 + 0.45*z + 0.25*pow(max(dot(normalize(vec3(q.x, -q.y, z)), normalize(vec3(-0.4, 0.6, 0.7))), 0.0), 8.0)), vGlow);
+  float r = sqrt(r2);
+  if (vAlpha < 0.05) {
+    // Additive atmospheric motes: pure luminous bokeh discs, never dark occluders
+    float soft = pow(smoothstep(1.0, 0.08, r), 1.5) * (0.65 + 0.35*smoothstep(0.4, 0.85, r));
+    o = vec4(vCol * soft, vGlow * soft);
+    return;
+  }
+  float z = sqrt(max(1.0 - r2, 0.0));
+  float sphere = 0.54 + 0.46*z + 0.28*pow(max(dot(normalize(vec3(q.x, -q.y, z)), normalize(vec3(-0.42, 0.62, 0.66))), 0.0), 9.0);
+  float bokeh = smoothstep(1.0, 0.62, r) * (0.78 + 0.28*smoothstep(0.35, 0.82, r));
+  float shape = mix(sphere, bokeh, vBlur);
+  o = vec4(vCol * shape, vGlow * smoothstep(1.0, 0.2, r));
 }`;
 
 const VS_QUAD = `#version 300 es
@@ -502,31 +815,158 @@ void main(){
   gl_Position = vec4(p*2.0 - 1.0, 0.0, 1.0);
 }`;
 
-// Backdrop: a dark studio with a turned-metal pedestal, traced per pixel.
+// Dark optical laboratory: overhead luminaire ring, volumetric light cone, stepped machined pedestal & recessed halo
 const FS_BACK = `#version 300 es
 precision highp float;
 in vec2 vUv; out vec4 o;
-uniform vec3 uCam, uRight, uUp, uFwd;
-uniform float uTan, uAspect, uFloor, uFog;
+uniform vec3 uCam, uRight, uUp, uFwd, uHit;
+uniform float uTan, uAspect, uFloor, uFog, uFire, uScan, uMorph, uTime;
+uniform vec4 uWave; uniform float uWaveAmp;
+
 void main(){
   vec2 ndc = vUv*2.0 - 1.0;
   vec3 rd = normalize(uFwd + uRight*ndc.x*uTan*uAspect + uUp*ndc.y*uTan);
-  vec3 col = vec3(0.020, 0.023, 0.028) + vec3(0.05, 0.058, 0.07)*exp(-pow((rd.y - 0.06)*5.0, 2.0));
-  col += vec3(0.05, 0.055, 0.065)*exp(-length(vec2(ndc.x*0.6, ndc.y - 1.15))*2.2);
-  if (rd.y < -1e-3) {
-    float t = (uFloor - uCam.y)/rd.y;
-    vec3 hit = uCam + rd*t;
-    float r = length(hit.xz);
-    float w = fwidth(r)*1.2 + 1e-4;
-    float ped = 1.0 - smoothstep(1.9 - w, 1.9 + w, r);
-    vec3 fl = vec3(0.016, 0.018, 0.022) + vec3(0.030, 0.034, 0.042)*ped;
-    fl += vec3(0.022, 0.025, 0.03)*ped*(0.5 + 0.5*sin(r*150.0))*smoothstep(0.02, 0.0, w);
-    fl += vec3(0.42, 0.50, 0.62)*(smoothstep(w*2.0, 0.0, abs(r - 1.9)) + 0.45*smoothstep(w*2.0, 0.0, abs(r - 2.7)) + 0.3*smoothstep(w*2.0, 0.0, abs(r - 1.45)));
-    fl += vec3(0.05, 0.058, 0.07)*exp(-r*0.9);
-    float fade = exp(-max(t - uFog, 0.0)*0.16);
-    col = mix(col, fl, fade);
+
+  // Studio atmosphere & subtle volumetric cone under the overhead halo
+  vec3 col = vec3(0.013, 0.016, 0.021) + vec3(0.032, 0.040, 0.052)*exp(-pow((rd.y - 0.04)*4.2, 2.0));
+  float cone = exp(-pow(ndc.x*1.15, 2.0)) * smoothstep(-0.75, 0.95, ndc.y);
+  col += mix(vec3(0.028, 0.036, 0.048), vec3(0.055, 0.038, 0.024), uFire*0.55) * cone;
+
+  // Faint out-of-focus spatial calibration ticks in the rear field
+  vec2 gridUv = vec2(atan(rd.x, rd.z)*2.2, rd.y*2.8);
+  vec2 gf = abs(fract(gridUv) - 0.5);
+  float crossHair = smoothstep(0.011, 0.0, min(gf.x, gf.y)) * smoothstep(0.085, 0.03, max(gf.x, gf.y));
+  col += vec3(0.016, 0.022, 0.030) * crossHair * smoothstep(0.32, 0.0, abs(rd.y - 0.06));
+
+  float glow = 0.0;
+
+  // Overhead ring luminaire + central galvo aperture at y = 2.42
+  if (rd.y > 1e-3) {
+    float tc = (2.42 - uCam.y) / rd.y;
+    if (tc > 0.0) {
+      vec3 hc = uCam + rd*tc;
+      float rc = length(hc.xz);
+      float ringBand = exp(-pow((rc - 1.28) / 0.075, 2.0));
+      float galvo = exp(-pow(rc / 0.09, 2.0)) * (0.25 + 1.8*uFire);
+      float cFade = exp(-max(tc - 4.0, 0.0)*0.12);
+      vec3 haloCol = mix(vec3(0.70, 0.80, 0.95), vec3(1.0, 0.80, 0.58), uFire*0.45);
+      col += (haloCol*ringBand*0.85 + vec3(1.0, 0.84, 0.62)*galvo) * cFade;
+      glow += (ringBand*0.55 + galvo*0.85) * cFade;
+    }
   }
-  o = vec4(col, 0.0);
+
+  // Stepped machined pedestal & recessed halo groove on the floor
+  if (rd.y < -1e-3) {
+    float deckY = uFloor + 0.042;
+    float tTop = (deckY - uCam.y) / rd.y;
+    vec3 hitTop = uCam + rd*tTop;
+    float rTop = length(hitTop.xz);
+
+    float tFl = (uFloor - uCam.y) / rd.y;
+    vec3 hit = uCam + rd*tFl;
+    float r = length(hit.xz);
+    float w = fwidth(r)*1.25 + 1e-4;
+
+    bool onDeck = rTop <= 1.56;
+    float rad = onDeck ? rTop : r;
+    vec3 surfP = onDeck ? hitTop : hit;
+    float distT = onDeck ? tTop : tFl;
+
+    float outer = 1.0 - smoothstep(2.28 - w, 2.28 + w, rad);
+    vec3 fl = vec3(0.011, 0.013, 0.017) + vec3(0.018, 0.022, 0.028)*outer;
+    if (onDeck) {
+      float grooves = 0.5 + 0.5*sin(rad*165.0);
+      fl = vec3(0.024, 0.028, 0.035) + vec3(0.012, 0.015, 0.019)*grooves*smoothstep(0.022, 0.0, w);
+      fl += vec3(0.32, 0.40, 0.52) * smoothstep(w*2.2, 0.0, abs(rad - 1.555));
+    } else {
+      // Recessed light channel right under the inner deck step
+      float channel = exp(-pow((rad - 1.60) / 0.045, 2.0));
+      vec3 chCol = mix(vec3(0.34, 0.62, 0.88), vec3(1.0, 0.58, 0.20), clamp(uFire*0.85 + uMorph*0.35, 0.0, 1.0));
+      fl += chCol * channel * (0.55 + 0.55*uFire + 0.30*uMorph);
+      glow += channel * (0.28 + 0.50*uFire);
+    }
+
+    // Precision scale rings
+    float rings = 0.45*smoothstep(w*1.8, 0.0, abs(rad - 2.28)) + 0.24*smoothstep(w*1.8, 0.0, abs(rad - 2.95));
+    fl += vec3(0.36, 0.46, 0.58) * rings;
+
+    // Interactive beam illumination & shockwave ripple on the pedestal
+    float dHit = length(surfP - uHit);
+    fl += vec3(1.0, 0.54, 0.18) * exp(-dHit*1.65) * uFire * 0.28;
+    fl += vec3(0.45, 0.80, 1.0) * exp(-dHit*2.4) * uScan * (1.0 - uFire) * 0.08;
+    if (uWave.w >= 0.0 && uWaveAmp > 0.002) {
+      float wd = length(surfP - uWave.xyz);
+      fl += vec3(0.75, 0.88, 1.0) * exp(-pow((wd - uWave.w)/0.14, 2.0)) * uWaveAmp * 0.45;
+    }
+    // Scan-plane projection sweep during morphs
+    if (uMorph > 0.01) {
+      float sx = mix(-1.55, 1.55, clamp(uTime, 0.0, 1.0));
+      fl += vec3(0.45, 0.82, 1.0) * exp(-pow((surfP.x - sx)/0.09, 2.0)) * uMorph * outer * 0.32;
+    }
+
+    fl += vec3(0.036, 0.042, 0.054) * exp(-rad*0.85);
+    float fade = exp(-max(distT - uFog, 0.0)*0.16);
+    col = mix(col, fl, fade);
+    glow *= fade;
+  }
+  o = vec4(col, clamp(glow, 0.0, 1.0));
+}`;
+
+// Volumetric 3D laser beam from the overhead galvo aperture to the 3D target point (plus subtle AI pilot ray)
+const FS_BEAM = `#version 300 es
+precision highp float;
+in vec2 vUv; out vec4 o;
+uniform vec3 uCam, uRight, uUp, uFwd, uOrigin, uTarget;
+uniform float uTan, uAspect, uFire, uScan, uPower, uTime;
+
+float hash(float n){ return fract(sin(n)*43758.5453); }
+
+void main(){
+  if (uFire < 0.004 && uScan < 0.01) discard;
+  vec2 ndc = vUv*2.0 - 1.0;
+  vec3 rd = normalize(uFwd + uRight*ndc.x*uTan*uAspect + uUp*ndc.y*uTan);
+
+  // Closest distance between camera ray (uCam + s*rd) and 3D beam segment (uOrigin + t*ab)
+  vec3 ab = uTarget - uOrigin;
+  vec3 w0 = uCam - uOrigin;
+  float a = dot(rd, rd), b = dot(rd, ab), c = dot(ab, ab), d = dot(rd, w0), e = dot(ab, w0);
+  float den = max(a*c - b*b, 1e-5);
+  float t = clamp((a*e - b*d) / den, 0.0, 1.0);
+  float s = max(b*t - d, 0.0);
+  vec3 pRay = uCam + rd*s;
+  vec3 pSeg = uOrigin + ab*t;
+  float dist = length(pRay - pSeg);
+
+  // Taper toward the focal point so energy visibly converges on the particle surface
+  float focus = mix(1.45, 0.48, t);
+  float wCore = 0.0038 * focus * uPower;
+  float wHalo = 0.056 * focus * uPower;
+  float endFade = smoothstep(0.0, 0.05, t) * smoothstep(1.0, 0.985, t);
+
+  vec3 col = vec3(0.0);
+  float glow = 0.0;
+
+  // Subtle coaxial cyan AI-vision pilot line when actively scanning across the model
+  float pilot = uScan * (1.0 - uFire*0.9) * exp(-dist / 0.0034) * smoothstep(0.48, 1.0, t) * endFade;
+  col += vec3(0.42, 0.85, 1.0) * pilot * 0.22;
+
+  if (uFire > 0.004) {
+    float flicker = 0.90 + 0.10*hash(floor(uTime*90.0));
+    float core = exp(-(dist*dist) / (wCore*wCore));
+    float inner = exp(-dist / (wCore*3.4));
+    float scatter = 1.0 / (1.0 + pow(dist / wHalo, 1.85));
+    // Hot focal spot at impact
+    float spotD = length(pRay - uTarget);
+    float spot = exp(-(spotD*spotD) / (0.0022*uPower));
+
+    vec3 beam = vec3(1.0, 0.97, 0.90)*core*2.2
+              + vec3(1.0, 0.56, 0.16)*inner*0.95
+              + vec3(1.0, 0.42, 0.10)*scatter*0.14;
+    col += beam * uFire * flicker * endFade + vec3(1.0, 0.82, 0.52)*spot*uFire*1.6;
+    glow += clamp((core*1.1 + inner*0.65 + scatter*0.10)*endFade + spot*1.2, 0.0, 1.4) * uFire;
+  }
+
+  o = vec4(col, glow);
 }`;
 
 const FS_EXTRACT = `#version 300 es
@@ -560,17 +1000,26 @@ in vec2 vUv; out vec4 o;
 uniform sampler2D uScene, uBloomA, uBloomB;
 uniform float uTime;
 float hash(vec2 p){ p = fract(p*vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x*p.y); }
+vec3 aces(vec3 x){ return clamp((x*(2.51*x + 0.03)) / (x*(2.43*x + 0.59) + 0.14), 0.0, 1.0); }
 void main(){
-  vec3 col = texture(uScene, vUv).rgb;
-  col += texture(uBloomA, vUv).rgb*1.5 + texture(uBloomB, vUv).rgb*1.9;
-  vec2 q = (vUv - 0.5)*vec2(1.15, 1.3);
-  col *= 1.0 - 0.55*dot(q, q);
-  col = pow(col, vec3(0.92));
-  col += (hash(gl_FragCoord.xy + uTime) - 0.5)/128.0;
+  vec2 centered = vUv - 0.5;
+  float r2 = dot(centered, centered);
+  // Subtle optical lateral dispersion strictly toward frame edges
+  vec2 ca = centered * r2 * 0.0045;
+  vec3 sc;
+  sc.r = texture(uScene, vUv + ca).r;
+  sc.g = texture(uScene, vUv).g;
+  sc.b = texture(uScene, vUv - ca).b;
+
+  vec3 col = sc + texture(uBloomA, vUv).rgb*1.35 + texture(uBloomB, vUv).rgb*1.75;
+  vec2 q = centered * vec2(1.12, 1.28);
+  col *= 1.0 - 0.48*dot(q, q);
+  col = pow(aces(col * 1.18), vec3(1.0 / 2.2));
+  col += (hash(gl_FragCoord.xy + uTime) - 0.5) / 140.0;
   o = vec4(col, 1.0);
 }`;
 
-/* ---------- WebGL setup ---------- */
+/* ---------- WebGL2 setup ---------- */
 const stage = document.getElementById('stage');
 const canvas = document.getElementById('gl');
 const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false, powerPreference: 'high-performance' });
@@ -597,15 +1046,18 @@ function program(vs, fs, varyings) {
 }
 
 const params = new URLSearchParams(location.search);
-const small = Math.min(innerWidth, innerHeight) < 600 || matchMedia('(pointer: coarse)').matches;
-const COUNT = clamp(parseInt(params.get('n'), 10) || (small ? 30000 : 80000), 2000, 200000);
+const small = Math.min(innerWidth, innerHeight) < 620 || matchMedia('(pointer: coarse)').matches;
+const COUNT = clamp(parseInt(params.get('n'), 10) || (small ? 32000 : 90000), 2000, 220000);
+const MOTES = Math.min(2400, Math.round(COUNT * 0.026));
+const BODY = COUNT - MOTES;
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-let pSim, pPts, pBack, pExtract, pBlur, pFinal;
+let pSim, pPts, pBack, pBeam, pExtract, pBlur, pFinal;
 try {
   pSim = program(VS_SIM, '#version 300 es\nprecision lowp float; out vec4 o; void main(){ o = vec4(0.0); }', ['vPos', 'vVel']);
   pPts = program(VS_POINTS, FS_POINTS);
   pBack = program(VS_QUAD, FS_BACK);
+  pBeam = program(VS_QUAD, FS_BEAM);
   pExtract = program(VS_QUAD, FS_EXTRACT);
   pBlur = program(VS_QUAD, FS_BLUR);
   pFinal = program(VS_QUAD, FS_FINAL);
@@ -615,8 +1067,11 @@ try {
   return;
 }
 
-// Static per-particle data: three targets (xyz + accent), three normals, four random numbers.
-const shapes = [sampleShape(buildGunView, COUNT, 11), sampleShape(buildSourceView, COUNT, 23), sampleShape(buildCncView, COUNT, 37)];
+const shapes = [
+  sampleShape(buildGunView, BODY, COUNT, 11),
+  sampleShape(buildSourceView, BODY, COUNT, 23),
+  sampleShape(buildCncView, BODY, COUNT, 37),
+];
 const STRIDE = 25;
 const stat = new Float32Array(COUNT * STRIDE);
 const init = new Float32Array(COUNT * 8);
@@ -628,12 +1083,14 @@ const init = new Float32Array(COUNT * 8);
       stat.set(shapes[s].pos.subarray(i * 4, i * 4 + 4), o + s * 4);
       stat.set(shapes[s].nor.subarray(i * 3, i * 3 + 3), o + 12 + s * 3);
     }
-    stat.set([rnd(), rnd(), rnd(), rnd()], o + 21);
-    // Everything starts as dust lying on the pedestal.
-    const a = rnd() * 6.2832, r = Math.sqrt(rnd()) * 2.3;
-    init.set([Math.cos(a) * r, FLOOR + 0.01 + rnd() * rnd() * 0.25, Math.sin(a) * r, 0, 0, 0, 0, 0], i * 8);
+    const isMote = i >= BODY;
+    stat.set([rnd(), rnd(), rnd(), isMote ? -1 : rnd()], o + 21);
+    const a = rnd() * 6.2832, r = Math.sqrt(rnd()) * (isMote ? 2.5 : 2.1);
+    const y0 = isMote ? FLOOR + 0.1 + rnd() * 2.4 : FLOOR + 0.045 + rnd() * rnd() * 0.18;
+    init.set([Math.cos(a) * r, y0, Math.sin(a) * r, 0, 0, 0, 0, 0], i * 8);
   }
 }
+
 const statBuf = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, statBuf);
 gl.bufferData(gl.ARRAY_BUFFER, stat, gl.STATIC_DRAW);
@@ -657,10 +1114,12 @@ gl.bindVertexArray(null);
 gl.bindBuffer(gl.ARRAY_BUFFER, null);
 const quadVao = gl.createVertexArray();
 
+const halfFloat = gl.getExtension('EXT_color_buffer_float') ? gl.RGBA16F : gl.RGBA8;
+const texType = halfFloat === gl.RGBA16F ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
 function target(w, h, depth) {
   const tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texImage2D(gl.TEXTURE_2D, 0, halfFloat, w, h, 0, gl.RGBA, texType, null);
   for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
   const fbo = gl.createFramebuffer();
   gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
@@ -692,91 +1151,208 @@ function resize() {
   blurC = target(eighth.w, eighth.h); blurD = target(eighth.w, eighth.h);
 }
 
-/* ---------- state ---------- */
+/* ---------- interaction & physics state ---------- */
 const view = { from: 0, to: 0, prog: 1, index: 0 };
-const cam = { yaw: VIEWS[0].yaw, pitch: VIEWS[0].pitch, dist: VIEWS[0].dist, ty: VIEWS[0].ty, size: VIEWS[0].size, px: 0, py: 0 };
-const pointer = { x: 0, y: 0, on: false, laser: 0, has: false };
-let ray = { o: [0, 0, 9], d: [0, 0, -1] }, prevHit = null, sweep = [0, 0, 0];
+const cam = {
+  yaw: VIEWS[0].yaw, pitch: VIEWS[0].pitch, dist: VIEWS[0].dist, ty: VIEWS[0].ty, size: VIEWS[0].size,
+  px: 0, py: 0, orbitYaw: 0, orbitPitch: 0, velYaw: 0, velPitch: 0,
+};
 cam.dist *= clamp(1.05 / (innerWidth / innerHeight), 1, 2.1);
+
+const pointer = {
+  x: 0.5, y: 0.5, sx: 0.5, sy: 0.5,
+  cx: innerWidth * 0.5, cy: innerHeight * 0.5,
+  rx: innerWidth * 0.5, ry: innerHeight * 0.5, rvx: 0, rvy: 0,
+  on: false, firing: false, orbiting: false, locked: false, has: false,
+  scan: 0, pilot: 0, fire: 0, watts: 1200, powerK: 1.14, hitDist: 6.0, lastMove: -1e9,
+};
+const shock = { o: [0, 0, 0], r: -1, amp: 0 };
+let hitSmooth = [0, 0, 0], prevHit = null, sweep = [0, 0, 0], hasHit = false;
 let flip = 0, simTime = 0, last = 0, visible = true, ema = 16, slow = 0, frames = 0;
 
-/* ---------- UI ---------- */
+/* ---------- UI wiring ---------- */
 const $ = (id) => document.getElementById(id);
-const info = $('info'), nav = $('nav'), reticle = $('reticle');
+const info = $('info'), nav = $('nav'), pin = $('pin'), ringEl = $('ring'), trailPath = $('trailPath');
+const teleMode = $('teleMode'), teleSub = $('teleSub');
+const TRAIL_N = 12;
+const trail = Array.from({ length: TRAIL_N }, () => [innerWidth * 0.5, innerHeight * 0.5]);
+
 VIEWS.forEach((v, i) => {
   const b = document.createElement('button');
-  b.textContent = `0${i + 1} ${v.nav}`;
+  b.type = 'button';
+  b.innerHTML = `0${i + 1} ${v.nav}<i></i>`;
   b.addEventListener('click', () => go(i));
   nav.append(b);
 });
+
 function fill(i) {
   const v = VIEWS[i];
-  $('idx').textContent = `0${i + 1} / 0${VIEWS.length}`;
+  $('idx').textContent = v.tag;
   $('title').textContent = v.title;
   $('lede').textContent = v.lede;
   $('specs').replaceChildren(...v.specs.map((s) => Object.assign(document.createElement('li'), { textContent: s })));
   [...nav.children].forEach((b, k) => b.setAttribute('aria-current', k === i ? 'true' : 'false'));
 }
+
 let swapTimer = 0;
+function triggerShock(origin, amp = 0.85) {
+  shock.o = origin.slice();
+  shock.r = 0.02;
+  shock.amp = amp;
+}
+
 function go(i) {
   i = (i + VIEWS.length) % VIEWS.length;
   if (i === view.index) return;
-  // Mid-flight, the springs carry particles on to the new target from wherever they are.
   view.from = view.prog > 0.5 ? view.to : view.from;
   view.to = i; view.prog = 0; view.index = i;
+  cam.orbitYaw *= 0.25; cam.orbitPitch *= 0.25;
   info.classList.add('swap');
   clearTimeout(swapTimer);
-  swapTimer = setTimeout(() => { fill(i); info.classList.remove('swap'); }, 450);
+  swapTimer = setTimeout(() => { fill(i); info.classList.remove('swap'); }, 280);
   [...nav.children].forEach((b, k) => b.setAttribute('aria-current', k === i ? 'true' : 'false'));
   document.body.classList.add('touched');
 }
 fill(0);
+
 $('prev').addEventListener('click', () => go(view.index - 1));
 $('next').addEventListener('click', () => go(view.index + 1));
+
+for (const btn of $('power').querySelectorAll('button')) {
+  btn.addEventListener('click', () => {
+    pointer.watts = +btn.dataset.w;
+    pointer.powerK = +btn.dataset.k;
+    for (const b of $('power').querySelectorAll('button')) b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+    triggerShock([0, 0.1, 0], 0.55 * pointer.powerK);
+    document.body.classList.add('touched');
+  });
+}
+
 addEventListener('keydown', (e) => {
   if (e.key === 'ArrowRight') go(view.index + 1);
   else if (e.key === 'ArrowLeft') go(view.index - 1);
+  else if (e.key >= '1' && e.key <= '3') go(+e.key - 1);
 });
+
 let wheelLock = 0;
 stage.addEventListener('wheel', (e) => {
   e.preventDefault();
   const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
   if (Math.abs(d) < 12 || performance.now() < wheelLock) return;
-  wheelLock = performance.now() + 900;
+  wheelLock = performance.now() + 820;
   go(view.index + (d > 0 ? 1 : -1));
 }, { passive: false });
 
-let down = null;
-function setPointer(e) {
+stage.addEventListener('contextmenu', (e) => e.preventDefault());
+
+let down = null, lastDrag = null;
+function updatePointerCoords(e) {
   const b = stage.getBoundingClientRect();
-  pointer.x = (e.clientX - b.left) / b.width;
-  pointer.y = (e.clientY - b.top) / b.height;
+  const cx = e.clientX - b.left, cy = e.clientY - b.top;
+  pointer.x = clamp(cx / b.width, 0, 1);
+  pointer.y = clamp(cy / b.height, 0, 1);
+  pointer.cx = cx; pointer.cy = cy;
+  if (!pointer.has) {
+    pointer.sx = pointer.x; pointer.sy = pointer.y;
+    pointer.rx = cx; pointer.ry = cy;
+    for (const pt of trail) { pt[0] = cx; pt[1] = cy; }
+  }
   pointer.has = true;
-  reticle.style.transform = `translate(${e.clientX - b.left}px, ${e.clientY - b.top}px)`;
+  pointer.lastMove = performance.now();
+  pin.style.transform = `translate3d(${cx.toFixed(1)}px, ${cy.toFixed(1)}px, 0)`;
 }
+
 stage.addEventListener('pointermove', (e) => {
-  setPointer(e);
-  if (e.pointerType === 'mouse') { pointer.on = true; reticle.classList.add('on'); }
+  updatePointerCoords(e);
+  if (e.pointerType === 'mouse') {
+    pointer.on = true;
+    document.body.classList.add('cursor-on');
+  }
+  if (pointer.orbiting && lastDrag) {
+    const dx = e.clientX - lastDrag.x, dy = e.clientY - lastDrag.y;
+    cam.velYaw = -dx * 0.0052;
+    cam.velPitch = dy * 0.0038;
+    cam.orbitYaw += cam.velYaw;
+    cam.orbitPitch = clamp(cam.orbitPitch + cam.velPitch, -0.28, 0.36);
+    lastDrag = { x: e.clientX, y: e.clientY };
+  }
 });
+
 stage.addEventListener('pointerdown', (e) => {
-  setPointer(e);
-  prevHit = null;
-  if (e.pointerType !== 'mouse') { pointer.on = true; reticle.classList.add('on'); }
-  down = { x: e.clientX, y: e.clientY, t: performance.now() };
-});
-const release = (e) => {
+  if (e.target.closest('button')) return;
+  updatePointerCoords(e);
+  document.body.classList.add('touched');
   if (e.pointerType !== 'mouse') {
-    pointer.on = false; reticle.classList.remove('on');
-    // A quick sideways flick on a touch screen turns the page.
-    if (down && performance.now() - down.t < 320 && Math.abs(e.clientX - down.x) > 70 && Math.abs(e.clientY - down.y) < 60) go(view.index + (e.clientX < down.x ? 1 : -1));
+    pointer.on = true;
+    document.body.classList.add('cursor-on');
+  }
+  if (e.button === 2 || e.shiftKey || (e.button === 0 && !pointer.locked && Math.hypot(pointer.x - 0.5, pointer.y - 0.5) > 0.24)) {
+    pointer.orbiting = true;
+    lastDrag = { x: e.clientX, y: e.clientY };
+    document.body.classList.add('orbiting');
+  } else if (e.button === 0) {
+    pointer.firing = true;
+    document.body.classList.add('firing');
+  }
+  down = { x: e.clientX, y: e.clientY, t: performance.now(), button: e.button };
+});
+
+function endPointer(e) {
+  if (pointer.firing) {
+    pointer.firing = false;
+    document.body.classList.remove('firing');
+    if (!reduced) triggerShock(hitSmooth, 0.92 * pointer.powerK);
+  }
+  if (pointer.orbiting) {
+    pointer.orbiting = false;
+    lastDrag = null;
+    document.body.classList.remove('orbiting');
+  }
+  if (e.pointerType !== 'mouse') {
+    pointer.on = false;
+    document.body.classList.remove('cursor-on');
+    if (down && performance.now() - down.t < 320 && Math.abs(e.clientX - down.x) > 68 && Math.abs(e.clientY - down.y) < 58) {
+      go(view.index + (e.clientX < down.x ? 1 : -1));
+    }
   }
   down = null;
-};
-stage.addEventListener('pointerup', release);
-stage.addEventListener('pointercancel', release);
-stage.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') { pointer.on = false; reticle.classList.remove('on'); } });
+}
+addEventListener('pointerup', endPointer);
+addEventListener('pointercancel', endPointer);
+stage.addEventListener('pointerleave', (e) => {
+  if (e.pointerType === 'mouse' && !pointer.firing && !pointer.orbiting) {
+    pointer.on = false;
+    document.body.classList.remove('cursor-on');
+  }
+});
 
-/* ---------- frame ---------- */
+/* ---------- CPU ray-to-point-cloud proximity for true 3D surface lock ---------- */
+function traceCloud(ro, rd) {
+  const active = view.prog > 0.5 ? shapes[view.to].landmarks : shapes[view.from].landmarks;
+  let bestT = Infinity, bestD2 = 0.068; // ~0.26 world radius lock threshold
+  const ox = ro[0], oy = ro[1], oz = ro[2], dx = rd[0], dy = rd[1], dz = rd[2];
+  for (let i = 0; i < active.length; i += 3) {
+    const vx = active[i] - ox, vy = active[i + 1] - oy, vz = active[i + 2] - oz;
+    const t = vx * dx + vy * dy + vz * dz;
+    if (t < 1.2) continue;
+    const px = vx - dx * t, py = vy - dy * t, pz = vz - dz * t;
+    const d2 = px * px + py * py + pz * pz;
+    if (d2 < bestD2 && t < bestT + 0.35) {
+      bestD2 = d2;
+      bestT = t;
+    }
+  }
+  if (bestT < Infinity) return { hit: add(ro, mul(rd, bestT)), dist: bestT, surface: true };
+  // Fall back to pedestal floor intersection if looking downward, else focal plane
+  if (rd[1] < -0.04) {
+    const tf = (FLOOR + 0.03 - ro[1]) / rd[1];
+    const hp = add(ro, mul(rd, tf));
+    if (tf > 1.0 && Math.hypot(hp[0], hp[2]) < 2.35) return { hit: hp, dist: tf, surface: false };
+  }
+  return { hit: add(ro, mul(rd, cam.dist)), dist: cam.dist, surface: false };
+}
+
+/* ---------- render loop ---------- */
 function drawQuad() { gl.bindVertexArray(quadVao); gl.drawArrays(gl.TRIANGLES, 0, 3); }
 function pass(prog, dst, tex) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, dst ? dst.fbo : null);
@@ -790,23 +1366,67 @@ function frame(now) {
   requestAnimationFrame(frame);
   const raw = now - last;
   last = now;
-  const dt = clamp(raw / 1000, 0.001, 0.034);
+  const dt = clamp(raw / 1000, 0.001, 0.033);
   simTime += dt;
   resize();
 
-  // Camera: eases to each view's angle, sways a little, and leans with the pointer.
-  const v = VIEWS[view.index], k = 1 - Math.exp(-dt * 2.6);
+  // Smooth spring-damped reticle ring + pointer filter
+  const pk = damp(dt, 24);
+  pointer.sx += (pointer.x - pointer.sx) * pk;
+  pointer.sy += (pointer.y - pointer.sy) * pk;
+  const kRing = 420, cRing = 34;
+  pointer.rvx += ((pointer.cx - pointer.rx) * kRing - pointer.rvx * cRing) * dt;
+  pointer.rvy += ((pointer.cy - pointer.ry) * kRing - pointer.rvy * cRing) * dt;
+  pointer.rx += pointer.rvx * dt;
+  pointer.ry += pointer.rvy * dt;
+  const tilt = clamp(pointer.rvx * 0.012, -14, 14);
+  ringEl.style.transform = `translate3d(${pointer.rx.toFixed(1)}px, ${pointer.ry.toFixed(1)}px, 0) rotate(${tilt.toFixed(1)}deg)`;
+
+  if (pointer.on && !reduced) {
+    trail[0][0] = pointer.cx; trail[0][1] = pointer.cy;
+    const tk = damp(dt, 38);
+    for (let i = 1; i < TRAIL_N; i++) {
+      trail[i][0] += (trail[i - 1][0] - trail[i][0]) * tk;
+      trail[i][1] += (trail[i - 1][1] - trail[i][1]) * tk;
+    }
+    const span = Math.hypot(trail[0][0] - trail[TRAIL_N - 1][0], trail[0][1] - trail[TRAIL_N - 1][1]);
+    if (span > 2.5) {
+      let dStr = `M${trail[0][0].toFixed(1)},${trail[0][1].toFixed(1)}`;
+      for (let i = 1; i < TRAIL_N - 1; i++) {
+        const mx = ((trail[i][0] + trail[i + 1][0]) * 0.5).toFixed(1);
+        const my = ((trail[i][1] + trail[i + 1][1]) * 0.5).toFixed(1);
+        dStr += `Q${trail[i][0].toFixed(1)},${trail[i][1].toFixed(1)} ${mx},${my}`;
+      }
+      trailPath.setAttribute('d', dStr);
+    } else if (trailPath.getAttribute('d')) {
+      trailPath.setAttribute('d', '');
+    }
+  }
+
+  // Inertia orbit decay + silky camera framing
+  if (!pointer.orbiting) {
+    cam.orbitYaw += cam.velYaw * (dt * 60);
+    cam.orbitPitch = clamp(cam.orbitPitch + cam.velPitch * (dt * 60), -0.28, 0.36);
+    const decay = Math.exp(-dt * 4.5);
+    cam.velYaw *= decay; cam.velPitch *= decay;
+  }
+  const v = VIEWS[view.index], ck = damp(dt, 2.8);
   const portrait = clamp(1.05 / (W / H), 1, 2.1);
-  cam.px += ((pointer.has ? pointer.x - 0.5 : 0) - cam.px) * (1 - Math.exp(-dt * 3));
-  cam.py += ((pointer.has ? pointer.y - 0.5 : 0) - cam.py) * (1 - Math.exp(-dt * 3));
-  cam.yaw += (v.yaw - cam.yaw) * k; cam.pitch += (v.pitch - cam.pitch) * k;
-  cam.dist += (v.dist * portrait - cam.dist) * k; cam.ty += (v.ty - 0.75 * Math.min(1, portrait - 1) - cam.ty) * k; cam.size += (v.size - cam.size) * k;
-  const sway = reduced ? 0 : Math.sin(simTime * 0.23) * 0.16;
-  const yaw = cam.yaw + sway + cam.px * 0.55, pitch = clamp(cam.pitch + cam.py * 0.22, 0.03, 0.6);
+  cam.px += ((pointer.has ? pointer.sx - 0.5 : 0) - cam.px) * damp(dt, 3.6);
+  cam.py += ((pointer.has ? pointer.sy - 0.5 : 0) - cam.py) * damp(dt, 3.6);
+  cam.yaw += (v.yaw - cam.yaw) * ck;
+  cam.pitch += (v.pitch - cam.pitch) * ck;
+  cam.dist += (v.dist * portrait - cam.dist) * ck;
+  cam.ty += (v.ty - 0.72 * Math.min(1, portrait - 1) - cam.ty) * ck;
+  cam.size += (v.size - cam.size) * ck;
+
+  const sway = reduced ? 0 : Math.sin(simTime * 0.24) * 0.12;
+  const yaw = cam.yaw + cam.orbitYaw + sway + cam.px * 0.62;
+  const pitch = clamp(cam.pitch + cam.orbitPitch + cam.py * 0.24, 0.02, 0.68);
   const tgt = [0, cam.ty, 0];
   const eye = add(tgt, mul([Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)], cam.dist));
   const fwd = norm(sub(tgt, eye)), right = norm(cross(fwd, [0, 1, 0])), up = cross(right, fwd);
-  const tan = Math.tan((30 * Math.PI) / 360), aspect = W / H, near = 0.5, far = 60;
+  const tan = Math.tan((30 * Math.PI) / 360), aspect = W / H, near = 0.4, far = 60;
   const f = 1 / tan;
   const vp = new Float32Array([
     f / aspect * right[0], f * up[0], -(far + near) / (far - near) * -fwd[0], fwd[0],
@@ -815,25 +1435,69 @@ function frame(now) {
     -f / aspect * dot(right, eye), -f * dot(up, eye), (far + near) / (far - near) * -dot(fwd, eye) - (2 * far * near) / (far - near), -dot(fwd, eye),
   ]);
 
-  // Pointer ray, and how fast it is sweeping across the object.
-  const nx = pointer.x * 2 - 1, ny = 1 - pointer.y * 2;
-  ray = { o: eye, d: norm(add(fwd, add(mul(right, nx * tan * aspect), mul(up, ny * tan)))) };
-  const hit = add(ray.o, mul(ray.d, cam.dist));
-  const sv = prevHit && pointer.on ? mul(sub(hit, prevHit), 1 / dt) : [0, 0, 0];
+  // 3D pointer ray & swept surface focus
+  const nx = pointer.sx * 2 - 1, ny = 1 - pointer.sy * 2;
+  const rd = norm(add(fwd, add(mul(right, nx * tan * aspect), mul(up, ny * tan))));
+  const tr = traceCloud(eye, rd);
+  if (!hasHit) { hitSmooth = tr.hit.slice(); prevHit = tr.hit.slice(); hasHit = true; }
+  const hitA = hitSmooth.slice();
+  hitSmooth = mix3(hitSmooth, tr.hit, damp(dt, 32));
+  const hitB = hitSmooth;
+  pointer.hitDist += (tr.dist - pointer.hitDist) * damp(dt, 14);
+
+  if (pointer.locked !== (tr.surface && pointer.on)) {
+    pointer.locked = tr.surface && pointer.on;
+    document.body.classList.toggle('locked', pointer.locked);
+  }
+
+  const sv = prevHit && pointer.on ? mul(sub(hitB, prevHit), 1 / dt) : [0, 0, 0];
   const sl = len(sv);
-  sweep = sl > 6 ? mul(sv, 6 / sl) : sv;
-  prevHit = hit;
-  pointer.laser += ((pointer.on ? 1 : 0) - pointer.laser) * (1 - Math.exp(-dt * 10));
+  sweep = sl > 7 ? mul(sv, 7 / sl) : sv;
+  prevHit = hitB.slice();
 
-  if (view.prog < 1) view.prog = Math.min(1, view.prog + dt / (reduced ? 0.9 : 1.9));
+  pointer.scan += ((pointer.on && !pointer.orbiting ? 1 : 0) - pointer.scan) * damp(dt, 11);
+  const pilotTarget = pointer.locked && !pointer.orbiting && (now - pointer.lastMove < 900) ? 1 : 0;
+  pointer.pilot += (pilotTarget - pointer.pilot) * damp(dt, pilotTarget ? 10 : 4);
+  pointer.fire += ((pointer.firing ? 1 : 0) - pointer.fire) * damp(dt, pointer.firing ? 22 : 12);
 
-  // Simulation step (transform feedback).
+  // Live optical reticle telemetry
+  if ((frames & 3) === 0 && pointer.on) {
+    if (pointer.orbiting) {
+      teleMode.textContent = 'ORBIT · 360°';
+      teleSub.textContent = `YAW ${Math.round(((yaw * 180) / Math.PI) % 360)}°`;
+    } else if (pointer.firing) {
+      const temp = Math.round(980 + pointer.watts * 0.62 + Math.sin(simTime * 23) * 35);
+      teleMode.textContent = `${pointer.watts}W · ACTIVE`;
+      teleSub.textContent = `MELT ${temp} °C`;
+    } else if (pointer.locked) {
+      teleMode.textContent = 'AI-VIS · LOCKED';
+      teleSub.textContent = `FOCUS ${pointer.hitDist.toFixed(2)} M`;
+    } else {
+      teleMode.textContent = 'AI-VIS · SCAN';
+      teleSub.textContent = `${pointer.watts} W STANDBY`;
+    }
+  }
+
+  if (view.prog < 1) view.prog = Math.min(1, view.prog + dt / (reduced ? 0.85 : 1.72));
+  const morphEnvelope = Math.sin(Math.PI * view.prog);
+
+  if (shock.r >= 0) {
+    shock.r += dt * 3.6;
+    shock.amp *= Math.exp(-dt * 2.5);
+    if (shock.r > 4.2 || shock.amp < 0.01) { shock.r = -1; shock.amp = 0; }
+  }
+
+  // 1. GPU particle simulation step
   gl.useProgram(pSim.p);
   let u = pSim.u;
   gl.uniform1i(u.uFrom, view.from); gl.uniform1i(u.uTo, view.to); gl.uniform1f(u.uProg, view.prog);
-  gl.uniform1f(u.uDt, dt); gl.uniform1f(u.uTime, simTime); gl.uniform1f(u.uGate, reduced ? 99 : simTime * 1.15);
-  gl.uniform1f(u.uLaser, pointer.laser); gl.uniform1f(u.uCalm, reduced ? 0 : 1);
-  gl.uniform3fv(u.uRayO, ray.o); gl.uniform3fv(u.uRayD, ray.d); gl.uniform3fv(u.uSweep, sweep);
+  gl.uniform1f(u.uDt, dt); gl.uniform1f(u.uTime, simTime); gl.uniform1f(u.uGate, reduced ? 99 : simTime * 1.18);
+  gl.uniform1f(u.uScan, pointer.scan); gl.uniform1f(u.uFire, pointer.fire); gl.uniform1f(u.uPower, pointer.powerK);
+  gl.uniform1f(u.uCalm, reduced ? 0 : 1); gl.uniform1f(u.uFloor, FLOOR);
+  gl.uniform3fv(u.uHitA, hitA); gl.uniform3fv(u.uHitB, hitB);
+  gl.uniform3fv(u.uRayO, eye); gl.uniform3fv(u.uRayD, rd); gl.uniform3fv(u.uSweep, sweep);
+  gl.uniform4f(u.uWave, shock.o[0], shock.o[1], shock.o[2], shock.r);
+  gl.uniform1f(u.uWaveAmp, shock.amp);
   gl.bindVertexArray(vaos[flip]);
   gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, stateBuf[1 - flip]);
   gl.enable(gl.RASTERIZER_DISCARD);
@@ -844,15 +1508,21 @@ function frame(now) {
   gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
   flip = 1 - flip;
 
-  // Scene: backdrop, mirrored particles under the floor, then the particles.
+  // 2. Studio backdrop & stepped machined pedestal
   pass(pBack, scene);
   gl.disable(gl.DEPTH_TEST);
   gl.depthMask(false);
   u = pBack.u;
   gl.uniform3fv(u.uCam, eye); gl.uniform3fv(u.uRight, right); gl.uniform3fv(u.uUp, up); gl.uniform3fv(u.uFwd, fwd);
-  gl.uniform1f(u.uTan, tan); gl.uniform1f(u.uAspect, aspect); gl.uniform1f(u.uFloor, FLOOR); gl.uniform1f(u.uFog, cam.dist - 1.2);
+  gl.uniform3fv(u.uHit, hitB);
+  gl.uniform1f(u.uTan, tan); gl.uniform1f(u.uAspect, aspect); gl.uniform1f(u.uFloor, FLOOR); gl.uniform1f(u.uFog, cam.dist - 1.0);
+  gl.uniform1f(u.uFire, pointer.fire); gl.uniform1f(u.uScan, pointer.scan);
+  gl.uniform1f(u.uMorph, morphEnvelope); gl.uniform1f(u.uTime, view.prog);
+  gl.uniform4f(u.uWave, shock.o[0], shock.o[1], shock.o[2], shock.r);
+  gl.uniform1f(u.uWaveAmp, shock.amp);
   drawQuad();
 
+  // 3. Mirrored floor reflection + main DoF point cloud
   gl.depthMask(true);
   gl.enable(gl.DEPTH_TEST);
   gl.clear(gl.DEPTH_BUFFER_BIT);
@@ -862,16 +1532,42 @@ function frame(now) {
   gl.uniform3fv(u.uCam, eye);
   gl.uniform1i(u.uFrom, view.from); gl.uniform1i(u.uTo, view.to); gl.uniform1f(u.uProg, view.prog);
   gl.uniform1f(u.uPx, H / (2 * tan));
-  gl.uniform1f(u.uSize, cam.size * 2 * Math.min(1.7, Math.sqrt(80000 / drawCount)) * (small ? 0.8 : 1));
-  gl.uniform1f(u.uFloor, FLOOR); gl.uniform1f(u.uFog, cam.dist - 1.2);
+  gl.uniform1f(u.uSize, cam.size * 2 * Math.min(1.65, Math.sqrt(90000 / drawCount)) * (small ? 0.82 : 1));
+  gl.uniform1f(u.uFloor, FLOOR); gl.uniform1f(u.uFog, cam.dist - 1.0); gl.uniform1f(u.uFocus, cam.dist);
+  const bodyDraw = Math.min(BODY, drawCount);
   gl.bindVertexArray(vaos[flip]);
   gl.uniform1f(u.uMirror, 1);
-  gl.drawArrays(gl.POINTS, 0, drawCount >> 1);
+  gl.drawArrays(gl.POINTS, 0, bodyDraw >> 1);
   gl.uniform1f(u.uMirror, 0);
-  gl.drawArrays(gl.POINTS, 0, drawCount);
+  gl.drawArrays(gl.POINTS, 0, bodyDraw);
+  // Additive pass for out-of-focus atmospheric bokeh motes (depth-tested against the solid cloud)
+  if (MOTES > 0) {
+    gl.depthMask(false);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    gl.drawArrays(gl.POINTS, BODY, MOTES);
+    gl.disable(gl.BLEND);
+    gl.depthMask(true);
+  }
   gl.disable(gl.DEPTH_TEST);
 
-  // Bloom from whatever is hot, at two radii.
+  // 4. Volumetric overhead galvo fiber beam (additive into scene so bloom picks it up naturally)
+  if (pointer.fire > 0.004 || pointer.pilot > 0.015) {
+    gl.useProgram(pBeam.p);
+    u = pBeam.u;
+    gl.uniform3fv(u.uCam, eye); gl.uniform3fv(u.uRight, right); gl.uniform3fv(u.uUp, up); gl.uniform3fv(u.uFwd, fwd);
+    gl.uniform3f(u.uOrigin, 0, EMITTER_Y, 0);
+    gl.uniform3fv(u.uTarget, hitB);
+    gl.uniform1f(u.uTan, tan); gl.uniform1f(u.uAspect, aspect);
+    gl.uniform1f(u.uFire, pointer.fire); gl.uniform1f(u.uScan, pointer.pilot);
+    gl.uniform1f(u.uPower, pointer.powerK); gl.uniform1f(u.uTime, simTime);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    drawQuad();
+    gl.disable(gl.BLEND);
+  }
+
+  // 5. Dual-radius HDR bloom & ACES filmic composite
   pass(pExtract, half, scene.tex);
   gl.uniform2f(pExtract.u.uTexel, 1 / W, 1 / H); gl.uniform1f(pExtract.u.uMode, 1); drawQuad();
   pass(pExtract, quarter, half.tex);
@@ -891,9 +1587,9 @@ function frame(now) {
   gl.uniform1f(u.uTime, simTime % 100);
   drawQuad();
 
-  // If frames stay long, first thin the cloud, then lower the resolution.
+  // Adaptive quality safeguard
+  frames++;
   if (raw < 200 && !params.has('lock')) {
-    frames++;
     ema += (raw - ema) * 0.06;
     slow = frames > 50 && ema > 24 ? slow + 1 : 0;
     if (slow > 50) {
@@ -915,7 +1611,7 @@ document.addEventListener('visibilitychange', () => { visible = !document.hidden
 canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
 canvas.addEventListener('webglcontextrestored', () => location.reload());
 document.body.classList.add('live');
-window.__lc = { go, view, pointer, frame, get drawCount() { return drawCount; } };
+window.__lc = { go, view, pointer, shock, frame, get drawCount() { return drawCount; } };
 start();
 })();
 </script>
