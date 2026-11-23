@@ -1,5 +1,5 @@
 // Tactile spring-damper physics & precision procedural geometry builders
-import * as THREE from '../../vendor/three/three.module.js';
+import * as THREE from '../vendor/three.module.js';
 
 export const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 export const lerp = (a, b, t) => a + (b - a) * t;

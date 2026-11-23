@@ -3,7 +3,7 @@
 // characters quantized to 12fps stop-motion, glossy piped royal icing, fairy-light pull-cord,
 // numbered Advent doors, and a Rube Goldberg peppermint candy marble run!
 
-import * as THREE from '../../vendor/three/three.module.js';
+import * as THREE from '../vendor/three.module.js';
 import {
   Spring1D,
   Spring3D,

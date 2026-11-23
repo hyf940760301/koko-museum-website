@@ -3,7 +3,7 @@
 // plinth with meshing involute gears & music-box cylinder, spiral viaduct miniature steam train
 // puffing starlight smoke, butterfly winding key, and 3D vortex blizzard snow physics!
 
-import * as THREE from '../../vendor/three/three.module.js';
+import * as THREE from '../vendor/three.module.js';
 import {
   Spring1D,
   Spring2D,

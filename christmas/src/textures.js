@@ -1,5 +1,5 @@
 // Procedural micro-surface textures & studio HDR IBL environment baking (zero external assets)
-import * as THREE from '../../vendor/three/three.module.js';
+import * as THREE from '../vendor/three.module.js';
 
 function makeCanvas(w, h) {
   const c = document.createElement('canvas');

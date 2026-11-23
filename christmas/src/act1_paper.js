@@ -3,7 +3,7 @@
 // bevel trims, translucent vellum windows, interactive pull-tab sleigh, rotatable celestial volvelle,
 // and hinged lift-the-flaps.
 
-import * as THREE from '../../vendor/three/three.module.js';
+import * as THREE from '../vendor/three.module.js';
 import { Spring1D, Spring3D, clamp, lerp, createFacetedStarGeometry } from './physics.js';
 
 function extrudeCard(shape, depth = 0.028, bevel = 0.005) {

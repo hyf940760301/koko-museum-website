@@ -2,7 +2,7 @@
 // Orchestrates Prologue wax-seal unboxing, HDR Bokeh transitions across Acts I–IV & Finale V,
 // magnetic cursor micro-anticipation, dynamic 4-voice waltz mixing, and bespoke keepsake card studio.
 
-import * as THREE from '../../vendor/three/three.module.js';
+import * as THREE from '../vendor/three.module.js';
 import { Spring2D, clamp } from './physics.js';
 import { PostPipeline } from './post.js';
 import { buildStudioEnvironments, buildProceduralTextures } from './textures.js';

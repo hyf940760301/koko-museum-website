@@ -3,7 +3,7 @@
 // dichroic crystal prism Christmas tree, interactive 8-note Glass Harmonica chimes, cursor starlight
 // trail blooming crystal ice-lotuses, and 5-node Constellation Ignition!
 
-import * as THREE from '../../vendor/three/three.module.js';
+import * as THREE from '../vendor/three.module.js';
 import {
   Spring1D,
   Spring3D,

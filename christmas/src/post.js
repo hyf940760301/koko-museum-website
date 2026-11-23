@@ -1,7 +1,7 @@
 // HDR half-float post-processing pipeline:
 // 4x MSAA scene RT -> background snapshot for glass refraction -> multi-tap bloom & starburst glare
 // -> macro tilt-shift + optical bokeh transition wipe -> AgX filmic tonemap & subtle film grain
-import * as THREE from '../../vendor/three/three.module.js';
+import * as THREE from '../vendor/three.module.js';
 
 const QUAD_VS = /* glsl */`
 varying vec2 vUv;

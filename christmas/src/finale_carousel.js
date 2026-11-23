@@ -2,7 +2,7 @@
 // Brings miniatures from all 4 acts onto one rotating brass-and-crystal pavilion while all 4 voices
 // play in full harmony, plus renders a high-DPI 1080x1350 hot-foil & wax-seal Christmas keepsake card.
 
-import * as THREE from '../../vendor/three/three.module.js';
+import * as THREE from '../vendor/three.module.js';
 import {
   Spring1D,
   Spring3D,
