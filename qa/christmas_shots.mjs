@@ -134,8 +134,11 @@ if (liveSmoke) {
       const t0 = performance.now();
       // Click wax seal -> 6-shard shatter + 3D flap fold!
       document.getElementById('wax-seal-btn').click();
-      const openingClass = document.getElementById('prologue').classList.contains('is-opening');
-      await new Promise(r => setTimeout(r, 850));
+      const proEl = document.getElementById('prologue');
+      const openingClass = proEl.classList.contains('is-opening') || proEl.classList.contains('is-pre-unsealing');
+      for (let w = 0; w < 45 && document.body.dataset.state !== 'playing'; w++) {
+        await new Promise(r => setTimeout(r, 350));
+      }
 
       // Dispatch wheel zoom in & reset camera button
       const stage = document.getElementById('stage');

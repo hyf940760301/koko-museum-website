@@ -331,6 +331,11 @@ export class PostPipeline {
       depthTexture: depthTex,
       samples: maxSamples,
     });
+    // CRITICAL macOS Apple Silicon / ANGLE Metal fix:
+    // WEBGL_multisampled_render_to_texture rejects DEPTH_ATTACHMENT in framebufferTexture2DMultisampleEXT.
+    // Force standard WebGL2 renderbufferStorageMultisample + gl.blitFramebuffer resolve!
+    renderer.properties.get(this.sceneRT).__useRenderToTexture = false;
+    this._fboVerified = false;
 
     // Shared 0.5x snapshot texture for glass snowglobe & spectral dichroic prisms
     this.refractRT = new THREE.WebGLRenderTarget(1, 1, {
@@ -450,6 +455,8 @@ export class PostPipeline {
     this.w = w;
     this.h = h;
     this.sceneRT.setSize(w, h);
+    this.renderer.properties.get(this.sceneRT).__useRenderToTexture = false;
+    this._fboVerified = false;
 
     const w2 = Math.max(1, Math.floor(w * 0.5));
     const h2 = Math.max(1, Math.floor(h * 0.5));
@@ -496,7 +503,17 @@ export class PostPipeline {
       this.captureRefractionPass(scene, camera, opts.refractMeshes);
     }
 
+    this.renderer.properties.get(this.sceneRT).__useRenderToTexture = false;
     r.setRenderTarget(this.sceneRT);
+    if (!this._fboVerified) {
+      this._fboVerified = true;
+      const gl = r.getContext();
+      if (this.sceneRT.samples > 0 && gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        this.sceneRT.samples = 0;
+        this.sceneRT.dispose();
+        r.setRenderTarget(this.sceneRT);
+      }
+    }
     r.clear();
     r.render(scene, camera);
 

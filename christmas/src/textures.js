@@ -41,12 +41,15 @@ function fbm(x, y, oct = 4) {
 }
 
 export function buildStudioEnvironments(renderer) {
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  pmrem.compileEquirectangularShader();
+  let pmrem = null;
+  const ensurePmrem = () => {
+    if (!pmrem) pmrem = new THREE.PMREMGenerator(renderer);
+    return pmrem;
+  };
 
   const bakeRig = (skyTop, skyBot, panels) => {
     const s = new THREE.Scene();
-    const domeGeo = new THREE.SphereGeometry(30, 32, 24);
+    const domeGeo = new THREE.SphereGeometry(30, 24, 16);
     const pos = domeGeo.attributes.position;
     const cols = new Float32Array(pos.count * 3);
     const cTop = new THREE.Color(skyTop);
@@ -69,7 +72,7 @@ export function buildStudioEnvironments(renderer) {
     const createdMeshes = [];
     for (const p of panels) {
       const geo = p.sphere
-        ? new THREE.SphereGeometry(p.r || 1.2, 16, 12)
+        ? new THREE.SphereGeometry(p.r || 1.2, 12, 10)
         : new THREE.PlaneGeometry(p.w || 8, p.h || 5);
       const col = new THREE.Color(p.color).multiplyScalar(p.intensity || 4.0);
       const m = new THREE.Mesh(
@@ -82,7 +85,7 @@ export function buildStudioEnvironments(renderer) {
       createdMeshes.push(m);
     }
 
-    const rt = pmrem.fromScene(s, 0.02, 0.1, 60);
+    const rt = ensurePmrem().fromScene(s, 0.02, 0.1, 60);
     domeGeo.dispose();
     dome.material.dispose();
     for (const m of createdMeshes) {
@@ -92,38 +95,47 @@ export function buildStudioEnvironments(renderer) {
     return rt.texture;
   };
 
-  const envPaper = bakeRig(0x13203b, 0x1b100b, [
-    { x: 9, y: 12, z: 10, w: 12, h: 7, color: 0xffe4b5, intensity: 4.8 },
-    { x: -12, y: 8, z: 6, w: 10, h: 6, color: 0xffc778, intensity: 3.4 },
-    { x: 0, y: 15, z: -10, w: 14, h: 5, color: 0x6c96ff, intensity: 2.3 },
-    { sphere: true, x: -4.8, y: 2.5, z: 8, r: 1.2, color: 0xffb85c, intensity: 7.2 },
-  ]);
+  const recipes = {
+    envPaper: () => bakeRig(0x13203b, 0x1b100b, [
+      { x: 9, y: 12, z: 10, w: 12, h: 7, color: 0xffe4b5, intensity: 4.8 },
+      { x: -12, y: 8, z: 6, w: 10, h: 6, color: 0xffc778, intensity: 3.4 },
+      { x: 0, y: 15, z: -10, w: 14, h: 5, color: 0x6c96ff, intensity: 2.3 },
+      { sphere: true, x: -4.8, y: 2.5, z: 8, r: 1.2, color: 0xffb85c, intensity: 7.2 },
+    ]),
+    envClay: () => bakeRig(0x302226, 0x1d120e, [
+      { x: 0, y: 16, z: 8, w: 18, h: 10, color: 0xfff3e2, intensity: 3.8 },
+      { x: -13, y: 6, z: 9, w: 9, h: 9, color: 0xffd1a6, intensity: 3.0 },
+      { x: 13, y: 7, z: 8, w: 9, h: 9, color: 0xcce6ff, intensity: 2.4 },
+      { sphere: true, x: -4, y: 2, z: 13, r: 1.5, color: 0xffa95c, intensity: 5.2 },
+    ]),
+    envGlobe: () => bakeRig(0x0c182e, 0x1a0e08, [
+      { x: -10, y: 11, z: 11, w: 6, h: 14, color: 0xd8ecff, intensity: 6.5 },
+      { x: 11, y: 9, z: 10, w: 9, h: 7, color: 0xffcb80, intensity: 5.5 },
+      { sphere: true, x: 6, y: -1, z: 13, r: 1.3, color: 0xff8c3b, intensity: 9.2 },
+      { sphere: true, x: 9, y: 2, z: 11, r: 0.9, color: 0xffb95e, intensity: 8.5 },
+      { sphere: true, x: -6, y: 14, z: -8, r: 2.0, color: 0x7eb6ff, intensity: 4.6 },
+    ]),
+    envAurora: () => bakeRig(0x09162b, 0x050712, [
+      { x: -9, y: 13, z: 8, w: 16, h: 5, color: 0x4effc8, intensity: 6.0 },
+      { x: 10, y: 11, z: 7, w: 15, h: 5, color: 0xb678ff, intensity: 5.4 },
+      { x: 0, y: 6, z: 14, w: 10, h: 4, color: 0xfff0cc, intensity: 4.8 },
+      { sphere: true, x: -5, y: 8, z: 12, r: 1.0, color: 0xffffff, intensity: 10.5 },
+      { sphere: true, x: 6, y: 4, z: 12, r: 1.0, color: 0x8cf6ff, intensity: 9.2 },
+    ]),
+  };
 
-  const envClay = bakeRig(0x302226, 0x1d120e, [
-    { x: 0, y: 16, z: 8, w: 18, h: 10, color: 0xfff3e2, intensity: 3.8 },
-    { x: -13, y: 6, z: 9, w: 9, h: 9, color: 0xffd1a6, intensity: 3.0 },
-    { x: 13, y: 7, z: 8, w: 9, h: 9, color: 0xcce6ff, intensity: 2.4 },
-    { sphere: true, x: -4, y: 2, z: 13, r: 1.5, color: 0xffa95c, intensity: 5.2 },
-  ]);
-
-  const envGlobe = bakeRig(0x0c182e, 0x1a0e08, [
-    { x: -10, y: 11, z: 11, w: 6, h: 14, color: 0xd8ecff, intensity: 6.5 },
-    { x: 11, y: 9, z: 10, w: 9, h: 7, color: 0xffcb80, intensity: 5.5 },
-    { sphere: true, x: 6, y: -1, z: 13, r: 1.3, color: 0xff8c3b, intensity: 9.2 },
-    { sphere: true, x: 9, y: 2, z: 11, r: 0.9, color: 0xffb95e, intensity: 8.5 },
-    { sphere: true, x: -6, y: 14, z: -8, r: 2.0, color: 0x7eb6ff, intensity: 4.6 },
-  ]);
-
-  const envAurora = bakeRig(0x09162b, 0x050712, [
-    { x: -9, y: 13, z: 8, w: 16, h: 5, color: 0x4effc8, intensity: 6.0 },
-    { x: 10, y: 11, z: 7, w: 15, h: 5, color: 0xb678ff, intensity: 5.4 },
-    { x: 0, y: 6, z: 14, w: 10, h: 4, color: 0xfff0cc, intensity: 4.8 },
-    { sphere: true, x: -5, y: 8, z: 12, r: 1.0, color: 0xffffff, intensity: 10.5 },
-    { sphere: true, x: 6, y: 4, z: 12, r: 1.0, color: 0x8cf6ff, intensity: 9.2 },
-  ]);
-
-  pmrem.dispose();
-  return { envPaper, envClay, envGlobe, envAurora };
+  const cache = {};
+  const lazyEnvs = {};
+  for (const key of Object.keys(recipes)) {
+    Object.defineProperty(lazyEnvs, key, {
+      enumerable: true,
+      get() {
+        if (!cache[key]) cache[key] = recipes[key]();
+        return cache[key];
+      },
+    });
+  }
+  return lazyEnvs;
 }
 
 export function buildProceduralTextures(renderer) {
@@ -137,8 +149,8 @@ export function buildProceduralTextures(renderer) {
     return tex;
   };
 
-  // 1. 512x512 Cold-pressed 300gsm watercolour cotton paper (crisp under 0.56x macro zoom)
-  const S = 512;
+  // 1. 256x256 Cold-pressed cotton paper base (paired with GPU per-pixel SSS & micrograin shaders; 8x faster CPU boot!)
+  const S = 256;
   const paperCanvas = makeCanvas(S, S);
   const pCtx = paperCanvas.getContext('2d');
   const pImg = pCtx.createImageData(S, S);
@@ -184,8 +196,8 @@ export function buildProceduralTextures(renderer) {
   const bImg = bCtx.createImageData(S, S);
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
-      const dx = x - 256;
-      const dy = y - 256;
+      const dx = x - S * 0.5;
+      const dy = y - S * 0.5;
       const r = Math.hypot(dx, dy);
       const ang = Math.atan2(dy, dx);
       const groove = Math.sin(r * 2.1 + valueNoise(ang * 12, r * 0.08) * 1.8) * 0.5 + 0.5;

@@ -287,6 +287,7 @@ body[data-state="playing"] #prologue {
   margin: 12px auto 24px;
   background: none;
   border: none;
+  outline: none;
   cursor: pointer;
   display: inline-flex;
   flex-direction: column;
@@ -294,6 +295,33 @@ body[data-state="playing"] #prologue {
   gap: 12px;
   color: var(--gold-bright);
   font-family: inherit;
+}
+
+.wax-seal-btn:focus-visible .seal-svg {
+  filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.72)) drop-shadow(0 0 18px rgba(244, 206, 132, 0.55));
+}
+
+/* Pre-boot instant wax-shatter + flap-open state if user clicks while 3D bundle is still streaming */
+#prologue.is-pre-unsealing .env-flap-3d {
+  transform: rotateX(176deg);
+  opacity: 0.95;
+}
+#prologue.is-pre-unsealing .wax-emblem {
+  transform: scale(1.35);
+  opacity: 0;
+}
+#prologue.is-pre-unsealing .wax-shard.s1 { transform: translate(18px, -36px) rotate(24deg); opacity: 0; }
+#prologue.is-pre-unsealing .wax-shard.s2 { transform: translate(38px, -8px) rotate(36deg); opacity: 0; }
+#prologue.is-pre-unsealing .wax-shard.s3 { transform: translate(26px, 34px) rotate(-28deg); opacity: 0; }
+#prologue.is-pre-unsealing .wax-shard.s4 { transform: translate(-22px, 36px) rotate(32deg); opacity: 0; }
+#prologue.is-pre-unsealing .wax-shard.s5 { transform: translate(-38px, 6px) rotate(-35deg); opacity: 0; }
+#prologue.is-pre-unsealing .wax-shard.s6 { transform: translate(-24px, -34px) rotate(-22deg); opacity: 0; }
+#prologue.is-pre-unsealing .seal-glow {
+  opacity: 0;
+}
+#prologue.is-pre-unsealing .seal-caption {
+  animation: cueShimmer 1.4s ease-in-out infinite;
+  color: var(--gold-bright);
 }
 
 .seal-glow {

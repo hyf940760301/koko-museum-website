@@ -238,6 +238,24 @@
   <p>此微缩剧场需要支持 WebGL2 的现代浏览器。<br>请使用较新版本的 Chrome、Safari、Edge 或 Firefox 打开。</p>
 </div>
 
-<script type="module" src="./src/main.js"></script>
+<!-- Zero-latency unseal guard: shatters wax & opens 3D flap at 0ms even while WebGL bundle streams! -->
+<script>
+(function () {
+  var btn = document.getElementById('wax-seal-btn');
+  var pro = document.getElementById('prologue');
+  var cap = btn && btn.querySelector('.seal-caption');
+  if (!btn || !pro) return;
+  btn.addEventListener('click', function () {
+    if (typeof window.__enterStage === 'function') {
+      window.__enterStage(false);
+    } else if (!window.__pendingUnseal) {
+      window.__pendingUnseal = true;
+      pro.classList.add('is-pre-unsealing');
+      if (cap) cap.textContent = '正在点亮冬夜微缩剧场…';
+    }
+  });
+})();
+</script>
+<script type="module" src="./dist/bundle.js"></script>
 </body>
 </html>

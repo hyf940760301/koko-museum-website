@@ -24,40 +24,16 @@ const SKIP_PROLOGUE = Q.has('skip') || CAPTURE;
 
 const body = document.body;
 const canvas = document.getElementById('stage');
-
-// ---------------- WebGL2 Renderer & Leica Macro Post Pipeline ----------------
-let renderer;
-try {
-  renderer = new THREE.WebGLRenderer({
-    canvas,
-    antialias: false,
-    alpha: false,
-    powerPreference: 'high-performance',
-    preserveDrawingBuffer: CAPTURE,
-  });
-} catch (err) {
-  document.getElementById('nogl').hidden = false;
-  throw err;
-}
-if (!renderer.capabilities.isWebGL2) {
-  document.getElementById('nogl').hidden = false;
-  throw new Error('WebGL2 required');
-}
-
-renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-renderer.toneMapping = THREE.NoToneMapping;
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.shadowMap.autoUpdate = false;
-renderer.shadowMap.needsUpdate = true;
-let shadowTick = 0;
-
 const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 120);
-const post = new PostPipeline(renderer);
 const audio = new QuartetAudio();
 
-const envs = buildStudioEnvironments(renderer);
-const textures = buildProceduralTextures(renderer);
+// Deferred non-blocking WebGL engine handles (initialized across 3 micro-slices after onload!)
+let renderer = null;
+let post = null;
+let envs = null;
+let textures = null;
+let engineReady = false;
+let shadowTick = 0;
 
 // ---------------- UI Elements & Gift Personalization ----------------
 const elPrologue = document.getElementById('prologue');
@@ -210,41 +186,30 @@ const actBuilders = {
   5: () => createFinaleCarousel({ envMap: envs.envGlobe, textures, refractTex: post.refractRT.texture, audio, onOpenCardStudio: openCardStudio, onSelectAct: switchToAct }),
 };
 
+const ACT_TINTS = {
+  1: new THREE.Color(0xffb868),
+  2: new THREE.Color(0xff9468),
+  3: new THREE.Color(0xffca72),
+  4: new THREE.Color(0x52ffd8),
+  5: new THREE.Color(0xffc878),
+};
+
 function ensureAct(id) {
+  if (!renderer || !post || !envs || !textures) return null;
   if (!acts[id] && actBuilders[id]) {
     acts[id] = actBuilders[id]();
-    // Pre-compile shaders cleanly so switching acts never drops a single frame!
-    renderer.compile(acts[id].scene, camera);
     renderer.shadowMap.needsUpdate = true;
   }
   return acts[id];
 }
 
 let activeActId = clamp(parseInt(Q.get('act') || '1', 10) || 1, 1, 5);
-// Boot ONLY the active act synchronously (<180ms first paint!), slice the rest across idle frames!
-ensureAct(activeActId);
-
-const warmupQueue = [1, 2, 3, 4, 5].filter((id) => id !== activeActId);
-function scheduleNextWarmup() {
-  if (warmupQueue.length === 0) return;
-  const runSlice = () => {
-    const nextId = warmupQueue.shift();
-    if (nextId) ensureAct(nextId);
-    if (warmupQueue.length > 0) scheduleNextWarmup();
-  };
-  if ('requestIdleCallback' in window) {
-    window.requestIdleCallback(runSlice, { timeout: 400 });
-  } else {
-    setTimeout(runSlice, 48);
-  }
-}
-if (!CAPTURE) scheduleNextWarmup();
 
 // ---------------- Optical Bokeh Transition & Progress HUD ----------------
 let pendingActId = null;
 let transProgress = 0;
 let transDir = 0;
-let transTint = acts[activeActId].transTint.clone();
+let transTint = (ACT_TINTS[activeActId] || ACT_TINTS[1]).clone();
 let lastProgCode = -1;
 
 function syncProgressPips(act) {
@@ -268,6 +233,7 @@ function syncProgressPips(act) {
 }
 
 function syncActHUD(act) {
+  if (!act) return;
   body.dataset.act = String(act.id);
   elRoman.textContent = act.roman;
   elName.textContent = act.title;
@@ -279,16 +245,16 @@ function syncActHUD(act) {
     t.classList.toggle('is-active', Number(t.dataset.act) === act.id);
   }
 }
-syncActHUD(acts[activeActId]);
 audio.setAct(activeActId);
 
 function switchToAct(targetId) {
   if (!actBuilders[targetId]) return;
-  ensureAct(targetId);
   if (pendingActId === null && targetId === activeActId) return;
   if (pendingActId === targetId) return;
-  audio.unlock();
-  audio.playHoverTick(1.15);
+  try {
+    audio.unlock();
+    audio.playHoverTick(1.15);
+  } catch {}
   if (targetId === activeActId) {
     pendingActId = null;
     transDir = -1;
@@ -297,7 +263,7 @@ function switchToAct(targetId) {
   }
   pendingActId = targetId;
   transDir = 1;
-  transTint.copy(acts[targetId].transTint);
+  transTint.copy(ACT_TINTS[targetId] || ACT_TINTS[1]);
   elBanner.classList.add('is-switching');
   for (const t of actTabs) {
     t.classList.toggle('is-active', Number(t.dataset.act) === targetId);
@@ -310,6 +276,7 @@ if (CAPTURE && Q.get('dpr')) baseDpr = clamp(parseFloat(Q.get('dpr')), 1, 2);
 let resScale = 1.0;
 
 function applyResolution() {
+  if (!renderer || !post) return;
   const w = Math.max(1, window.innerWidth);
   const h = Math.max(1, window.innerHeight);
   camera.aspect = w / h;
@@ -324,23 +291,50 @@ function applyResolution() {
   post.setSize(rw, rh);
 }
 window.addEventListener('resize', applyResolution);
-applyResolution();
 
 // ---------------- 3D Envelope Unboxing & UI Controls ----------------
-function enterStage() {
-  if (body.dataset.state === 'playing') return;
+let unsealRequested = Boolean(SKIP_PROLOGUE || window.__pendingUnseal);
+let unsealAnimStartedAt = 0;
+
+function finalizeEnterIfReady() {
+  if (!unsealRequested || !engineReady || body.dataset.state === 'playing') return;
+  const elapsed = performance.now() - unsealAnimStartedAt;
+  const remain = SKIP_PROLOGUE ? 0 : Math.max(0, 460 - elapsed);
+  elPrologue.classList.remove('is-pre-unsealing');
   elPrologue.classList.add('is-opening');
-  audio.playWaxSealBreak();
-  // Hold slightly so viewer savors the 6-shard wax shatter + 3D flap fold + rising letter!
   transProgress = 0.92;
   transDir = -1;
-  setTimeout(() => {
+  if (remain <= 0) {
     body.dataset.state = 'playing';
-  }, 520);
+  } else {
+    setTimeout(() => {
+      body.dataset.state = 'playing';
+    }, remain);
+  }
 }
 
-if (SKIP_PROLOGUE) {
-  body.dataset.state = 'playing';
+function enterStage() {
+  if (body.dataset.state === 'playing' || unsealRequested) return;
+  unsealRequested = true;
+  unsealAnimStartedAt = performance.now();
+  try {
+    audio.playWaxSealBreak();
+  } catch {}
+  if (engineReady) {
+    finalizeEnterIfReady();
+  } else {
+    elPrologue.classList.add('is-pre-unsealing');
+    const cap = btnWaxSeal && btnWaxSeal.querySelector('.seal-caption');
+    if (cap) cap.textContent = '正在点亮冬夜微缩剧场…';
+  }
+}
+window.__enterStage = enterStage;
+
+if (window.__pendingUnseal && !SKIP_PROLOGUE) {
+  unsealAnimStartedAt = performance.now() - 300;
+  try {
+    audio.playWaxSealBreak();
+  } catch {}
 }
 
 btnWaxSeal.addEventListener('click', enterStage);
@@ -621,12 +615,14 @@ function updateSigilFlight(dt) {
 }
 
 function renderFrame(dt) {
+  if (!engineReady || !acts[activeActId]) return;
   simTime += dt;
 
   if (transDir !== 0) {
     const speed = transDir > 0 ? 3.1 : 2.2;
     transProgress = clamp(transProgress + transDir * dt * speed, 0, 1);
     if (transDir > 0 && transProgress >= 1) {
+      ensureAct(pendingActId);
       activeActId = pendingActId;
       pendingActId = null;
       syncActHUD(acts[activeActId]);
@@ -696,17 +692,89 @@ function tick(nowMs) {
   renderFrame(dt);
 }
 
-if (!CAPTURE) {
-  requestAnimationFrame(tick);
-} else {
-  renderFrame(0.016);
+function bootStep1() {
+  try {
+    renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: false,
+      alpha: false,
+      powerPreference: 'high-performance',
+      preserveDrawingBuffer: CAPTURE,
+    });
+  } catch (err) {
+    document.getElementById('nogl').hidden = false;
+    throw err;
+  }
+  if (!renderer.capabilities.isWebGL2) {
+    document.getElementById('nogl').hidden = false;
+    throw new Error('WebGL2 required');
+  }
+  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
+
+  post = new PostPipeline(renderer);
+  envs = buildStudioEnvironments(renderer);
+  applyResolution();
 }
+
+function bootStep2() {
+  textures = buildProceduralTextures(renderer);
+}
+
+function bootStep3() {
+  ensureAct(activeActId);
+  syncActHUD(acts[activeActId]);
+  engineReady = true;
+  lastTime = performance.now() * 0.001;
+  renderFrame(0.016);
+  finalizeEnterIfReady();
+  if (!CAPTURE) {
+    requestAnimationFrame(tick);
+  }
+}
+
+let bootPromise = null;
+function startNonBlockingBoot() {
+  if (bootPromise) return bootPromise;
+  if (CAPTURE) {
+    bootStep1();
+    bootStep2();
+    bootStep3();
+    bootPromise = Promise.resolve();
+    return bootPromise;
+  }
+  // Yield between each stage so browser window.onload completes in <5ms and UI stays 100% responsive!
+  bootPromise = new Promise((resolve) => {
+    setTimeout(() => {
+      try {
+        bootStep1();
+        setTimeout(() => {
+          bootStep2();
+          setTimeout(() => {
+            bootStep3();
+            resolve();
+          }, 0);
+        }, 0);
+      } catch (e) {
+        console.error(e);
+      }
+    }, 0);
+  });
+  return bootPromise;
+}
+
+startNonBlockingBoot();
 
 // ---------------- Deterministic QA & Performance Telemetry Harness ----------------
 window.__setChristmas = async (cfg = {}) => {
+  await startNonBlockingBoot();
   if (cfg.prologue) {
     body.dataset.state = 'prologue';
-    elPrologue.classList.remove('is-opening');
+    elPrologue.classList.remove('is-opening', 'is-pre-unsealing');
   } else {
     body.dataset.state = 'playing';
   }
