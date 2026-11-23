@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>NOEL · IV｜冬夜四重奏 · 圣诞微缩奇境</title>
+<meta name="description" content="四幕交互式圣诞微缩奇境：烫金立体折纸绘本、定格黏土礼盒工坊、发条黄铜水晶球与极光琉璃冰晶圣殿。">
+<meta name="theme-color" content="#0e0b0a">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23161013' stroke='%23d8b26e' stroke-width='2'/%3E%3Cpath d='M32 8l5 18 19 6-19 6-5 18-5-18-19-6 19-6z' fill='%23e8c888'/%3E%3Ccircle cx='32' cy='32' r='4' fill='%23fff6e0'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="./src/style.css">
+</head>
+<body data-state="prologue" data-act="1">
+
+<canvas id="stage" aria-label="NOEL · IV 冬夜四重奏三维互动舞台"></canvas>
+
+<!-- Custom magnetic cursor halo (desktop pointer devices) -->
+<div id="cursor-halo" aria-hidden="true">
+  <span class="cursor-dot"></span>
+  <span class="cursor-ring"></span>
+  <span class="cursor-label" id="cursor-label"></span>
+</div>
+
+<!-- Opening Ritual: 3D Folding Burgundy Envelope, Shattering 6-Shard Wax Seal & Rising Invitation -->
+<section id="prologue" aria-label="冬至邀请函拆封">
+  <div class="envelope-backdrop"></div>
+  <div class="envelope-stage">
+    <div class="envelope-card" id="envelope-card">
+      <!-- 3D Triangular Burgundy Envelope Top Flap (rotates open 176deg on unseal!) -->
+      <div class="env-flap-3d" aria-hidden="true">
+        <svg viewBox="0 0 560 190" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="flapGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="#4e1620"/>
+              <stop offset="100%" stop-color="#2c0b11"/>
+            </linearGradient>
+          </defs>
+          <polygon points="0,0 560,0 280,178" fill="url(#flapGrad)" stroke="rgba(226,186,118,0.45)" stroke-width="1.4"/>
+          <polyline points="18,6 280,164 542,6" fill="none" stroke="rgba(244,223,174,0.28)" stroke-width="0.9" stroke-dasharray="4 4"/>
+        </svg>
+      </div>
+
+      <!-- Rising Gilded Letter Sheet inside the Envelope -->
+      <div class="env-paper-frame" id="env-letter-sheet">
+        <svg class="env-filigree" viewBox="0 0 600 400" preserveAspectRatio="none" aria-hidden="true">
+          <rect x="14" y="14" width="572" height="372" fill="none" stroke="currentColor" stroke-width="0.9" opacity="0.55"/>
+          <rect x="22" y="22" width="556" height="356" fill="none" stroke="currentColor" stroke-width="0.5" stroke-dasharray="4 4" opacity="0.4"/>
+          <path d="M14 54 C38 54 54 38 54 14 M546 14 C546 38 562 54 586 54 M14 346 C38 346 54 362 54 386 M546 386 C546 362 562 346 586 346" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        </svg>
+        <p class="env-eyebrow">INVITATIO SOLSTITII · MMXXVI</p>
+        <h1 class="env-title">NOEL <i>·</i> IV</h1>
+        <p class="env-subtitle">冬 夜 四 重 奏 · 微 缩 圣 诞 奇 境</p>
+        <p class="env-recipient" id="env-recipient" hidden></p>
+
+        <button type="button" class="wax-seal-btn" id="wax-seal-btn" aria-label="揭开火漆印章进入冬夜四重奏">
+          <span class="seal-glow"></span>
+          <svg class="seal-svg" viewBox="0 0 120 120" aria-hidden="true">
+            <defs>
+              <radialGradient id="waxGrad" cx="38%" cy="32%" r="68%">
+                <stop offset="0%" stop-color="#c93b3b"/>
+                <stop offset="52%" stop-color="#8b1a22"/>
+                <stop offset="100%" stop-color="#470910"/>
+              </radialGradient>
+              <linearGradient id="goldRim" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#f7e3b5"/>
+                <stop offset="50%" stop-color="#c99b4e"/>
+                <stop offset="100%" stop-color="#7c5821"/>
+              </linearGradient>
+            </defs>
+            <!-- 6 Pre-fractured radial wax shards that burst outward on click! -->
+            <g class="wax-shard s1"><path d="M60 60 L60 7 C78 6 93 15 102 28 Z" fill="url(#waxGrad)"/></g>
+            <g class="wax-shard s2"><path d="M60 60 L102 28 C113 42 115 60 110 77 Z" fill="url(#waxGrad)"/></g>
+            <g class="wax-shard s3"><path d="M60 60 L110 77 C104 94 90 108 71 113 Z" fill="url(#waxGrad)"/></g>
+            <g class="wax-shard s4"><path d="M60 60 L71 113 C52 117 33 112 20 98 Z" fill="url(#waxGrad)"/></g>
+            <g class="wax-shard s5"><path d="M60 60 L20 98 C9 84 6 64 11 45 Z" fill="url(#waxGrad)"/></g>
+            <g class="wax-shard s6"><path d="M60 60 L11 45 C17 24 36 9 60 7 Z" fill="url(#waxGrad)"/></g>
+            <g class="wax-emblem">
+              <circle cx="60" cy="60" r="39" fill="none" stroke="url(#goldRim)" stroke-width="1.6" opacity="0.88"/>
+              <circle cx="60" cy="60" r="34" fill="none" stroke="url(#goldRim)" stroke-width="0.7" stroke-dasharray="2.5 2.5" opacity="0.65"/>
+              <path d="M60 28 L65 53 L90 60 L65 67 L60 92 L55 67 L30 60 L55 53 Z" fill="url(#goldRim)"/>
+              <circle cx="60" cy="60" r="4.5" fill="#fff5d8"/>
+            </g>
+          </svg>
+          <span class="seal-caption">轻点揭开火漆印章</span>
+        </button>
+
+        <div class="env-acts-preview" aria-hidden="true">
+          <span>I · 烫金纸雕</span>
+          <i>·</i>
+          <span>II · 定格黏土</span>
+          <i>·</i>
+          <span>III · 发条雪球</span>
+          <i>·</i>
+          <span>IV · 极光琉璃</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Climax Sigil Awakening Shockwave & Flying Star Emblem -->
+<div id="climax-ripple" aria-hidden="true"></div>
+<div id="flying-sigil" aria-hidden="true">
+  <svg viewBox="0 0 48 48"><path d="M24 2 L28.5 19.5 L46 24 L28.5 28.5 L24 46 L19.5 28.5 L2 24 L19.5 19.5 Z"/></svg>
+</div>
+
+<!-- Editorial Minimalist Stage HUD -->
+<div id="hud" aria-live="polite">
+  <header class="hud-top">
+    <button type="button" class="brand-mark" id="btn-home" title="回到第一幕视角（双击画面空白处可复位微距镜头）">
+      <b>NOEL</b><i></i><span>QUARTET · IV</span>
+    </button>
+
+    <div class="act-banner" id="act-banner">
+      <span class="act-roman" id="act-roman">ACT I</span>
+      <h2 class="act-name" id="act-name">松林星夜书</h2>
+      <p class="act-sub" id="act-sub">烫金立体折纸剧场 · GILDED POP-UP DIORAMA</p>
+      <!-- Subtle Diamond Discovery Progress Pips -->
+      <div class="act-progress" id="act-progress" aria-label="当前剧幕机关探索进度">
+        <span class="prog-pip"></span>
+        <span class="prog-pip"></span>
+        <span class="prog-pip"></span>
+      </div>
+    </div>
+
+    <div class="hud-tools">
+      <button type="button" class="tool-pill" id="btn-finale" hidden title="开启平安夜四重奏走马灯与定制贺卡">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.4 6.8L21.2 12l-6.8 2.7L12 21.5l-2.4-6.8L2.8 12l6.8-2.7z"/></svg>
+        <span>四重奏终章</span>
+      </button>
+      <button type="button" class="tool-icon" id="btn-reset-cam" title="复位微距镜头构图（或双击画面空白处）" aria-label="复位镜头">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="7.5"/>
+          <circle cx="12" cy="12" r="2"/>
+          <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22"/>
+        </svg>
+      </button>
+      <button type="button" class="tool-icon" id="btn-card-open" title="书写并导出烫金圣诞纪念贺卡" aria-label="打开圣诞贺卡工坊">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1.8"/><path d="M3.6 6l8.4 6.5L20.4 6"/></svg>
+      </button>
+      <button type="button" class="tool-icon" id="btn-sound" title="切换四重奏声音" aria-label="声音开关">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 9.5v5h3.5L12 18.2V5.8L7.5 9.5z"/>
+          <path class="sound-waves" d="M15.2 9.2a4.2 4.2 0 0 1 0 5.6M18 6.8a7.6 7.6 0 0 1 0 10.4"/>
+          <path class="sound-mute" d="M15.5 9.5l5 5M20.5 9.5l-5 5"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <p class="whisper-hint" id="whisper-hint">向右拉动纸拉条放飞雪橇 · 拨动星象盘 · 滚轮可推近细赏纸雕与烛台</p>
+
+  <!-- Bottom Quartet Navigation Rail & Star Sigil Progress -->
+  <nav class="quartet-rail" aria-label="四幕剧场切换与星徽收集">
+    <button type="button" class="act-tab is-active" data-act="1">
+      <span class="sigil-star" aria-hidden="true"></span>
+      <span class="tab-num">I</span>
+      <span class="tab-label">纸雕绘本</span>
+    </button>
+    <span class="rail-hairline" aria-hidden="true"></span>
+    <button type="button" class="act-tab" data-act="2">
+      <span class="sigil-star" aria-hidden="true"></span>
+      <span class="tab-num">II</span>
+      <span class="tab-label">黏土工坊</span>
+    </button>
+    <span class="rail-hairline" aria-hidden="true"></span>
+    <button type="button" class="act-tab" data-act="3">
+      <span class="sigil-star" aria-hidden="true"></span>
+      <span class="tab-num">III</span>
+      <span class="tab-label">发条雪球</span>
+    </button>
+    <span class="rail-hairline" aria-hidden="true"></span>
+    <button type="button" class="act-tab" data-act="4">
+      <span class="sigil-star" aria-hidden="true"></span>
+      <span class="tab-num">IV</span>
+      <span class="tab-label">极光琉璃</span>
+    </button>
+    <span class="rail-hairline" id="finale-rail-line" hidden aria-hidden="true"></span>
+    <button type="button" class="act-tab tab-finale" data-act="5" id="tab-finale" hidden>
+      <span class="sigil-star is-lit" aria-hidden="true"></span>
+      <span class="tab-num">V</span>
+      <span class="tab-label">终章走马灯</span>
+    </button>
+  </nav>
+</div>
+
+<div id="sigil-toast" role="status" aria-live="polite"></div>
+
+<!-- Bespoke Gilded Keepsake Card Studio Modal (4 Paper Themes) -->
+<section id="card-modal" class="modal-backdrop" hidden aria-label="烫金火漆圣诞纪念贺卡">
+  <div class="card-studio">
+    <button type="button" class="modal-close" id="btn-card-close" aria-label="关闭贺卡面板">×</button>
+    <div class="card-preview-wrap">
+      <canvas id="keepsake-canvas" width="1080" height="1350"></canvas>
+    </div>
+    <div class="card-controls">
+      <p class="studio-eyebrow">KEEPSAKE ATELIER · 圣 诞 礼 笺</p>
+      <h3>定制专属烫金纪念卡</h3>
+      <p class="studio-desc">任选四幕馆藏特种纸张主题，写下收信人与祝愿，保存印刷级烫金贺卡或复制专属拆封链接。</p>
+
+      <div class="theme-picker" role="radiogroup" aria-label="选择礼笺纸张主题">
+        <button type="button" class="theme-swatch is-selected" data-theme="burgundy" title="I · 勃艮第火漆红金">
+          <i style="background:linear-gradient(135deg,#611a26,#240a0f)"></i><span>勃艮第红</span>
+        </button>
+        <button type="button" class="theme-swatch" data-theme="pine" title="II · 松林冷压棉纸绿金">
+          <i style="background:linear-gradient(135deg,#255441,#0e241b)"></i><span>松林绿金</span>
+        </button>
+        <button type="button" class="theme-swatch" data-theme="horologium" title="III · 午夜天文深蓝鎏金">
+          <i style="background:linear-gradient(135deg,#213b6e,#0b152c)"></i><span>天文深蓝</span>
+        </button>
+        <button type="button" class="theme-swatch" data-theme="aurora" title="IV · 极夜琉璃幻彩紫银">
+          <i style="background:linear-gradient(135deg,#392b75,#143f4d)"></i><span>极夜琉璃</span>
+        </button>
+      </div>
+
+      <label class="field">
+        <span>致（收信人）</span>
+        <input type="text" id="inp-to" maxlength="28" value="亲爱的朋友" placeholder="写下对方的名字…">
+      </label>
+      <label class="field">
+        <span>冬夜祝愿</span>
+        <textarea id="inp-msg" rows="3" maxlength="110" placeholder="写下一句温暖的圣诞祝愿…">愿这四幕微缩冬夜里的烛火、飞雪、八音盒与极光，替我把一整年的温柔与好运送到你身边。圣诞快乐。</textarea>
+      </label>
+      <label class="field">
+        <span>署名</span>
+        <input type="text" id="inp-from" maxlength="24" value="冬夜寄信人" placeholder="你的署名…">
+      </label>
+
+      <div class="studio-actions">
+        <button type="button" class="btn-gold" id="btn-download-card">保存高清烫金贺卡</button>
+        <button type="button" class="btn-ghost" id="btn-copy-link">复制专属惊喜链接</button>
+      </div>
+      <p class="copy-feedback" id="copy-feedback"></p>
+    </div>
+  </div>
+</section>
+
+<div id="nogl" hidden>
+  <p>此微缩剧场需要支持 WebGL2 的现代浏览器。<br>请使用较新版本的 Chrome、Safari、Edge 或 Firefox 打开。</p>
+</div>
+
+<!-- Zero-latency unseal guard: shatters wax & opens 3D flap at 0ms even while WebGL bundle streams! -->
+<script>
+(function () {
+  var btn = document.getElementById('wax-seal-btn');
+  var pro = document.getElementById('prologue');
+  var cap = btn && btn.querySelector('.seal-caption');
+  if (!btn || !pro) return;
+  btn.addEventListener('click', function () {
+    if (typeof window.__enterStage === 'function') {
+      window.__enterStage(false);
+    } else if (!window.__pendingUnseal) {
+      window.__pendingUnseal = true;
+      pro.classList.add('is-pre-unsealing');
+      if (cap) cap.textContent = '正在点亮冬夜微缩剧场…';
+    }
+  });
+})();
+</script>
+<script type="module" src="./dist/bundle.js"></script>
+</body>
+</html>
