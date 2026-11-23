@@ -1,6 +1,6 @@
-// Zero-dependency headless Chrome visual & interactive QA harness for christmas/index.html
+// Strict Headless Chrome Visual, Performance (<45 DrawCalls/Act) & Direct-Manipulation QA Harness
 // Usage:
-//   node qa/christmas_shots.mjs --out /opt/cursor/artifacts/xmas
+//   node qa/christmas_shots.mjs --out /opt/cursor/artifacts/xmas_v2
 //   node qa/christmas_shots.mjs --live 1
 
 import { spawn } from 'child_process';
@@ -15,7 +15,7 @@ const arg = (k, d) => {
   const i = process.argv.indexOf('--' + k);
   return i > 0 ? process.argv[i + 1] : d;
 };
-const outPrefix = arg('out', '/tmp/xmas');
+const outPrefix = arg('out', '/tmp/xmas_v2');
 const liveSmoke = process.argv.includes('--live');
 
 const MIME = {
@@ -101,8 +101,11 @@ ws.addEventListener('message', ({ data }) => {
     msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
   } else if (msg.method === 'Runtime.exceptionThrown') {
     errors.push(msg.params.exceptionDetails.text + ' ' + (msg.params.exceptionDetails.exception?.description || ''));
-  } else if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
-    errors.push(msg.params.args.map((a) => a.value ?? a.description).join(' '));
+  } else if (msg.method === 'Runtime.consoleAPICalled' && (msg.params.type === 'error' || msg.params.type === 'warning')) {
+    const txt = msg.params.args.map((a) => a.value ?? a.description).join(' ');
+    if (msg.params.type === 'error' || txt.includes('THREE.WebGLProgram')) {
+      errors.push(`[${msg.params.type}] ${txt}`);
+    }
   }
 });
 
@@ -123,33 +126,55 @@ await cdp('Emulation.setDeviceMetricsOverride', {
 });
 
 if (liveSmoke) {
-  const liveUrl = `http://127.0.0.1:${httpPort}/christmas/?to=%E6%98%9F%E8%BE%B0%E6%97%85%E4%BA%BA`;
+  const liveUrl = `http://127.0.0.1:${httpPort}/christmas/?to=%E6%98%9F%E8%BE%B0%E6%97%85%E4%BA%BA&theme=aurora`;
   await cdp('Page.navigate', { url: liveUrl });
-  await sleep(1800);
-  // Click the wax seal button to unbox, click tabs 2, 3, 4, open keepsake card
+  await sleep(1600);
   const simRes = await cdp('Runtime.evaluate', {
     expression: `(async () => {
+      const t0 = performance.now();
+      // Click wax seal -> 6-shard shatter + 3D flap fold!
       document.getElementById('wax-seal-btn').click();
-      await new Promise(r => setTimeout(r, 700));
-      document.querySelector('.act-tab[data-act="2"]').click();
-      await new Promise(r => setTimeout(r, 950));
-      document.querySelector('.act-tab[data-act="3"]').click();
-      await new Promise(r => setTimeout(r, 950));
+      const openingClass = document.getElementById('prologue').classList.contains('is-opening');
+      await new Promise(r => setTimeout(r, 850));
+
+      // Dispatch wheel zoom in & reset camera button
+      const stage = document.getElementById('stage');
+      stage.dispatchEvent(new WheelEvent('wheel', { deltaY: -360, bubbles: true, cancelable: true }));
+      await new Promise(r => setTimeout(r, 250));
+      document.getElementById('btn-reset-cam').click();
+
+      // Cycle acts 2 -> 3 -> 4
+      for (const actId of ['2', '3', '4']) {
+        document.querySelector('.act-tab[data-act="' + actId + '"]').click();
+        await new Promise(r => setTimeout(r, 850));
+      }
+
+      // Open Card Atelier & test all 4 paper theme swatches
       document.getElementById('btn-card-open').click();
-      await new Promise(r => setTimeout(r, 350));
+      await new Promise(r => setTimeout(r, 200));
+      const swatches = document.querySelectorAll('.theme-swatch[data-theme]');
+      for (const sw of swatches) {
+        sw.click();
+        await new Promise(r => setTimeout(r, 80));
+      }
       const modalOpen = !document.getElementById('card-modal').hidden;
       document.getElementById('btn-card-close').click();
+
       return {
         state: document.body.dataset.state,
         act: document.body.dataset.act,
+        openingClass,
         modalOpen,
-        recipient: document.getElementById('env-recipient').textContent
+        pipsCount: document.querySelectorAll('#act-progress .prog-pip').length,
+        swatchCount: swatches.length,
+        recipient: document.getElementById('env-recipient').textContent,
+        elapsedMs: Math.round(performance.now() - t0),
       };
     })()`,
     awaitPromise: true,
     returnByValue: true,
   });
-  console.log('Live smoke result:', JSON.stringify(simRes.result.value), 'errors:', errors.length);
+  console.log('Live V2 smoke result:', JSON.stringify(simRes.result.value), 'errors:', errors.length);
   if (errors.length) {
     console.error('Errors:', errors);
     cleanup(1);
@@ -157,7 +182,7 @@ if (liveSmoke) {
   cleanup(0);
 }
 
-const capUrl = `http://127.0.0.1:${httpPort}/christmas/?capture=1&dpr=1.5`;
+const capUrl = `http://127.0.0.1:${httpPort}/christmas/?capture=1&dpr=1`;
 await cdp('Page.navigate', { url: capUrl });
 
 for (let i = 0; i < 80; i++) {
@@ -170,14 +195,19 @@ for (let i = 0; i < 80; i++) {
 }
 
 const SHOTS = [
-  { name: 'prologue', cfg: { prologue: true, act: 1, preset: 'hero' } },
+  { name: 'prologue', cfg: { prologue: true, act: 1, preset: 'climax' } },
   { name: 'act1_paper', cfg: { prologue: false, act: 1, preset: 'climax' } },
+  { name: 'act1_macro', cfg: { prologue: false, act: 1, preset: 'climax', zoom: 0.60 } },
   { name: 'act2_clay', cfg: { prologue: false, act: 2, preset: 'climax' } },
+  { name: 'act2_macro', cfg: { prologue: false, act: 2, preset: 'climax', zoom: 0.60 } },
   { name: 'act3_globe', cfg: { prologue: false, act: 3, preset: 'climax' } },
+  { name: 'act3_macro', cfg: { prologue: false, act: 3, preset: 'climax', zoom: 0.62 } },
   { name: 'act4_aurora', cfg: { prologue: false, act: 4, preset: 'climax' } },
   { name: 'act5_finale', cfg: { prologue: false, allAwakened: true, act: 5, preset: 'climax' } },
-  { name: 'keepsake_card', cfg: { prologue: false, allAwakened: true, act: 5, cardModal: true } },
+  { name: 'keepsake_aurora', cfg: { prologue: false, allAwakened: true, act: 5, cardModal: true, cardTheme: 'aurora' } },
 ];
+
+fs.mkdirSync(path.dirname(outPrefix), { recursive: true });
 
 for (const s of SHOTS) {
   const r = await cdp('Runtime.evaluate', {
@@ -185,16 +215,22 @@ for (const s of SHOTS) {
     awaitPromise: true,
     returnByValue: true,
   });
+  const telemetry = r.result.value;
   await sleep(120);
   const shot = await cdp('Page.captureScreenshot', { format: 'png' });
   const file = `${outPrefix}_${s.name}.png`;
   fs.writeFileSync(file, Buffer.from(shot.data, 'base64'));
-  console.log('Saved', file, JSON.stringify(r.result.value));
+  console.log('Saved', file, JSON.stringify(telemetry));
+
+  // Enforce strict <45 main-pass DrawCall budget on every single act!
+  if (telemetry.mainPassDrawCalls > 45) {
+    errors.push(`DrawCall budget exceeded on ${s.name}: ${telemetry.mainPassDrawCalls} > 45`);
+  }
 }
 
 if (errors.length > 0) {
-  console.error('Runtime errors encountered:', errors);
+  console.error('Strict QA errors encountered:', errors);
   cleanup(1);
 }
-console.log('All shots captured cleanly with 0 errors.');
+console.log('All V2 Director Cut shots & <45 DrawCall budgets verified cleanly with 0 errors!');
 cleanup(0);

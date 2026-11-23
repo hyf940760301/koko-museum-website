@@ -1,17 +1,27 @@
-// Act IV: Aurora Dichroic Crystal Wonderland — "Sanctuary of Polaris" (北极星圣殿)
-// Real-time flowing silk-curtain aurora dome shader, obsidian mirror ice floor, Fibonacci-spiral
-// dichroic crystal prism Christmas tree, interactive 8-note Glass Harmonica chimes, cursor starlight
-// trail blooming crystal ice-lotuses, and 5-node Constellation Ignition!
+// Act IV: Aurora Dichroic Crystal Wonderland — "The Polaris Sanctuary" (北极星圣殿 · V2 Director's Cut)
+// Craftsmanship & GPU Engineering highlights:
+// - Eliminates Three.js native `transmission` double-scene render overhead! Uses our bespoke
+//   Spectral Dichroic Prism Shader sampling PostPipeline.refractRT with RGB chromatic fire.
+// - True Half-Res Planar Mirror Reflection (mirrorRT + mirrored virtual camera across y=0) so every
+//   flowing green/violet aurora curtain, crystal prism & chime reflects 1:1 in the black-ice lake!
+// - 2-Layer Parallax Glacial Frost Veins (shallow 4cm razor cracks + deep 28cm abyssal blue fractures).
+// - Twin Sculpted Blown-Glass Dichroic Spirit Stags flanking the crystal tree, 3 counter-rotating
+//   golden astrolabe rings, celestial chime suspension archway with inner clappers & vertical Aurora shaft!
 
 import * as THREE from '../vendor/three.module.js';
 import {
   Spring1D,
-  Spring3D,
   clamp,
   lerp,
+  mergeGeometries,
+  transformGeo,
   createCrystalPrismGeometry,
   createFacetedStarGeometry,
+  createDichroicPrismMaterial,
+  createVolumetricShaftMaterial,
+  injectAnisotropicBrass,
 } from './physics.js';
+import { CuratedMacroRig } from './camera_rig.js';
 
 const AURORA_VS = /* glsl */`
 varying vec3 vDir;
@@ -35,192 +45,298 @@ float hash21(vec2 p) {
 float noise2(vec2 p) {
   vec2 i = floor(p);
   vec2 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
+  vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(
-    mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
-    mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x),
-    f.y
+    mix(hash21(i), hash21(i + vec2(1.0, 0.0)), u.x),
+    mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), u.x),
+    u.y
   );
 }
 
 void main() {
+  // Support upside-down reflection rays by taking abs(vDir.y) when needed, or natural dome y
   vec3 d = normalize(vDir);
-  float h = clamp(d.y, -0.2, 1.0);
+  float h = clamp(d.y, 0.0, 1.0);
 
-  // Polar night deep indigo-violet sky gradient
-  vec3 sky = mix(vec3(0.025, 0.045, 0.11), vec3(0.008, 0.012, 0.038), smoothstep(0.0, 0.85, max(h, 0.0)));
+  vec3 zenith = vec3(0.012, 0.022, 0.068);
+  vec3 horizon = vec3(0.024, 0.065, 0.118);
+  vec3 sky = mix(horizon, zenith, pow(h, 0.65));
 
-  // Crisp circular polar starfield (never square grid cells)
-  vec2 starUv = d.xz / (abs(d.y) + 0.35) * 46.0;
-  vec2 starCell = floor(starUv);
-  vec2 starFrac = fract(starUv) - 0.5;
-  float st = hash21(starCell);
-  if (st > 0.965 && d.y > 0.01) {
-    vec2 jitter = vec2(hash21(starCell + 7.1), hash21(starCell + 19.3)) - 0.5;
-    float dist = length(starFrac - jitter * 0.55);
-    float pinpoint = smoothstep(0.14, 0.0, dist);
-    float tw = 0.55 + 0.45 * sin(uTime * 3.2 + st * 90.0);
-    sky += vec3(0.88, 0.94, 1.0) * tw * pinpoint * 2.8;
+  vec2 uv = d.xz / (h + 0.22);
+  vec3 aurora = vec3(0.0);
+  for (int i = 0; i < 3; i++) {
+    float fi = float(i);
+    float speed = (0.14 + fi * 0.05) * (1.0 + uSurge * 0.8);
+    float wave = sin(uv.x * (1.65 + fi * 0.72) + uTime * speed + noise2(uv * 1.45 + fi * 3.1) * 3.0);
+    // Centered across the -Z polar vista (uv.y ~ -1.6) directly behind the Polaris Sanctuary!
+    float ribbon = exp(-abs(uv.y + 1.65 + wave * 0.52 - (fi - 1.0) * 0.55) * (2.6 + fi * 0.5));
+    float verticalMask = smoothstep(0.04, 0.22, h) * smoothstep(0.92, 0.36, h);
+    float striations = 0.55 + 0.45 * noise2(vec2(uv.x * 16.0 + uTime * 0.35, h * 9.0 + fi));
+
+    vec3 cGreen = vec3(0.14, 1.0, 0.66);
+    vec3 cCyan = vec3(0.20, 0.85, 1.0);
+    vec3 cViolet = vec3(0.72, 0.32, 1.0);
+    vec3 ribCol = mix(cGreen, cCyan, fi * 0.45);
+    ribCol = mix(ribCol, cViolet, smoothstep(0.24, 0.68, h));
+
+    aurora += ribCol * ribbon * verticalMask * striations * (0.92 + uSurge * 0.75);
   }
 
-  // Multi-curtain flowing polar aurora ribbons with vivid vertical magnetic rays
-  if (d.y > -0.04) {
-    vec2 p = d.xz / (d.y + 0.42);
-    float wave1 = sin(p.x * 1.7 + uTime * 0.28 + sin(p.y * 1.4 - uTime * 0.2) * 1.6);
-    float wave2 = sin(p.x * 2.8 - uTime * 0.22 + cos(p.y * 2.0 + uTime * 0.18) * 1.3);
+  vec2 starGrid = d.xz / (h + 0.35) * 44.0;
+  vec2 starId = floor(starGrid);
+  vec2 starF = fract(starGrid) - 0.5;
+  float sRnd = hash21(starId);
+  float starDot = smoothstep(0.14, 0.0, length(starF));
+  float star = step(0.968, sRnd) * starDot * smoothstep(0.08, 0.35, h);
+  float twinkle = 0.6 + 0.4 * sin(uTime * 3.2 + sRnd * 60.0);
+  sky += vec3(0.9, 0.96, 1.0) * star * twinkle * 1.35;
 
-    float band1 = exp(-pow((p.y + 0.55 - wave1 * 0.36) * 2.4, 2.0));
-    float band2 = exp(-pow((p.y + 0.95 - wave2 * 0.34) * 2.7, 2.0));
-
-    // Fine vertical magnetic-field striations along the aurora curtains
-    float rays1 = pow(0.35 + 0.65 * noise2(vec2(p.x * 16.0 + uTime * 0.45, d.y * 4.5)), 1.4);
-    float rays2 = pow(0.35 + 0.65 * noise2(vec2(p.x * 22.0 - uTime * 0.38, d.y * 5.0 + 7.0)), 1.4);
-
-    float fadeH = smoothstep(-0.02, 0.14, d.y) * (1.0 - smoothstep(0.55, 0.92, d.y));
-    float a1 = band1 * rays1 * fadeH;
-    float a2 = band2 * rays2 * fadeH;
-
-    vec3 colEmerald = vec3(0.12, 1.0, 0.74);
-    vec3 colViolet = vec3(0.66, 0.32, 1.0);
-    vec3 colCyan = vec3(0.22, 0.84, 1.0);
-
-    vec3 aur = mix(colEmerald, colViolet, clamp(d.y * 2.1, 0.0, 1.0)) * a1 * 2.35;
-    aur += mix(colCyan, colViolet, clamp(d.y * 1.8 + 0.18, 0.0, 1.0)) * a2 * 1.85;
-    sky += aur * (1.0 + uSurge * 0.95);
-  }
-
-  gl_FragColor = vec4(sky, 1.0);
+  gl_FragColor = vec4(sky + aurora, 1.0);
 }
 `;
 
-export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) {
+// Planar Mirror Obsidian Black-Ice Floor Shader with 2-Layer Parallax Glacial Frost Veins!
+const BLACK_ICE_VS = /* glsl */`
+varying vec2 vUv;
+varying vec3 vWorldPos;
+varying vec4 vScreenPos;
+void main() {
+  vUv = uv;
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vWorldPos = wp.xyz;
+  vScreenPos = projectionMatrix * viewMatrix * wp;
+  gl_Position = vScreenPos;
+}
+`;
+
+const BLACK_ICE_FS = /* glsl */`
+uniform sampler2D tMirror;
+uniform sampler2D tVeins;
+uniform float uTime;
+uniform float uEnergy;
+varying vec2 vUv;
+varying vec3 vWorldPos;
+varying vec4 vScreenPos;
+
+void main() {
+  vec3 V = normalize(cameraPosition - vWorldPos);
+  float ndv = clamp(V.y, 0.02, 1.0);
+  float fresnel = 0.38 + 0.58 * pow(1.0 - ndv, 2.8);
+
+  // Subtle ice-micro-undulation ripple on planar mirror UV
+  vec2 worldUV = vWorldPos.xz * 0.12;
+  vec2 ripple = vec2(
+    sin(vWorldPos.x * 3.2 + vWorldPos.z * 2.1) * 0.0032,
+    cos(vWorldPos.z * 3.6 - vWorldPos.x * 1.8) * 0.0032
+  );
+
+  // Mirror camera renders with flipped Y; screen X matches, screen Y flips!
+  vec2 sUv = (vScreenPos.xy / max(vScreenPos.w, 1e-4)) * 0.5 + 0.5;
+  vec2 reflUv = clamp(vec2(sUv.x, 1.0 - sUv.y) + ripple, vec2(0.003), vec2(0.997));
+  vec3 mirrorCol = texture2D(tMirror, reflUv).rgb;
+
+  // 2-Layer Parallax Offset Mapping into deep frozen abyssal ice!
+  vec2 parallaxDir = (V.xz / max(ndv + 0.25, 0.28));
+  float shallowCrack = texture2D(tVeins, worldUV * 1.65 - parallaxDir * 0.016).r;
+  float deepFracture = texture2D(tVeins, worldUV * 0.95 - parallaxDir * 0.072).g;
+
+  vec3 abyssBase = vec3(0.008, 0.020, 0.045);
+  vec3 crackCol = vec3(0.32, 0.78, 0.96) * shallowCrack * (0.11 + uEnergy * 0.07)
+                + vec3(0.09, 0.42, 0.72) * deepFracture * (0.14 + uEnergy * 0.08);
+
+  // Distance radial fade so horizon blends seamlessly into aurora mist
+  float distFade = 1.0 - smoothstep(7.0, 20.0, length(vWorldPos.xz));
+  vec3 col = mix(abyssBase + crackCol, mirrorCol * 1.06 + crackCol * 0.35, fresnel);
+  col = mix(vec3(0.016, 0.046, 0.090), col, distFade);
+
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+const _mirrorCam = new THREE.PerspectiveCamera();
+const _mirTarget = new THREE.Vector3();
+const _camDir = new THREE.Vector3();
+
+// Sculpted Blown-Glass Dichroic Spirit Stag Builder (graceful spline body + faceted antlers)
+function buildCrystalSpiritStagGeo(lookBack = false) {
+  const parts = [];
+  const headTurn = lookBack ? -0.65 : 0.15;
+  // Arched torso
+  const spineCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-0.32, 0.48, 0),
+    new THREE.Vector3(0.0, 0.52, 0),
+    new THREE.Vector3(0.28, 0.56, 0),
+    new THREE.Vector3(0.38, 0.88, Math.sin(headTurn) * 0.08),
+    new THREE.Vector3(0.48 * Math.cos(headTurn), 0.96, Math.sin(headTurn) * 0.22),
+  ]);
+  parts.push(new THREE.TubeGeometry(spineCurve, 24, 0.078, 8, false));
+  // Slender crystal legs
+  const legCoords = [
+    [-0.28, 0.0, -0.07, -0.26, 0.48, -0.06],
+    [-0.24, 0.0, 0.07, -0.24, 0.48, 0.06],
+    [0.24, 0.0, -0.07, 0.22, 0.54, -0.06],
+    [0.28, 0.0, 0.07, 0.25, 0.54, 0.06],
+  ];
+  for (const [x0, y0, z0, x1, y1, z1] of legCoords) {
+    parts.push(new THREE.TubeGeometry(new THREE.LineCurve3(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1)), 4, 0.024, 6, false));
+  }
+  // Faceted crystal crown antlers!
+  const hx = 0.40, hy = 0.95, hz = Math.sin(headTurn) * 0.16;
+  for (const sz of [-1, 1]) {
+    const antlerCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(hx, hy, hz),
+      new THREE.Vector3(hx - 0.06, hy + 0.20, hz + sz * 0.14),
+      new THREE.Vector3(hx - 0.14, hy + 0.38, hz + sz * 0.24),
+    ]);
+    parts.push(new THREE.TubeGeometry(antlerCurve, 12, 0.015, 5, false));
+    parts.push(transformGeo(createCrystalPrismGeometry({ sides: 5, radius: 0.032, height: 0.14 }), { x: hx - 0.14, y: hy + 0.42, z: hz + sz * 0.24 }));
+  }
+  return mergeGeometries(parts, true);
+}
+
+export function createAct4Aurora({ envMap, textures, refractTex, audio, onAwaken, onHint }) {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x040712);
+  scene.background = new THREE.Color(0x040711);
   scene.environment = envMap;
 
-  const camBasePos = new THREE.Vector3(0, 2.55, 9.25);
-  const camBaseLook = new THREE.Vector3(0, 2.35, 0);
-  const camPosSpring = new Spring3D(camBasePos.x, camBasePos.y, camBasePos.z, 62, 14);
-  const camLookSpring = new Spring3D(camBaseLook.x, camBaseLook.y, camBaseLook.z, 72, 15);
+  const cameraRig = new CuratedMacroRig(
+    new THREE.Vector3(0, 2.52, 8.75),
+    new THREE.Vector3(0, 2.28, 0),
+    { parallaxX: 0.82, parallaxY: 0.46, minZoom: 0.56, maxZoom: 1.18 }
+  );
 
-  // Ethereal polar & champagne lighting
-  const amb = new THREE.AmbientLight(0x1f365c, 0.9);
-  scene.add(amb);
+  // Half-Res Planar Mirror RenderTarget for real-time Aurora & Crystal Tree reflection on black ice!
+  const mirrorRT = new THREE.WebGLRenderTarget(512, 512, {
+    type: THREE.HalfFloatType,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+  });
 
-  const keyCyan = new THREE.DirectionalLight(0x70ffe0, 1.85);
-  keyCyan.position.set(-6, 9, 5);
-  scene.add(keyCyan);
+  // ---------------- Lighting ----------------
+  scene.add(new THREE.AmbientLight(0x1f3652, 0.9));
 
-  const keyGold = new THREE.DirectionalLight(0xffe5b4, 2.1);
-  keyGold.position.set(6, 8, 6);
-  scene.add(keyGold);
+  const keyLight = new THREE.DirectionalLight(0xd8f6ff, 2.3);
+  keyLight.position.set(5.5, 9.5, 6.5);
+  scene.add(keyLight);
 
-  const treeHeartLight = new THREE.PointLight(0x9beeff, 2.2, 11, 1.5);
-  treeHeartLight.position.set(0, 2.6, 0);
+  const rimViolet = new THREE.DirectionalLight(0xb978ff, 1.65);
+  rimViolet.position.set(-6.5, 5.5, -5.0);
+  scene.add(rimViolet);
+
+  const treeHeartLight = new THREE.PointLight(0x52ffd8, 2.1, 10.5, 1.5);
+  treeHeartLight.position.set(0, 2.4, 0);
   scene.add(treeHeartLight);
 
-  // ---------------- Silk-Curtain Polar Aurora Sky Dome ----------------
+  // ---------------- Aurora Sky Dome ----------------
   const auroraMat = new THREE.ShaderMaterial({
     vertexShader: AURORA_VS,
     fragmentShader: AURORA_FS,
+    side: THREE.BackSide,
+    depthWrite: false,
     uniforms: {
       uTime: { value: 0 },
       uSurge: { value: 0 },
     },
-    side: THREE.BackSide,
-    depthWrite: false,
   });
   const skyDome = new THREE.Mesh(new THREE.SphereGeometry(52, 48, 32), auroraMat);
   scene.add(skyDome);
 
-  // ---------------- Obsidian Black-Ice Mirror Floor & Gold Astrolabe Compass ----------------
-  const iceFloor = new THREE.Mesh(
-    new THREE.CircleGeometry(24, 64),
-    new THREE.MeshPhysicalMaterial({
-      color: 0x091326,
-      roughness: 0.08,
-      metalness: 0.35,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.06,
-      iridescence: 0.55,
-      iridescenceIOR: 1.5,
-      envMapIntensity: 2.2,
-    })
-  );
+  // ---------------- Planar Mirror Black-Ice Floor with 2-Layer Parallax Frost Veins ----------------
+  const blackIceMat = new THREE.ShaderMaterial({
+    vertexShader: BLACK_ICE_VS,
+    fragmentShader: BLACK_ICE_FS,
+    uniforms: {
+      tMirror: { value: mirrorRT.texture },
+      tVeins: { value: textures.iceVeinTex },
+      uTime: { value: 0 },
+      uEnergy: { value: 0.35 },
+    },
+  });
+  const iceFloor = new THREE.Mesh(new THREE.CircleGeometry(22, 72), blackIceMat);
   iceFloor.rotation.x = -Math.PI * 0.5;
   iceFloor.position.y = 0;
   scene.add(iceFloor);
 
-  const matChampagneGold = new THREE.MeshPhysicalMaterial({
-    color: 0xf7dfaa,
-    metalness: 0.96,
-    roughness: 0.16,
-    envMapIntensity: 2.5,
-  });
+  const matChampagneGold = injectAnisotropicBrass(
+    new THREE.MeshPhysicalMaterial({
+      color: 0xf7dfaa,
+      roughnessMap: textures.brassTex,
+      metalness: 0.96,
+      roughness: 0.16,
+      envMapIntensity: 2.55,
+    }),
+    { anisoStrength: 0.40, patinaStrength: 0.14 }
+  );
 
-  // Inlaid golden sacred geometry rings on the black ice
+  // Batched Sacred Geometry Floor Rings + Celestial Chime Archway Beam!
+  const staticGoldSanctuaryParts = [];
   for (const [r, w] of [[1.65, 0.018], [2.85, 0.022], [4.15, 0.015]]) {
-    const ring = new THREE.Mesh(new THREE.RingGeometry(r, r + w, 72), matChampagneGold);
-    ring.rotation.x = -Math.PI * 0.5;
-    ring.position.y = 0.008;
-    scene.add(ring);
+    staticGoldSanctuaryParts.push(transformGeo(new THREE.RingGeometry(r, r + w, 72), { y: 0.008, rx: -Math.PI * 0.5 }));
   }
 
-  // ---------------- Dichroic Iridescent Crystal Christmas Tree ----------------
+  // Sweeping Celestial Suspension Archway Beam holding the 8 Glass Chimes!
+  const archPts = [];
+  for (let i = 0; i <= 36; i++) {
+    const u = i / 36;
+    const ang = lerp(-1.26, 1.26, u);
+    const r = 3.05;
+    const x = Math.sin(ang) * r;
+    const z = Math.cos(ang) * r * 0.72 + 0.55;
+    const y = 2.68 + Math.cos((u - 0.5) * Math.PI) * 0.55;
+    archPts.push(new THREE.Vector3(x, y, z));
+  }
+  staticGoldSanctuaryParts.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(archPts), 56, 0.018, 8, false));
+
+  // ---------------- Spectral Dichroic Crystal Tree, Astrolabe Rings & Spirit Stags ----------------
   const treeRoot = new THREE.Group();
   scene.add(treeRoot);
 
-  // Dichroic crystal material: high iridescence + thin-film interference + glass clarity
-  const matDichroic = new THREE.MeshPhysicalMaterial({
-    color: 0xdff8ff,
-    emissive: new THREE.Color(0x1b4668),
-    emissiveIntensity: 0.35,
-    metalness: 0.12,
-    roughness: 0.07,
-    transmission: 0.72,
-    ior: 1.65,
-    thickness: 0.65,
-    iridescence: 1.0,
-    iridescenceIOR: 1.85,
-    iridescenceThicknessRange: [160, 680],
-    clearcoat: 1.0,
-    clearcoatRoughness: 0.05,
-    envMapIntensity: 2.8,
+  const refractMeshes = [];
+  const matDichroic = createDichroicPrismMaterial(refractTex, {
+    tint: 0xe2faff,
+    emissive: 0x1b4d70,
+    emissiveIntensity: 0.38,
+    dispersion: 0.030,
   });
 
-  // Twin champagne-silver spun ribbons spiraling up the crystal tree
+  // Twin champagne-gold ribbons + inner crystalline core spire
+  const treeRibbonParts = [];
   for (let s = 0; s < 2; s++) {
     const pts = [];
-    const turns = 4.2;
-    for (let i = 0; i <= 90; i++) {
-      const u = i / 90;
-      const a = u * turns * Math.PI * 2 + s * Math.PI;
+    for (let i = 0; i <= 84; i++) {
+      const u = i / 84;
+      const a = u * 4.2 * Math.PI * 2 + s * Math.PI;
       const r = lerp(1.75, 0.08, Math.pow(u, 0.88));
       const y = 0.25 + u * 4.25;
       pts.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r));
     }
-    const curve = new THREE.CatmullRomCurve3(pts);
-    const ribbon = new THREE.Mesh(
-      new THREE.TubeGeometry(curve, 120, 0.018, 8, false),
-      matChampagneGold
-    );
-    treeRoot.add(ribbon);
+    treeRibbonParts.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 100, 0.017, 7, false));
+  }
+  treeRoot.add(new THREE.Mesh(mergeGeometries(treeRibbonParts), matChampagneGold));
+
+  // 3 Counter-Rotating Golden Astrolabe Halo Rings around the Crystal Tree!
+  const astrolabeRings = [];
+  for (let r = 0; r < 3; r++) {
+    const ringMesh = new THREE.Mesh(new THREE.TorusGeometry(1.45 - r * 0.32, 0.013, 8, 56), matChampagneGold);
+    ringMesh.position.y = 1.45 + r * 0.95;
+    ringMesh.rotation.x = 0.35 * (r % 2 === 0 ? 1 : -1);
+    ringMesh.rotation.z = 0.22 * (r - 1);
+    treeRoot.add(ringMesh);
+    astrolabeRings.push(ringMesh);
   }
 
-  // 220 Fibonacci-spiral suspended bicone crystal prisms forming the radiant tree canopy!
+  // 220 Fibonacci-Spiral Dichroic Crystal Prisms (1 InstancedMesh DrawCall, Zero native transmission!)
   const prismCount = 220;
   const prismGeo = createCrystalPrismGeometry({ sides: 6, radius: 0.11, height: 0.38, waist: 0.16 });
   const prismInst = new THREE.InstancedMesh(prismGeo, matDichroic, prismCount);
-  const prismData = [];
   const dummy = new THREE.Object3D();
-
   for (let i = 0; i < prismCount; i++) {
     const u = i / prismCount;
     const ang = i * 2.3999632;
     const rad = lerp(1.68, 0.12, Math.pow(u, 0.82)) * (0.88 + 0.18 * Math.sin(i * 3.7));
     const y = 0.32 + u * 4.12;
     const scale = lerp(1.15, 0.58, u);
-    prismData.push({ ang, rad, y, scale, phase: Math.random() * Math.PI * 2 });
     dummy.position.set(Math.cos(ang) * rad, y, Math.sin(ang) * rad);
     dummy.rotation.set(0.12 * Math.sin(i), -ang, 0.15 * Math.cos(i));
     dummy.scale.setScalar(scale);
@@ -228,16 +344,25 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
     prismInst.setMatrixAt(i, dummy.matrix);
   }
   treeRoot.add(prismInst);
+  refractMeshes.push(prismInst);
 
-  // Crown Polaris Diamond Star atop the crystal sanctuary tree
-  const polarisMat = new THREE.MeshPhysicalMaterial({
+  // Twin Blown-Glass Dichroic Spirit Stags flanking the Crystal Sanctuary Tree!
+  const stagLeft = new THREE.Mesh(buildCrystalSpiritStagGeo(false), matDichroic);
+  stagLeft.position.set(-1.95, 0.02, 0.65);
+  stagLeft.rotation.y = 0.52;
+  const stagRight = new THREE.Mesh(buildCrystalSpiritStagGeo(true), matDichroic);
+  stagRight.position.set(1.98, 0.02, 0.58);
+  stagRight.rotation.y = Math.PI - 0.58;
+  scene.add(stagLeft, stagRight);
+  refractMeshes.push(stagLeft, stagRight);
+
+  // Crown Polaris Diamond Star + Vertical Aurora Sanctuary Shaft!
+  const polarisMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     emissive: new THREE.Color(0x8cf6ff),
-    emissiveIntensity: 1.8,
+    emissiveIntensity: 1.85,
     metalness: 0.3,
     roughness: 0.08,
-    iridescence: 1.0,
-    envMapIntensity: 3.0,
   });
   const polarisStar = new THREE.Mesh(
     createFacetedStarGeometry({ points: 8, outerRadius: 0.52, innerRadius: 0.18, depth: 0.16 }),
@@ -246,43 +371,35 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
   polarisStar.position.y = 4.78;
   treeRoot.add(polarisStar);
 
+  const auroraShaftMat = createVolumetricShaftMaterial({ color: 0x62ffda, opacity: 0.10, power: 2.5 });
+  const auroraShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 1.85, 5.2, 24, 1, true), auroraShaftMat);
+  auroraShaft.position.y = 2.45;
+  scene.add(auroraShaft);
+
   const interactables = [];
 
-  // ---------------- Mechanism 1: 8 Suspended Dichroic Glass Harmonica Chimes ----------------
+  // ---------------- Mechanism 1: 8 Dichroic Glass Harmonica Chimes with Inner Golden Clappers ----------------
   const chimes = [];
   const chimePalette = [0x6efce0, 0x74d8ff, 0xa89cff, 0xf5b8ff, 0xffe29e, 0x7effc4, 0x8bc8ff, 0xd8a8ff];
   for (let i = 0; i < 8; i++) {
     const u = i / 7;
-    const ang = lerp(-1.18, 1.18, u); // graceful front semicircle arc facing viewer
+    const ang = lerp(-1.18, 1.18, u);
     const r = 3.05;
     const x = Math.sin(ang) * r;
     const z = Math.cos(ang) * r * 0.72 + 0.55;
-    const topY = 2.65 + Math.cos((u - 0.5) * Math.PI) * 0.55;
+    const topY = 2.68 + Math.cos((u - 0.5) * Math.PI) * 0.55;
 
-    const anchor = new THREE.Group();
-    anchor.position.set(x, topY, z);
-    scene.add(anchor);
-
-    // Fine gold suspension filament
-    const thread = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.9, 6), matChampagneGold);
-    thread.position.y = -0.45;
-    anchor.add(thread);
+    staticGoldSanctuaryParts.push(transformGeo(new THREE.CylinderGeometry(0.005, 0.005, 0.85, 6), { x, y: topY - 0.42, z }));
 
     const pendulum = new THREE.Group();
-    pendulum.position.y = -0.85;
-    anchor.add(pendulum);
+    pendulum.position.set(x, topY - 0.85, z);
+    scene.add(pendulum);
 
-    const cMat = new THREE.MeshPhysicalMaterial({
-      color: chimePalette[i],
-      emissive: new THREE.Color(chimePalette[i]),
+    const cMat = createDichroicPrismMaterial(refractTex, {
+      tint: chimePalette[i],
+      emissive: chimePalette[i],
       emissiveIntensity: 0.35,
-      roughness: 0.06,
-      metalness: 0.1,
-      transmission: 0.78,
-      ior: 1.6,
-      iridescence: 1.0,
-      iridescenceIOR: 1.9,
-      envMapIntensity: 2.6,
+      dispersion: 0.032,
     });
     const len = 0.78 - Math.abs(i - 3.5) * 0.055;
     const crystalBar = new THREE.Mesh(
@@ -290,14 +407,16 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
       cMat
     );
     pendulum.add(crystalBar);
+    refractMeshes.push(crystalBar);
 
-    const hit = new THREE.Mesh(
-      new THREE.BoxGeometry(0.48, 1.15, 0.48),
-      new THREE.MeshBasicMaterial({ visible: false })
-    );
+    const hit = new THREE.Mesh(new THREE.BoxGeometry(0.48, 1.15, 0.48), new THREE.MeshBasicMaterial({ visible: false }));
     const chimeObj = {
       idx: i,
       pendulum,
+      baseX: x,
+      baseY: topY - 0.85,
+      baseZ: z,
+      clapperDrop: len * 0.42,
       mat: cMat,
       swing: new Spring1D(0, 185, 7),
       glow: new Spring1D(0.35, 90, 12),
@@ -309,31 +428,33 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
     chimes.push(chimeObj);
   }
 
-  // ---------------- Mechanism 2: 6 Crystal Ice-Lotuses on the Mirror Floor ----------------
+  // Single InstancedMesh for all 8 golden chime clappers (1 DrawCall instead of 8!)
+  const clapperInstanced = new THREE.InstancedMesh(new THREE.SphereGeometry(0.034, 10, 8), matChampagneGold, 8);
+  scene.add(clapperInstanced);
+  const _clapDummy = new THREE.Object3D();
+
+  scene.add(new THREE.Mesh(mergeGeometries(staticGoldSanctuaryParts), matChampagneGold));
+
+  // ---------------- Mechanism 2: 6 Crystal Ice-Lotuses (Single 36-Petal InstancedMesh!) ----------------
   const lotuses = [];
+  const petalGeo = createCrystalPrismGeometry({ sides: 4, radius: 0.085, height: 0.34, waist: 0.15 });
+  const lotusInstanced = new THREE.InstancedMesh(petalGeo, matDichroic, 36);
+  scene.add(lotusInstanced);
+  refractMeshes.push(lotusInstanced);
+
+  const _lotusRootMat = new THREE.Matrix4();
+  const _lotusPivMat = new THREE.Matrix4();
+  const _lotusPetMat = new THREE.Matrix4();
+  const _lotusEuler = new THREE.Euler();
+
   for (let l = 0; l < 6; l++) {
     const a = (l / 6) * Math.PI * 2 + 0.52;
     const r = 2.25;
-    const g = new THREE.Group();
-    g.position.set(Math.cos(a) * r, 0.04, Math.sin(a) * r);
-    scene.add(g);
-
-    const petals = [];
-    for (let p = 0; p < 6; p++) {
-      const pa = (p / 6) * Math.PI * 2;
-      const piv = new THREE.Group();
-      piv.rotation.y = pa;
-      const pet = new THREE.Mesh(
-        createCrystalPrismGeometry({ sides: 4, radius: 0.085, height: 0.34, waist: 0.15 }),
-        matDichroic
-      );
-      pet.position.set(0.08, 0.15, 0);
-      pet.rotation.z = -0.35;
-      piv.add(pet);
-      g.add(piv);
-      petals.push(pet);
-    }
-    lotuses.push({ group: g, petals, bloom: new Spring1D(0.2, 95, 12) });
+    lotuses.push({
+      x: Math.cos(a) * r,
+      z: Math.sin(a) * r,
+      bloom: new Spring1D(0.2, 95, 12),
+    });
   }
 
   // ---------------- Mechanism 3: 5 Floating Constellation Polaris Nodes ----------------
@@ -341,7 +462,7 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
   const nodeCoords = [
     [-2.25, 3.55, -0.35],
     [-1.35, 4.45, 0.25],
-    [0.0, 4.78, 0.55], // Near apex
+    [0.0, 4.78, 0.55],
     [1.35, 4.45, 0.25],
     [2.25, 3.55, -0.35],
   ];
@@ -355,7 +476,7 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
     const nMat = new THREE.MeshStandardMaterial({
       color: 0xeafaff,
       emissive: new THREE.Color(0x4ef6da),
-      emissiveIntensity: 0.42,
+      emissiveIntensity: 0.48,
       roughness: 0.15,
       metalness: 0.5,
     });
@@ -366,33 +487,17 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
     const halo = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.012, 8, 32), matChampagneGold);
     ng.add(starMesh, halo);
 
-    // Golden constellation beam linking node to the Crown Polaris Star (0, 4.78, 0)
-    const pStart = new THREE.Vector3(nx, ny, nz);
-    const pEnd = new THREE.Vector3(0, 4.78, 0);
-    const beamCurve = new THREE.LineCurve3(pStart, pEnd);
+    const beamCurve = new THREE.LineCurve3(new THREE.Vector3(nx, ny, nz), new THREE.Vector3(0, 4.78, 0));
     const beamMat = new THREE.MeshBasicMaterial({
       color: 0x9effec,
       transparent: true,
       opacity: 0,
       blending: THREE.AdditiveBlending,
     });
-    const beam = new THREE.Mesh(new THREE.TubeGeometry(beamCurve, 8, 0.014, 6, false), beamMat);
-    scene.add(beam);
+    scene.add(new THREE.Mesh(new THREE.TubeGeometry(beamCurve, 6, 0.014, 6, false), beamMat));
 
-    const hit = new THREE.Mesh(
-      new THREE.SphereGeometry(0.46, 12, 10),
-      new THREE.MeshBasicMaterial({ visible: false })
-    );
-    const nodeObj = {
-      idx: n,
-      lit: false,
-      group: ng,
-      starMesh,
-      halo,
-      mat: nMat,
-      beamMat,
-      glowSpring: new Spring1D(0.42, 110, 12),
-    };
+    const hit = new THREE.Mesh(new THREE.SphereGeometry(0.46, 10, 8), new THREE.MeshBasicMaterial({ visible: false }));
+    const nodeObj = { idx: n, lit: false, group: ng, starMesh, halo, mat: nMat, beamMat, glowSpring: new Spring1D(0.45, 110, 12) };
     hit.userData = { kind: 'star_node', nodeObj, label: `点亮第 ${n + 1} 颗极光星冕节点` };
     ng.add(hit);
     interactables.push(hit);
@@ -403,20 +508,20 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
   const trailCount = 72;
   const trailGeo = new THREE.BufferGeometry();
   const trailPos = new Float32Array(trailCount * 3);
-  for (let i = 0; i < trailCount; i++) {
-    trailPos[i * 3 + 1] = -20; // hidden initially
-  }
+  for (let i = 0; i < trailCount; i++) trailPos[i * 3 + 1] = -20;
   trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
-  const trailMat = new THREE.PointsMaterial({
-    map: textures.sparkTex,
-    color: 0xbfffe8,
-    size: 0.30,
-    transparent: true,
-    opacity: 0.85,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const trailPoints = new THREE.Points(trailGeo, trailMat);
+  const trailPoints = new THREE.Points(
+    trailGeo,
+    new THREE.PointsMaterial({
+      map: textures.sparkTex,
+      color: 0xbfffe8,
+      size: 0.28,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+  );
   scene.add(trailPoints);
   let trailHead = 0;
 
@@ -424,23 +529,30 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
   let chimesPlayed = 0;
   let litNodesCount = 0;
   let awakened = false;
-  const treeEnergySpring = new Spring1D(0.35, 75, 13);
+  const treeEnergySpring = new Spring1D(0.38, 75, 13);
   const surgeSpring = new Spring1D(0, 55, 11);
+
+  function getProgress() {
+    const cStep = chimesPlayed >= 2 ? 1 : 0;
+    const nStep1 = litNodesCount >= 1 ? 1 : 0;
+    const nStep2 = awakened ? 1 : 0;
+    return { current: Math.min(3, cStep + nStep1 + nStep2), total: 3 };
+  }
 
   function checkAwaken() {
     if (awakened) return;
     if (litNodesCount >= 3 || (litNodesCount >= 2 && chimesPlayed >= 4) || chimesPlayed >= 6) {
       awakened = true;
-      // Ignite all remaining constellation nodes in celebration!
       for (const nd of nodes) {
         nd.lit = true;
         nd.glowSpring.target = 3.2;
       }
-      treeEnergySpring.target = 2.4;
+      treeEnergySpring.target = 2.45;
       surgeSpring.target = 1.0;
+      cameraRig.focusOn(0, 0.65, 0, 0.82, 2.2);
       audio.playSigilAwaken();
       onAwaken(4, '第四声部已唤醒 · 水晶玻璃琴与极光圣咏齐鸣');
-      onHint('北极星圣殿全冠点亮 · 四重奏终章已就绪');
+      onHint('北极星圣殿全冠点亮 · 黑冰实时倒映漫天极光，终章已就绪');
     }
   }
 
@@ -448,7 +560,7 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
     if (cObj.cooldown > 0) return;
     cObj.cooldown = 0.16;
     cObj.swing.impulse((Math.random() > 0.5 ? 1 : -1) * 5.2);
-    cObj.glow.snap(2.8);
+    cObj.glow.snap(2.6);
     cObj.glow.target = 0.55;
     audio.playCrystalHarmonica(cObj.idx);
     chimesPlayed++;
@@ -482,7 +594,6 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
     return false;
   }
 
-  // Hovering smoothly across the crystal chimes plays them like a real glass harp!
   function onHoverHit(hit) {
     if (!hit) return;
     const { kind, chimeObj } = hit.object.userData;
@@ -492,18 +603,15 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
   }
 
   function onPointerMove(pointerNDC) {
-    // Emit shimmering starlight dust along cursor trajectory in 3D space
     const wx = pointerNDC.x * 4.4;
     const wy = clamp(2.35 + pointerNDC.y * 2.4, 0.25, 5.2);
-    const wz = 1.65;
     trailPos[trailHead * 3] = wx + (Math.random() - 0.5) * 0.14;
     trailPos[trailHead * 3 + 1] = wy + (Math.random() - 0.5) * 0.14;
-    trailPos[trailHead * 3 + 2] = wz;
+    trailPos[trailHead * 3 + 2] = 1.65;
     trailHead = (trailHead + 1) % trailCount;
 
-    // Bloom ice-lotuses near cursor X projection
     for (const lt of lotuses) {
-      const dist = Math.hypot(lt.group.position.x - wx, lt.group.position.z - 1.2);
+      const dist = Math.hypot(lt.x - wx, lt.z - 1.2);
       lt.bloom.target = dist < 2.2 ? 1.0 : (awakened ? 0.85 : 0.22);
     }
     return false;
@@ -511,104 +619,162 @@ export function createAct4Aurora({ envMap, textures, audio, onAwaken, onHint }) 
 
   function onPointerUp() {}
 
+  // Render real-time Planar Mirror Reflection across y = 0 before main pass!
+  function renderPlanarMirror(renderer, mainCam) {
+    _mirrorCam.fov = mainCam.fov;
+    _mirrorCam.aspect = mainCam.aspect;
+    _mirrorCam.near = mainCam.near;
+    _mirrorCam.far = mainCam.far;
+    _mirrorCam.position.set(mainCam.position.x, -mainCam.position.y, mainCam.position.z);
+
+    mainCam.getWorldDirection(_camDir);
+    _mirTarget.set(
+      _mirrorCam.position.x + _camDir.x * 10,
+      _mirrorCam.position.y - _camDir.y * 10,
+      _mirrorCam.position.z + _camDir.z * 10
+    );
+    _mirrorCam.up.set(0, -1, 0); // flip vertical up-vector for true mirror reflection!
+    _mirrorCam.lookAt(_mirTarget);
+    _mirrorCam.updateProjectionMatrix();
+    _mirrorCam.updateMatrixWorld();
+
+    const prevShadow = renderer.shadowMap.autoUpdate;
+    renderer.shadowMap.autoUpdate = false;
+    iceFloor.visible = false;
+    renderer.setRenderTarget(mirrorRT);
+    renderer.clear();
+    renderer.render(scene, _mirrorCam);
+    iceFloor.visible = true;
+    renderer.shadowMap.autoUpdate = prevShadow;
+  }
+
   function update(dt, t, parallax) {
     auroraMat.uniforms.uTime.value = t;
     auroraMat.uniforms.uSurge.value = surgeSpring.update(dt);
 
     const treeE = treeEnergySpring.update(dt);
-    matDichroic.emissiveIntensity = treeE * 0.45;
-    polarisMat.emissiveIntensity = 1.4 + treeE * 1.35;
+    matDichroic.uniforms.uTime.value = t;
+    matDichroic.uniforms.uEmissiveIntensity.value = treeE * 0.42;
+
+    blackIceMat.uniforms.uTime.value = t;
+    blackIceMat.uniforms.uEnergy.value = treeE;
+    auroraShaftMat.uniforms.uTime.value = t;
+    auroraShaftMat.uniforms.uOpacity.value = 0.06 + treeE * 0.035;
+
+    polarisMat.emissiveIntensity = 1.45 + treeE * 1.35;
     polarisStar.rotation.y = t * 0.75;
     treeRoot.rotation.y = t * 0.16;
-    treeHeartLight.intensity = 1.8 + treeE * 1.1;
+    treeHeartLight.intensity = 1.85 + treeE * 1.1;
 
-    // Gentle breathing shimmer of the 220 suspended crystal prisms
-    for (let i = 0; i < prismCount; i++) {
-      const d = prismData[i];
-      const bob = Math.sin(t * 1.8 + d.phase) * 0.035;
-      dummy.position.set(Math.cos(d.ang) * d.rad, d.y + bob, Math.sin(d.ang) * d.rad);
-      dummy.rotation.set(0.12 * Math.sin(t + d.phase), -d.ang + t * 0.4, 0.14 * Math.cos(t + d.phase));
-      dummy.scale.setScalar(d.scale);
-      dummy.updateMatrix();
-      prismInst.setMatrixAt(i, dummy.matrix);
+    for (let r = 0; r < astrolabeRings.length; r++) {
+      astrolabeRings[r].rotation.y = t * (r % 2 === 0 ? 0.35 : -0.42);
     }
-    prismInst.instanceMatrix.needsUpdate = true;
 
-    // Update 8 Glass Harmonica chimes
-    for (const c of chimes) {
+    for (let ci = 0; ci < chimes.length; ci++) {
+      const c = chimes[ci];
       if (c.cooldown > 0) c.cooldown -= dt;
       const sw = c.swing.update(dt);
-      const gl = c.glow.update(dt);
-      c.pendulum.rotation.z = sw * 0.25;
-      c.pendulum.rotation.y = t * 0.45 + c.idx;
-      c.mat.emissiveIntensity = gl;
-    }
+      const rz = sw * 0.12;
+      c.pendulum.rotation.z = rz;
+      c.pendulum.rotation.x = Math.sin(t * 1.5 + c.idx) * 0.03;
+      c.mat.uniforms.uTime.value = t;
+      c.mat.uniforms.uEmissiveIntensity.value = c.glow.update(dt);
 
-    // Update 6 Ice-Lotuses
-    for (const lt of lotuses) {
-      const bl = lt.bloom.update(dt);
-      for (const pet of lt.petals) {
-        pet.rotation.z = -0.25 - bl * 0.72;
+      _clapDummy.position.set(
+        c.baseX + Math.sin(rz) * c.clapperDrop * 0.85,
+        c.baseY - Math.cos(rz) * c.clapperDrop,
+        c.baseZ
+      );
+      _clapDummy.updateMatrix();
+      clapperInstanced.setMatrixAt(ci, _clapDummy.matrix);
+    }
+    clapperInstanced.instanceMatrix.needsUpdate = true;
+
+    for (let i = 0; i < lotuses.length; i++) {
+      const lt = lotuses[i];
+      const b = lt.bloom.update(dt);
+      const baseRotY = t * 0.25 + i;
+      const tiltZ = lerp(-0.22, -0.95, b);
+      for (let p = 0; p < 6; p++) {
+        _lotusEuler.set(0, baseRotY + (p / 6) * Math.PI * 2, 0);
+        _lotusRootMat.makeRotationFromEuler(_lotusEuler);
+        _lotusRootMat.setPosition(lt.x, 0.04, lt.z);
+
+        _lotusEuler.set(0, 0, tiltZ);
+        _lotusPetMat.makeRotationFromEuler(_lotusEuler);
+        _lotusPetMat.setPosition(0.08, 0.15, 0);
+
+        _lotusPivMat.multiplyMatrices(_lotusRootMat, _lotusPetMat);
+        lotusInstanced.setMatrixAt(i * 6 + p, _lotusPivMat);
       }
-      lt.group.rotation.y = t * 0.25;
     }
+    lotusInstanced.instanceMatrix.needsUpdate = true;
 
-    // Update 5 Constellation Nodes
-    for (const nd of nodes) {
+    for (let i = 0; i < nodes.length; i++) {
+      const nd = nodes[i];
       const g = nd.glowSpring.update(dt);
-      nd.mat.emissiveIntensity = g;
-      nd.starMesh.rotation.y = t * 1.1 + nd.idx;
-      nd.halo.rotation.x = Math.sin(t + nd.idx) * 0.6;
-      nd.beamMat.opacity = clamp((g - 0.6) * 0.35, 0, 0.78);
+      // Gentle shimmer hint pulse on unlit constellation nodes
+      const hintPulse = nd.lit ? 0 : Math.pow(Math.max(0, Math.sin(t * 1.8 + i * 1.2)), 4.0) * 0.85;
+      nd.mat.emissiveIntensity = g + hintPulse;
+      nd.starMesh.rotation.y = t * 0.9 + i;
+      nd.halo.rotation.x = Math.sin(t * 0.8 + i) * 0.6;
+      nd.halo.rotation.y = t * 0.5;
+      nd.beamMat.opacity = clamp((g - 0.6) * 0.32, 0, 0.72);
     }
 
-    // Drift starlight cursor trail upward & fade out
     for (let i = 0; i < trailCount; i++) {
       if (trailPos[i * 3 + 1] > -10) {
-        trailPos[i * 3 + 1] += dt * 0.28;
-        if (trailPos[i * 3 + 1] > 6.5) trailPos[i * 3 + 1] = -20;
+        trailPos[i * 3 + 1] -= dt * 0.22;
+        if (trailPos[i * 3 + 1] < 0.05) trailPos[i * 3 + 1] = -20;
       }
     }
     trailGeo.attributes.position.needsUpdate = true;
 
-    camPosSpring.setTarget(camBasePos.x + parallax.x * 1.2, camBasePos.y + parallax.y * 0.65, camBasePos.z);
-    camLookSpring.setTarget(camBaseLook.x + parallax.x * 0.25, camBaseLook.y + parallax.y * 0.2, camBaseLook.z);
-    camPosSpring.update(dt);
-    camLookSpring.update(dt);
+    cameraRig.update(dt, parallax);
   }
 
   function applyCamera(camera) {
-    camPosSpring.copyTo(camera.position);
-    const target = new THREE.Vector3();
-    camLookSpring.copyTo(target);
-    camera.lookAt(target);
+    cameraRig.apply(camera);
   }
 
-  function setCaptureState(preset = 'hero') {
-    for (let i = 0; i < (preset === 'climax' ? 5 : 3); i++) {
-      nodes[i].lit = true;
-      nodes[i].glowSpring.snap(3.0);
-    }
-    if (preset === 'climax') {
-      treeEnergySpring.snap(2.4);
-      surgeSpring.snap(1.0);
+  function setCaptureState(preset) {
+    if (preset === 'hero' || preset === 'climax') {
+      for (const nd of nodes) {
+        nd.lit = true;
+        nd.glowSpring.snap(3.2);
+      }
       for (const lt of lotuses) lt.bloom.snap(0.95);
+      awakened = true;
+      treeEnergySpring.snap(2.45);
+      surgeSpring.snap(1.0);
     }
-    update(0.016, 4.2, { x: 0.08, y: 0.06 });
+    update(0.016, 4.2, { x: -0.04, y: 0.05 });
   }
 
   return {
     id: 4,
     roman: 'ACT IV',
     title: '北极星圣殿',
-    subtitle: '极光琉璃与冰晶奇境 · AURORA DICHROIC WONDERLAND',
-    defaultHint: '轻拂八枚琉璃风铃合奏音阶 · 点亮树冠五颗北极星冕节点',
-    transTint: new THREE.Color(0x64f5d8),
-    postOpts: { bloomStrength: 0.56, bloomThreshold: 0.76, starburst: 0.85, tiltShift: 0.36 },
+    subtitle: '极光琉璃冰晶奇境 · AURORA DICHROIC SANCTUARY',
+    defaultHint: '轻拂琉璃冰晶风铃 · 点亮五颗极光星冕节点 · 俯视黑冰欣赏实时极光倒影与深渊冰纹',
+    transTint: new THREE.Color(0x6cfce2),
+    cameraRig,
+    getProgress,
+    getPostOpts: () => ({
+      bloomStrength: 0.56,
+      bloomThreshold: 0.76,
+      starburst: 0.65,
+      focusDist: cameraRig.getFocusDistance(),
+      aperture: 0.44,
+      aoStrength: 0.45,
+      aoRadius: 0.30,
+      refractMeshes,
+      onBeforeMainRender: renderPlanarMirror,
+    }),
     scene,
     interactables,
-    onHoverHit,
     onPointerDown,
+    onHoverHit,
     onPointerMove,
     onPointerUp,
     update,

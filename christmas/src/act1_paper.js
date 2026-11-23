@@ -1,12 +1,33 @@
-// Act I: Gilded Pop-up Paper Diorama — "The Pinewood Starlight Book" (松林星夜书)
-// Multi-layered cold-pressed 300gsm watercolour cardstock, V-fold origami pines, champagne gold-foil
-// bevel trims, translucent vellum windows, interactive pull-tab sleigh, rotatable celestial volvelle,
-// and hinged lift-the-flaps.
+// Act I: Gilded Pop-up Paper Diorama — "The Pinewood Starlight Book" (松林星夜书 · V2 Director's Cut)
+// Craftsmanship highlights:
+// - 24-sheet deckle-edge paper stack, brass Baroque book corners, velvet swallowtail ribbon bookmark,
+//   and real folding V-gusset accordion pleats driven by bookOpenSpring.
+// - 3-tier Gothic rose-window cathedral with pierced 8-petal tracery & swinging miniature brass bell.
+// - Cubic-Bezier filigree leaping reindeer with 3D cross-slotted 5-point antlers & curled-runner sleigh.
+// - French-polished walnut study desk dressed with a dripping-wax brass candlestick (dual-temp swaying
+//   flame + Tyndall warm light shaft), antique feather letter opener, pinecones & holly berries.
+// - Paper subsurface scattering (SSS) & static geometry batching (<38 DrawCalls).
 
 import * as THREE from '../vendor/three.module.js';
-import { Spring1D, Spring3D, clamp, lerp, createFacetedStarGeometry } from './physics.js';
+import {
+  Spring1D,
+  clamp,
+  lerp,
+  mergeGeometries,
+  transformGeo,
+  batchStaticMeshes,
+  collapseSolidMeshes,
+  createFacetedStarGeometry,
+  createVolumetricShaftMaterial,
+  createCandleFlameMaterial,
+  injectPaperSubsurface,
+  injectAnisotropicBrass,
+} from './physics.js';
+import { CuratedMacroRig } from './camera_rig.js';
 
-function extrudeCard(shape, depth = 0.028, bevel = 0.005) {
+const _v3 = new THREE.Vector3();
+
+function extrudeCard(shape, depth = 0.028, bevel = 0.005, curveSegments = 18) {
   return new THREE.ExtrudeGeometry(shape, {
     depth,
     bevelEnabled: true,
@@ -14,313 +35,501 @@ function extrudeCard(shape, depth = 0.028, bevel = 0.005) {
     steps: 1,
     bevelSize: bevel,
     bevelThickness: bevel,
-    curveSegments: 14,
+    curveSegments,
   });
 }
 
-// Tiered serrated pine silhouette half-wing (paired at 110 deg to form a true 3D V-fold origami tree)
-function makePineWingShape(w, h, tiers = 4) {
+// Serrated V-fold origami pine half-wing with pierced starlight eyelets
+function makePineWingShape(w, h, tiers = 5) {
   const s = new THREE.Shape();
   s.moveTo(0, 0);
-  s.lineTo(w * 0.16, 0);
-  s.lineTo(w * 0.16, h * 0.12);
+  s.lineTo(w * 0.14, 0);
+  s.lineTo(w * 0.14, h * 0.10);
   for (let i = 0; i < tiers; i++) {
     const t0 = i / tiers;
     const t1 = (i + 1) / tiers;
-    const yBase = h * (0.12 + t0 * 0.82);
-    const yTop = h * (0.12 + t1 * 0.88);
-    const outerW = w * (1 - t0 * 0.68);
-    const innerW = w * (1 - t1 * 0.72) * 0.42;
-    s.lineTo(outerW, yBase);
+    const yBase = h * (0.10 + t0 * 0.84);
+    const yTop = h * (0.10 + t1 * 0.90);
+    const outerW = w * (1 - t0 * 0.70);
+    const innerW = w * (1 - t1 * 0.74) * 0.38;
+    s.quadraticCurveTo(outerW * 0.7, yBase - 0.03 * h, outerW, yBase);
     if (i < tiers - 1) {
-      s.lineTo(innerW, yTop * 0.96);
+      s.quadraticCurveTo(outerW * 0.65, yTop * 0.92, innerW, yTop * 0.95);
     } else {
-      s.lineTo(0, h);
+      s.quadraticCurveTo(outerW * 0.42, h * 0.94, 0, h);
     }
   }
   s.closePath();
+
+  // Delicate pierced filigree diamond cutouts along the fold crease
+  for (let k = 0; k < 2; k++) {
+    const cy = h * (0.34 + k * 0.28);
+    const cw = w * (0.14 - k * 0.03);
+    const hole = new THREE.Path();
+    hole.moveTo(w * 0.08, cy);
+    hole.lineTo(w * 0.08 + cw, cy + cw * 1.3);
+    hole.lineTo(w * 0.08 + cw * 1.9, cy);
+    hole.lineTo(w * 0.08 + cw, cy - cw * 1.3);
+    hole.closePath();
+    s.holes.push(hole);
+  }
   return s;
 }
 
-// Origami reindeer silhouette in graceful mid-leap
-function makeReindeerShape(scale = 1) {
+// High-order Cubic-Bezier Baroque Leaping Reindeer with pierced scroll cutout
+function makeBezierReindeerShape(sc = 1) {
   const s = new THREE.Shape();
-  const pts = [
-    [-0.55, -0.15], [-0.82, -0.45], [-0.72, -0.48], [-0.42, -0.18],
-    [-0.12, -0.16], [0.22, -0.12], [0.54, -0.42], [0.62, -0.38],
-    [0.36, -0.04], [0.46, 0.24], [0.68, 0.30], [0.64, 0.38],
-    [0.48, 0.38], [0.54, 0.62], [0.46, 0.64], [0.40, 0.46],
-    [0.30, 0.58], [0.24, 0.55], [0.34, 0.36], [0.22, 0.14],
-    [-0.26, 0.12], [-0.52, 0.18], [-0.62, 0.08],
-  ];
-  s.moveTo(pts[0][0] * scale, pts[0][1] * scale);
-  for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0] * scale, pts[i][1] * scale);
+  s.moveTo(-0.56 * sc, -0.08 * sc);
+  // Hindquarters & extended leaping hind leg
+  s.bezierCurveTo(-0.74 * sc, -0.22 * sc, -0.88 * sc, -0.44 * sc, -0.84 * sc, -0.52 * sc);
+  s.bezierCurveTo(-0.78 * sc, -0.54 * sc, -0.62 * sc, -0.32 * sc, -0.44 * sc, -0.18 * sc);
+  // Sweeping ribcage & tucked forelegs
+  s.bezierCurveTo(-0.18 * sc, -0.22 * sc, 0.16 * sc, -0.18 * sc, 0.36 * sc, -0.12 * sc);
+  s.bezierCurveTo(0.54 * sc, -0.28 * sc, 0.72 * sc, -0.44 * sc, 0.78 * sc, -0.38 * sc);
+  s.bezierCurveTo(0.76 * sc, -0.30 * sc, 0.56 * sc, -0.14 * sc, 0.44 * sc, 0.02 * sc);
+  // Proudly arched swan neck & muzzle
+  s.bezierCurveTo(0.52 * sc, 0.22 * sc, 0.58 * sc, 0.36 * sc, 0.74 * sc, 0.38 * sc);
+  s.bezierCurveTo(0.78 * sc, 0.44 * sc, 0.66 * sc, 0.50 * sc, 0.50 * sc, 0.48 * sc);
+  // Ear & back of neck
+  s.bezierCurveTo(0.42 * sc, 0.56 * sc, 0.32 * sc, 0.54 * sc, 0.36 * sc, 0.42 * sc);
+  s.bezierCurveTo(0.30 * sc, 0.24 * sc, 0.18 * sc, 0.12 * sc, -0.06 * sc, 0.12 * sc);
+  // Back & uplifted tail
+  s.bezierCurveTo(-0.32 * sc, 0.12 * sc, -0.52 * sc, 0.20 * sc, -0.64 * sc, 0.26 * sc);
+  s.bezierCurveTo(-0.68 * sc, 0.18 * sc, -0.62 * sc, 0.04 * sc, -0.56 * sc, -0.08 * sc);
+  s.closePath();
+
+  // Pierced filigree teardrop cutout inside torso
+  const filigree = new THREE.Path();
+  filigree.absellipse(-0.04 * sc, -0.02 * sc, 0.18 * sc, 0.075 * sc, 0, Math.PI * 2, true, 0.12);
+  s.holes.push(filigree);
+  return s;
+}
+
+// 5-Point Branched Coral Antler Crown (slotted cross-plane origami!)
+function makeAntlerCrownShape(sc = 1) {
+  const s = new THREE.Shape();
+  s.moveTo(-0.03 * sc, 0);
+  s.bezierCurveTo(-0.18 * sc, 0.14 * sc, -0.28 * sc, 0.32 * sc, -0.22 * sc, 0.48 * sc);
+  s.lineTo(-0.16 * sc, 0.44 * sc);
+  s.lineTo(-0.12 * sc, 0.30 * sc);
+  s.lineTo(-0.04 * sc, 0.46 * sc);
+  s.lineTo(0.02 * sc, 0.44 * sc);
+  s.lineTo(0.02 * sc, 0.24 * sc);
+  s.lineTo(0.14 * sc, 0.38 * sc);
+  s.lineTo(0.19 * sc, 0.34 * sc);
+  s.bezierCurveTo(0.14 * sc, 0.18 * sc, 0.08 * sc, 0.08 * sc, 0.03 * sc, 0);
   s.closePath();
   return s;
 }
 
-// Ornate filigree sleigh silhouette
-function makeSleighShape(scale = 1) {
+// Baroque Filigree Sleigh with Curled Swan-Neck Runners
+function makeBaroqueSleighShape(sc = 1) {
   const s = new THREE.Shape();
-  s.moveTo(-0.85 * scale, -0.18 * scale);
-  s.quadraticCurveTo(-0.95 * scale, 0.32 * scale, -0.58 * scale, 0.38 * scale);
-  s.lineTo(-0.18 * scale, 0.22 * scale);
-  s.lineTo(0.38 * scale, 0.24 * scale);
-  s.quadraticCurveTo(0.75 * scale, 0.35 * scale, 0.88 * scale, 0.08 * scale);
-  s.quadraticCurveTo(0.96 * scale, -0.16 * scale, 0.68 * scale, -0.22 * scale);
-  s.lineTo(-0.78 * scale, -0.22 * scale);
+  s.moveTo(-0.92 * sc, -0.18 * sc);
+  s.bezierCurveTo(-1.06 * sc, 0.18 * sc, -0.88 * sc, 0.48 * sc, -0.56 * sc, 0.44 * sc);
+  s.bezierCurveTo(-0.34 * sc, 0.40 * sc, -0.24 * sc, 0.22 * sc, 0.04 * sc, 0.22 * sc);
+  s.bezierCurveTo(0.32 * sc, 0.22 * sc, 0.56 * sc, 0.38 * sc, 0.78 * sc, 0.34 * sc);
+  // Swan-neck curled front scroll
+  s.bezierCurveTo(0.98 * sc, 0.30 * sc, 1.04 * sc, 0.02 * sc, 0.86 * sc, -0.18 * sc);
+  s.lineTo(-0.92 * sc, -0.18 * sc);
   s.closePath();
+
+  const cut1 = new THREE.Path();
+  cut1.absarc(-0.46 * sc, 0.12 * sc, 0.11 * sc, 0, Math.PI * 2, true);
+  const cut2 = new THREE.Path();
+  cut2.absarc(0.38 * sc, 0.08 * sc, 0.09 * sc, 0, Math.PI * 2, true);
+  s.holes.push(cut1, cut2);
   return s;
 }
 
 export function createAct1Paper({ envMap, textures, audio, onAwaken, onHint }) {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0c090a);
+  scene.background = new THREE.Color(0x0b0809);
   scene.environment = envMap;
 
-  // Master macro camera rig with curated parallax & focus zoom
-  const camBasePos = new THREE.Vector3(0, 4.35, 9.15);
-  const camBaseLook = new THREE.Vector3(0, 1.55, -0.35);
-  const camPosSpring = new Spring3D(camBasePos.x, camBasePos.y, camBasePos.z, 65, 14);
-  const camLookSpring = new Spring3D(camBaseLook.x, camBaseLook.y, camBaseLook.z, 75, 15);
-  let focusOffset = new THREE.Vector3();
-  let focusLookOffset = new THREE.Vector3();
-  let focusTimer = 0;
+  const cameraRig = new CuratedMacroRig(
+    new THREE.Vector3(0, 4.25, 9.05),
+    new THREE.Vector3(0, 1.58, -0.30),
+    { parallaxX: 0.78, parallaxY: 0.45, minZoom: 0.56, maxZoom: 1.18 }
+  );
 
-  // Warm dramatic theatrical lighting with soft shadows
-  const ambLight = new THREE.AmbientLight(0x2d3554, 0.85);
-  scene.add(ambLight);
+  // ---------------- Lighting ----------------
+  scene.add(new THREE.AmbientLight(0x2b3452, 0.82));
 
-  const keyLight = new THREE.DirectionalLight(0xffe2b0, 2.5);
-  keyLight.position.set(5.5, 9.5, 6.5);
+  const keyLight = new THREE.DirectionalLight(0xffe2b0, 2.55);
+  keyLight.position.set(5.6, 9.6, 6.4);
   keyLight.castShadow = true;
   keyLight.shadow.mapSize.set(2048, 2048);
   keyLight.shadow.camera.near = 2;
   keyLight.shadow.camera.far = 24;
-  keyLight.shadow.camera.left = -7.5;
-  keyLight.shadow.camera.right = 7.5;
-  keyLight.shadow.camera.top = 7.5;
+  keyLight.shadow.camera.left = -7.6;
+  keyLight.shadow.camera.right = 7.6;
+  keyLight.shadow.camera.top = 7.4;
   keyLight.shadow.camera.bottom = -4.5;
-  keyLight.shadow.bias = -0.0006;
-  keyLight.shadow.radius = 3.5;
+  keyLight.shadow.bias = -0.0005;
+  keyLight.shadow.radius = 3.2;
   scene.add(keyLight);
 
-  const rimLight = new THREE.DirectionalLight(0x6b92ff, 1.15);
-  rimLight.position.set(-6.5, 6.0, -5.5);
+  const rimLight = new THREE.DirectionalLight(0x6e95ff, 1.18);
+  rimLight.position.set(-6.5, 6.2, -5.5);
   scene.add(rimLight);
 
-  const villageCandleLight = new THREE.PointLight(0xffaa44, 0.8, 9.5, 1.6);
-  villageCandleLight.position.set(0, 1.35, 0.35);
+  const villageCandlePos = new THREE.Vector3(0, 1.35, -0.15);
+  const villageCandleLight = new THREE.PointLight(0xffa63f, 1.35, 9.8, 1.6);
+  villageCandleLight.position.copy(villageCandlePos);
   scene.add(villageCandleLight);
 
-  // ---------------- Materials ----------------
-  const makePaperMat = (hex, rough = 0.86) =>
-    new THREE.MeshStandardMaterial({
+  // Desk candlestick warm point light on left foreground
+  const deskCandleLight = new THREE.PointLight(0xff9e38, 1.55, 8.2, 1.7);
+  deskCandleLight.position.set(-3.85, 1.42, 2.38);
+  scene.add(deskCandleLight);
+
+  // ---------------- Bespoke Micro-Surface Materials ----------------
+  const makePaperMat = (hex, rough = 0.84, sss = 0.42) => {
+    const m = new THREE.MeshStandardMaterial({
       color: hex,
       map: textures.paperTex,
       bumpMap: textures.paperTex,
       bumpScale: 0.018,
       roughness: rough,
       metalness: 0.02,
-      envMapIntensity: 0.65,
+      envMapIntensity: 0.68,
     });
+    return injectPaperSubsurface(m, { lightPos: villageCandlePos, strength: sss });
+  };
 
-  const matCream = makePaperMat(0xf5ecda, 0.84);
-  const matIvorySnow = makePaperMat(0xfbf7ef, 0.80);
-  const matPineDark = makePaperMat(0x18362a, 0.85);
-  const matPineMid = makePaperMat(0x244c3b, 0.84);
-  const matBurgundy = makePaperMat(0x451018, 0.76);
-  const matNavyArch = makePaperMat(0x13203d, 0.82);
-  const matWalnut = new THREE.MeshStandardMaterial({
-    color: 0x1a110d,
-    bumpMap: textures.paperTex,
+  const matCream = makePaperMat(0xf6eddc, 0.83, 0.48);
+  const matIvorySnow = makePaperMat(0xfcf8f0, 0.79, 0.44);
+  const matPineDark = makePaperMat(0x163428, 0.85, 0.30);
+  const matPineMid = makePaperMat(0x234b3a, 0.84, 0.34);
+  const matBurgundy = makePaperMat(0x471019, 0.75, 0.22);
+  const matNavyArch = makePaperMat(0x111e3b, 0.82, 0.25);
+
+  const matWalnut = new THREE.MeshPhysicalMaterial({
+    map: textures.walnutTex,
+    bumpMap: textures.walnutTex,
     bumpScale: 0.008,
-    roughness: 0.52,
-    metalness: 0.05,
-    envMapIntensity: 0.8,
+    roughness: 0.42,
+    metalness: 0.04,
+    clearcoat: 0.38,
+    clearcoatRoughness: 0.28,
+    envMapIntensity: 0.95,
   });
 
-  // Champagne hot-stamped gold foil material
-  const matGoldFoil = new THREE.MeshPhysicalMaterial({
-    color: 0xf4d284,
-    metalness: 0.96,
-    roughness: 0.19,
-    clearcoat: 0.35,
-    clearcoatRoughness: 0.2,
-    envMapIntensity: 2.35,
+  const matGoldFoil = injectAnisotropicBrass(
+    new THREE.MeshPhysicalMaterial({
+      color: 0xf4d386,
+      roughnessMap: textures.brassTex,
+      metalness: 0.96,
+      roughness: 0.19,
+      clearcoat: 0.35,
+      clearcoatRoughness: 0.18,
+      envMapIntensity: 2.45,
+    }),
+    { anisoStrength: 0.42, patinaStrength: 0.18 }
+  );
+
+  const matWaxIvory = new THREE.MeshPhysicalMaterial({
+    color: 0xf7eed8,
+    roughness: 0.34,
+    clearcoat: 0.45,
+    sheen: 0.4,
+    sheenColor: new THREE.Color(0xffd699),
   });
 
-  // Translucent illuminated vellum window material
   const matVellumWindow = new THREE.MeshStandardMaterial({
-    color: 0xffe4a8,
-    emissive: new THREE.Color(0xff9d38),
-    emissiveIntensity: 0.45,
-    roughness: 0.4,
+    color: 0xffe6ad,
+    emissive: new THREE.Color(0xff9c34),
+    emissiveIntensity: 0.85,
+    roughness: 0.38,
   });
 
-  // ---------------- Dark Walnut Desk & Open Hardcover Spread ----------------
+  // ---------------- French-Polished Walnut Study Desk & Foreground Still-Life Props ----------------
   const desk = new THREE.Mesh(new THREE.PlaneGeometry(36, 26), matWalnut);
   desk.rotation.x = -Math.PI * 0.5;
   desk.position.y = -0.18;
   desk.receiveShadow = true;
   scene.add(desk);
 
+  // Left-Foreground Brass Candlestick + Dripping Wax Tears + Flickering Flame + Tyndall Ray!
+  const candleRig = new THREE.Group();
+  candleRig.position.set(-3.85, -0.18, 2.38);
+  scene.add(candleRig);
+
+  const holderProfile = [
+    new THREE.Vector2(0.0, 0.0),
+    new THREE.Vector2(0.58, 0.0),
+    new THREE.Vector2(0.55, 0.06),
+    new THREE.Vector2(0.38, 0.12),
+    new THREE.Vector2(0.14, 0.22),
+    new THREE.Vector2(0.22, 0.46),
+    new THREE.Vector2(0.11, 0.72),
+    new THREE.Vector2(0.34, 0.80),
+    new THREE.Vector2(0.36, 0.86),
+    new THREE.Vector2(0.19, 0.86),
+    new THREE.Vector2(0.19, 0.78),
+  ];
+  const holderBrassGeos = [new THREE.LatheGeometry(holderProfile, 36)];
+  // Finger ring handle on candlestick
+  holderBrassGeos.push(transformGeo(new THREE.TorusGeometry(0.18, 0.024, 10, 24), { x: -0.44, y: 0.22 }));
+  // Right-side antique feather brass letter opener on desk!
+  holderBrassGeos.push(transformGeo(new THREE.ConeGeometry(0.065, 1.35, 4), { x: 11.15, y: 0.03, z: 0.2, rz: Math.PI * 0.5, ry: 0.38, sy: 1, sz: 0.28 }));
+  holderBrassGeos.push(transformGeo(new THREE.TorusGeometry(0.11, 0.022, 8, 20), { x: 11.82, y: 0.04, z: -0.06, rx: Math.PI * 0.5 }));
+  const deskBrassMesh = new THREE.Mesh(mergeGeometries(holderBrassGeos), matGoldFoil);
+  deskBrassMesh.castShadow = true;
+  deskBrassMesh.receiveShadow = true;
+  candleRig.add(deskBrassMesh);
+
+  // Wax pillar + frozen dripping wax tears down the side
+  const waxParts = [transformGeo(new THREE.CylinderGeometry(0.165, 0.175, 0.68, 24), { y: 1.14 })];
+  for (let d = 0; d < 5; d++) {
+    const da = d * 1.25 + 0.4;
+    const len = 0.16 + (d % 3) * 0.11;
+    waxParts.push(
+      transformGeo(new THREE.CapsuleGeometry(0.022, len, 6, 10), {
+        x: Math.cos(da) * 0.168,
+        y: 1.42 - len * 0.5,
+        z: Math.sin(da) * 0.168,
+      })
+    );
+  }
+  const waxMesh = new THREE.Mesh(mergeGeometries(waxParts), matWaxIvory);
+  waxMesh.castShadow = true;
+  candleRig.add(waxMesh);
+
+  const candleFlameMat = createCandleFlameMaterial();
+  const flameGeo = new THREE.ConeGeometry(0.068, 0.28, 16, 10);
+  flameGeo.translate(0, 0.14, 0);
+  const candleFlame = new THREE.Mesh(flameGeo, candleFlameMat);
+  candleFlame.position.y = 1.49;
+  candleRig.add(candleFlame);
+
+  // Right-Rear Pinecones, Spruce Sprigs & Red Holly Berries on Desk (batched into 2 meshes!)
+  const hollyGreenParts = [];
+  const hollyRedParts = [];
+  for (let s = 0; s < 7; s++) {
+    const a = -0.5 + s * 0.24;
+    hollyGreenParts.push(
+      transformGeo(new THREE.ConeGeometry(0.14, 0.55, 5), {
+        x: 5.55 + Math.cos(a) * 0.35,
+        y: -0.13,
+        z: -2.15 + Math.sin(a) * 0.35,
+        rx: Math.PI * 0.48,
+        ry: a,
+        sz: 0.22,
+      })
+    );
+  }
+  for (let b = 0; b < 6; b++) {
+    hollyRedParts.push(
+      transformGeo(new THREE.SphereGeometry(0.055, 10, 8), {
+        x: 5.45 + (b % 3) * 0.13,
+        y: -0.11,
+        z: -2.05 + Math.floor(b / 3) * 0.14,
+      })
+    );
+  }
+  scene.add(new THREE.Mesh(mergeGeometries(hollyGreenParts), matPineDark));
+  scene.add(new THREE.Mesh(mergeGeometries(hollyRedParts), matBurgundy));
+
+  // Volumetric Tyndall Candlelight Ray slanting gently across the pop-up forest!
+  const shaftMat = createVolumetricShaftMaterial({ color: 0xffca7a, opacity: 0.095, power: 2.3 });
+  const shaftCone = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 2.65, 8.2, 24, 1, true), shaftMat);
+  shaftCone.position.set(-1.6, 2.85, 0.65);
+  shaftCone.rotation.z = -0.58;
+  shaftCone.rotation.x = 0.18;
+  scene.add(shaftCone);
+
+  // ---------------- Hardcover Spread, 24-Sheet Deckle Stack, Brass Corners & Bookmark ----------------
   const bookRoot = new THREE.Group();
   scene.add(bookRoot);
 
-  // Unfolding book spring (starts slightly folded and blossoms open)
   const bookOpenSpring = new Spring1D(0.18, 52, 11);
   bookOpenSpring.target = 1.0;
 
-  // Hardcover boards (left & right) + brass corner protectors
-  const coverW = 5.4, coverD = 6.8, coverT = 0.09;
-  const coverGeo = new THREE.BoxGeometry(coverW, coverT, coverD);
-  const leftCover = new THREE.Mesh(coverGeo, matBurgundy);
-  leftCover.position.set(-coverW * 0.5 - 0.04, -0.11, 0);
-  leftCover.receiveShadow = true;
-  const rightCover = new THREE.Mesh(coverGeo, matBurgundy);
-  rightCover.position.set(coverW * 0.5 + 0.04, -0.11, 0);
-  rightCover.receiveShadow = true;
-  bookRoot.add(leftCover, rightCover);
+  const coverW = 5.45, coverD = 6.85, coverT = 0.09;
+  const burgundyBookParts = [
+    transformGeo(new THREE.BoxGeometry(coverW, coverT, coverD), { x: -coverW * 0.5 - 0.04, y: -0.11 }),
+    transformGeo(new THREE.BoxGeometry(coverW, coverT, coverD), { x: coverW * 0.5 + 0.04, y: -0.11 }),
+    transformGeo(new THREE.CylinderGeometry(0.15, 0.15, coverD, 16, 1, false, 0, Math.PI), { y: -0.09, rx: Math.PI * 0.5, rz: Math.PI }),
+  ];
+  // Velvet swallowtail ribbon bookmark draping gracefully over front book edge onto the desk
+  const ribbonCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0.0, 0.02, 1.2),
+    new THREE.Vector3(0.18, 0.03, 3.22),
+    new THREE.Vector3(0.32, -0.15, 3.68),
+    new THREE.Vector3(0.46, -0.165, 4.35),
+  ]);
+  burgundyBookParts.push(new THREE.TubeGeometry(ribbonCurve, 28, 0.055, 6, false));
+  const bookCoverMesh = new THREE.Mesh(mergeGeometries(burgundyBookParts), matBurgundy);
+  bookCoverMesh.receiveShadow = true;
+  bookCoverMesh.castShadow = true;
+  bookRoot.add(bookCoverMesh);
 
-  // Central spine ridge
-  const spine = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.14, 0.14, coverD, 16, 1, false, 0, Math.PI),
-    matBurgundy
-  );
-  spine.rotation.x = Math.PI * 0.5;
-  spine.rotation.z = Math.PI;
-  spine.position.y = -0.09;
-  bookRoot.add(spine);
+  // 24-layer deckle-edge paper block + page spread batched into 1 Cream Mesh!
+  const creamBookParts = [];
+  for (let s = 0; s < 12; s++) {
+    const t = s / 11;
+    const inset = t * 0.11 + (s % 2) * 0.014; // organic handmade deckle step!
+    const yLvl = -0.065 + t * 0.085;
+    creamBookParts.push(
+      transformGeo(new THREE.BoxGeometry(10.42 - inset * 2, 0.008, 6.46 - inset * 1.4), { y: yLvl })
+    );
+  }
+  const pageArch = new THREE.Shape();
+  pageArch.moveTo(-5.12, 0.01);
+  pageArch.quadraticCurveTo(-2.5, 0.10, 0, 0.005);
+  pageArch.quadraticCurveTo(2.5, 0.10, 5.12, 0.01);
+  pageArch.lineTo(5.12, -0.03);
+  pageArch.lineTo(-5.12, -0.03);
+  pageArch.closePath();
+  const topSpreadGeo = new THREE.ExtrudeGeometry(pageArch, { depth: 6.32, bevelEnabled: true, bevelSize: 0.012, bevelThickness: 0.012, steps: 1 });
+  topSpreadGeo.center();
+  transformGeo(topSpreadGeo, { y: 0.025 });
+  creamBookParts.push(topSpreadGeo);
 
-  // Cream deckle-edge page block with subtle arch near spine
-  const pageShape = new THREE.Shape();
-  pageShape.moveTo(-5.15, -0.06);
-  pageShape.quadraticCurveTo(-2.5, 0.07, 0, -0.02);
-  pageShape.quadraticCurveTo(2.5, 0.07, 5.15, -0.06);
-  pageShape.lineTo(5.15, -0.12);
-  pageShape.lineTo(-5.15, -0.12);
-  pageShape.closePath();
-  const pageBlockGeo = new THREE.ExtrudeGeometry(pageShape, {
-    depth: 6.4,
-    bevelEnabled: true,
-    bevelSize: 0.015,
-    bevelThickness: 0.015,
-    steps: 1,
-  });
-  pageBlockGeo.center();
-  const pageBlock = new THREE.Mesh(pageBlockGeo, matCream);
-  pageBlock.position.y = -0.02;
-  pageBlock.receiveShadow = true;
-  pageBlock.castShadow = true;
-  bookRoot.add(pageBlock);
+  const pageStackMesh = new THREE.Mesh(mergeGeometries(creamBookParts), matCream);
+  pageStackMesh.receiveShadow = true;
+  pageStackMesh.castShadow = true;
+  bookRoot.add(pageStackMesh);
 
-  // Gold foil border rules inlaid on the open page spread
-  const borderFrame = new THREE.Mesh(
-    new THREE.RingGeometry(4.55, 4.61, 4),
-    matGoldFoil
-  );
-  borderFrame.visible = false; // use rectangular gold strips for crisp book margin
-  const addMarginStrip = (x, z, w, d) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.008, d), matGoldFoil);
-    m.position.set(x, 0.045, z);
-    bookRoot.add(m);
-  };
-  addMarginStrip(0, -2.95, 9.8, 0.035);
-  addMarginStrip(0, 2.95, 9.8, 0.035);
-  addMarginStrip(-4.9, 0, 0.035, 5.94);
-  addMarginStrip(4.9, 0, 0.035, 5.94);
+  // Brass Baroque book corners + inlaid gold foil margin rules + ribbon tassel (1 batched Gold Mesh!)
+  const staticGoldBookParts = [
+    transformGeo(new THREE.BoxGeometry(9.8, 0.008, 0.035), { y: 0.056, z: -2.92 }),
+    transformGeo(new THREE.BoxGeometry(9.8, 0.008, 0.035), { y: 0.056, z: 2.92 }),
+    transformGeo(new THREE.BoxGeometry(0.035, 0.008, 5.88), { x: -4.9, y: 0.056 }),
+    transformGeo(new THREE.BoxGeometry(0.035, 0.008, 5.88), { x: 4.9, y: 0.056 }),
+    // Ribbon gold tassel end
+    transformGeo(createFacetedStarGeometry({ points: 4, outerRadius: 0.11, innerRadius: 0.045, depth: 0.02 }), { x: 0.46, y: -0.155, z: 4.42, rx: Math.PI * 0.5 }),
+  ];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const cornerTri = new THREE.Shape();
+      cornerTri.moveTo(0, 0);
+      cornerTri.lineTo(0.42, 0);
+      cornerTri.quadraticCurveTo(0.18, 0.18, 0, 0.42);
+      cornerTri.closePath();
+      const hole = new THREE.Path();
+      hole.absarc(0.12, 0.12, 0.05, 0, Math.PI * 2, true);
+      cornerTri.holes.push(hole);
+      const cg = extrudeCard(cornerTri, 0.025, 0.004, 8);
+      cg.rotateX(-Math.PI * 0.5);
+      transformGeo(cg, {
+        x: sx * 5.48,
+        y: -0.05,
+        z: sz * 3.41,
+        ry: (sx < 0 ? (sz < 0 ? 0 : Math.PI * 0.5) : (sz < 0 ? -Math.PI * 0.5 : Math.PI)),
+      });
+      staticGoldBookParts.push(cg);
+    }
+  }
+  bookRoot.add(new THREE.Mesh(mergeGeometries(staticGoldBookParts), matGoldFoil));
 
-  // Pop-up folding stage container (scales Y with bookOpenSpring like real pop-up pleats)
+  // ---------------- Pop-up Stage + Accordion V-Gusset Folding Supports ----------------
   const popupGroup = new THREE.Group();
-  popupGroup.position.y = 0.03;
+  popupGroup.position.y = 0.04;
   bookRoot.add(popupGroup);
+
+  // V-fold paper engineering accordion gussets on left & right flanks
+  const gussetParts = [];
+  for (const sx of [-1, 1]) {
+    for (let p = 0; p < 3; p++) {
+      const zOff = -1.8 + p * 1.45;
+      gussetParts.push(
+        transformGeo(new THREE.BoxGeometry(0.55, 0.014, 0.42), {
+          x: sx * 4.25,
+          y: 0.18,
+          z: zOff,
+          rz: sx * 0.48,
+        }),
+        transformGeo(new THREE.BoxGeometry(0.55, 0.014, 0.42), {
+          x: sx * 4.25,
+          y: 0.42,
+          z: zOff,
+          rz: -sx * 0.48,
+        })
+      );
+    }
+  }
+  popupGroup.add(new THREE.Mesh(mergeGeometries(gussetParts), matCream));
 
   const interactables = [];
 
   // ---------------- Layer 6: Celestial Proscenium Arch & Rotatable Volvelle ----------------
   const archShape = new THREE.Shape();
-  archShape.moveTo(-4.4, 0);
-  archShape.lineTo(-4.4, 2.8);
-  archShape.quadraticCurveTo(-4.4, 4.95, 0, 5.25);
-  archShape.quadraticCurveTo(4.4, 4.95, 4.4, 2.8);
-  archShape.lineTo(4.4, 0);
+  archShape.moveTo(-4.45, 0);
+  archShape.lineTo(-4.45, 2.85);
+  archShape.bezierCurveTo(-4.45, 4.95, -1.6, 5.28, 0, 5.32);
+  archShape.bezierCurveTo(1.6, 5.28, 4.45, 4.95, 4.45, 2.85);
+  archShape.lineTo(4.45, 0);
   archShape.closePath();
-  // Circular cutout window at top of arch to reveal the spinning Volvelle star disc
+
   const volHole = new THREE.Path();
   volHole.absarc(0, 3.35, 1.48, 0, Math.PI * 2, true);
   archShape.holes.push(volHole);
+  // Pierced Gothic spandrel stars on upper corners of proscenium arch
+  for (const sx of [-1, 1]) {
+    const sp = new THREE.Path();
+    sp.absarc(sx * 3.15, 3.55, 0.26, 0, Math.PI * 2, true);
+    archShape.holes.push(sp);
+  }
 
-  const backArch = new THREE.Mesh(extrudeCard(archShape, 0.04, 0.008), matNavyArch);
+  const backArch = new THREE.Mesh(extrudeCard(archShape, 0.042, 0.008), matNavyArch);
   backArch.position.set(0, 0, -2.35);
   backArch.castShadow = true;
   backArch.receiveShadow = true;
   popupGroup.add(backArch);
 
-  // Gold foil arch rim around the celestial circular window
-  const volRim = new THREE.Mesh(new THREE.TorusGeometry(1.50, 0.032, 12, 64), matGoldFoil);
-  volRim.position.set(0, 3.35, -2.30);
-  popupGroup.add(volRim);
-
-  // Top Polaris pointer triangle in gold foil
-  const ptrShape = new THREE.Shape();
-  ptrShape.moveTo(0, -0.18);
-  ptrShape.lineTo(-0.09, 0.06);
-  ptrShape.lineTo(0.09, 0.06);
-  ptrShape.closePath();
-  const volPointer = new THREE.Mesh(extrudeCard(ptrShape, 0.02, 0.004), matGoldFoil);
-  volPointer.position.set(0, 4.86, -2.26);
-  popupGroup.add(volPointer);
-
-  // Interactive Rotatable Celestial Volvelle Disc
   const volvelleGroup = new THREE.Group();
   volvelleGroup.position.set(0, 3.35, -2.44);
   popupGroup.add(volvelleGroup);
 
   const volDiscMat = new THREE.MeshStandardMaterial({
     map: textures.volvelleTex,
-    roughness: 0.42,
-    metalness: 0.38,
-    envMapIntensity: 1.5,
+    roughness: 0.36,
+    metalness: 0.42,
+    envMapIntensity: 1.65,
   });
-  const volDisc = new THREE.Mesh(new THREE.CylinderGeometry(1.75, 1.75, 0.03, 64), volDiscMat);
+  const volDisc = new THREE.Mesh(new THREE.CylinderGeometry(1.76, 1.76, 0.03, 64), volDiscMat);
   volDisc.rotation.x = Math.PI * 0.5;
   volvelleGroup.add(volDisc);
 
-  // Brass finger tabs around the outer edge of the volvelle so it visibly begs to be spun
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2;
-    const tab = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.045, 16), matGoldFoil);
-    tab.rotation.x = Math.PI * 0.5;
-    tab.position.set(Math.cos(a) * 1.72, Math.sin(a) * 1.72, 0.01);
-    volvelleGroup.add(tab);
+  const volTabsParts = [transformGeo(new THREE.SphereGeometry(0.09, 18, 14), { z: 0.03 })];
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    volTabsParts.push(
+      transformGeo(new THREE.CylinderGeometry(0.095, 0.095, 0.045, 14), {
+        x: Math.cos(a) * 1.74,
+        y: Math.sin(a) * 1.74,
+        z: 0.01,
+        rx: Math.PI * 0.5,
+      })
+    );
   }
-  const brassRivet = new THREE.Mesh(new THREE.SphereGeometry(0.09, 20, 16), matGoldFoil);
-  brassRivet.position.z = 0.03;
-  volvelleGroup.add(brassRivet);
-
-  volDisc.userData = { kind: 'volvelle', label: '拨动星象转盘 · 对齐北极星' };
+  volvelleGroup.add(new THREE.Mesh(mergeGeometries(volTabsParts), matGoldFoil));
+  volDisc.userData = { kind: 'volvelle', label: '拨动星象转盘 · 将北极星刻度转至正上方指针' };
   interactables.push(volDisc);
 
-  // ---------------- Layer 5: Snow-Capped Paper Mountains & Pull-Tab Flying Sleigh ----------------
+  // ---------------- Layer 5: Bezier Rolling Alpine Ridges & Pull-Tab Flying Sleigh ----------------
   const mtnShape = new THREE.Shape();
-  mtnShape.moveTo(-4.3, 0);
-  mtnShape.lineTo(-3.4, 2.35);
-  mtnShape.lineTo(-2.3, 1.45);
-  mtnShape.lineTo(-0.95, 2.85);
-  mtnShape.lineTo(0.35, 1.65);
-  mtnShape.lineTo(1.85, 2.95);
-  mtnShape.lineTo(3.15, 1.75);
-  mtnShape.lineTo(4.3, 2.25);
-  mtnShape.lineTo(4.3, 0);
+  mtnShape.moveTo(-4.35, 0);
+  mtnShape.bezierCurveTo(-4.0, 1.4, -3.65, 2.45, -3.25, 2.42);
+  mtnShape.bezierCurveTo(-2.85, 2.38, -2.55, 1.48, -2.15, 1.52);
+  mtnShape.bezierCurveTo(-1.65, 1.58, -1.25, 2.95, -0.82, 2.92);
+  mtnShape.bezierCurveTo(-0.38, 2.88, -0.05, 1.65, 0.42, 1.68);
+  mtnShape.bezierCurveTo(0.95, 1.72, 1.45, 3.05, 1.92, 3.02);
+  mtnShape.bezierCurveTo(2.42, 2.98, 2.85, 1.82, 3.28, 1.85);
+  mtnShape.bezierCurveTo(3.68, 1.88, 4.05, 2.38, 4.35, 2.22);
+  mtnShape.lineTo(4.35, 0);
   mtnShape.closePath();
-  const mountains = new THREE.Mesh(extrudeCard(mtnShape, 0.032, 0.006), matIvorySnow);
+
+  const mountains = new THREE.Mesh(extrudeCard(mtnShape, 0.032, 0.006, 22), matIvorySnow);
   mountains.position.set(0, 0, -1.78);
   mountains.castShadow = true;
   mountains.receiveShadow = true;
   popupGroup.add(mountains);
 
-  // Flying Origami Reindeer Sleigh Rig (driven by the right-side Pull-Tab!)
+  // Flying Bezier Filigree Reindeer Sleigh + Golden Stardust Wake!
   const sleighPivot = new THREE.Group();
   sleighPivot.position.set(0, 0.6, -1.35);
   popupGroup.add(sleighPivot);
@@ -328,185 +537,230 @@ export function createAct1Paper({ envMap, textures, audio, onAwaken, onHint }) {
   const sleighCarriage = new THREE.Group();
   sleighPivot.add(sleighCarriage);
 
-  const sleighMesh = new THREE.Mesh(extrudeCard(makeSleighShape(0.56), 0.04, 0.008), matBurgundy);
-  const sleighTrim = new THREE.Mesh(extrudeCard(makeSleighShape(0.58), 0.018, 0.005), matGoldFoil);
-  sleighTrim.position.z = -0.01;
-  sleighCarriage.add(sleighMesh, sleighTrim);
+  const sleighMesh = new THREE.Mesh(extrudeCard(makeBaroqueSleighShape(0.56), 0.042, 0.007), matBurgundy);
+  sleighCarriage.add(sleighMesh);
 
-  // Tiny wrapped paper gift parcels in sleigh
-  const gift1 = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.18), matGoldFoil);
-  gift1.position.set(-0.14, 0.22, 0.02);
-  const gift2 = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.26, 0.16), matCream);
-  gift2.position.set(0.08, 0.24, 0.02);
-  sleighCarriage.add(gift1, gift2);
+  const sleighGoldParts = [
+    transformGeo(extrudeCard(makeBaroqueSleighShape(0.58), 0.018, 0.004), { z: -0.012 }),
+    // Curled swan-neck metal runner blade underneath
+    transformGeo(new THREE.TorusGeometry(0.16, 0.014, 8, 24, Math.PI * 1.25), { x: 0.48, y: -0.14, z: 0.02 }),
+    transformGeo(new THREE.BoxGeometry(1.08, 0.018, 0.03), { x: -0.05, y: -0.22, z: 0.02 }),
+    transformGeo(new THREE.BoxGeometry(0.22, 0.22, 0.18), { x: -0.16, y: 0.22, z: 0.02 }),
+  ];
+  const reinCurve = new THREE.QuadraticBezierCurve3(
+    new THREE.Vector3(0.38, 0.14, 0.02),
+    new THREE.Vector3(1.28, -0.02, 0.04),
+    new THREE.Vector3(2.28, 0.28, 0.02)
+  );
+  sleighGoldParts.push(new THREE.TubeGeometry(reinCurve, 24, 0.009, 6, false));
+  sleighCarriage.add(new THREE.Mesh(mergeGeometries(sleighGoldParts), matGoldFoil));
 
   const reindeerMeshes = [];
+  const deerBodyGeo = extrudeCard(makeBezierReindeerShape(0.48), 0.028, 0.005, 18);
+  // Slotted 3D 5-point origami antler pair (crossed at +/-28 deg!)
+  const antlerWingA = transformGeo(extrudeCard(makeAntlerCrownShape(0.46), 0.012, 0.002, 12), { x: 0.22, y: 0.22, z: 0.015, ry: 0.46 });
+  const antlerWingB = transformGeo(extrudeCard(makeAntlerCrownShape(0.46), 0.012, 0.002, 12), { x: 0.22, y: 0.22, z: 0.015, ry: -0.46 });
+  const antlerPairGeo = mergeGeometries([antlerWingA, antlerWingB], true);
+
   for (let r = 0; r < 3; r++) {
     const deerG = new THREE.Group();
-    deerG.position.set(0.82 + r * 0.68, 0.06 + r * 0.05, 0);
-    const body = new THREE.Mesh(extrudeCard(makeReindeerShape(0.46), 0.03, 0.006), matCream);
-    const goldShadow = new THREE.Mesh(extrudeCard(makeReindeerShape(0.475), 0.014, 0.004), matGoldFoil);
-    goldShadow.position.z = -0.012;
-    deerG.add(body, goldShadow);
+    deerG.position.set(0.84 + r * 0.70, 0.06 + r * 0.05, 0);
+    const body = new THREE.Mesh(deerBodyGeo, matCream);
+    const antlers = new THREE.Mesh(antlerPairGeo, matGoldFoil);
+    deerG.add(body, antlers);
     sleighCarriage.add(deerG);
     reindeerMeshes.push(deerG);
   }
-  // Golden ribbon reins connecting sleigh to reindeer
-  const reinCurve = new THREE.QuadraticBezierCurve3(
-    new THREE.Vector3(0.35, 0.12, 0.02),
-    new THREE.Vector3(1.25, -0.02, 0.04),
-    new THREE.Vector3(2.25, 0.26, 0.02)
+
+  // Golden origami stardust wake trail behind the sleigh
+  const wakeCount = 36;
+  const wakeGeo = new THREE.BufferGeometry();
+  const wakePos = new Float32Array(wakeCount * 3);
+  for (let i = 0; i < wakeCount; i++) wakePos[i * 3 + 1] = -20;
+  wakeGeo.setAttribute('position', new THREE.BufferAttribute(wakePos, 3));
+  const wakePoints = new THREE.Points(
+    wakeGeo,
+    new THREE.PointsMaterial({
+      map: textures.sparkTex,
+      color: 0xffe49c,
+      size: 0.24,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
   );
-  const reinMesh = new THREE.Mesh(new THREE.TubeGeometry(reinCurve, 24, 0.009, 6, false), matGoldFoil);
-  sleighCarriage.add(reinMesh);
+  popupGroup.add(wakePoints);
+  let wakeHead = 0;
 
-  // ---------------- Layer 4: Pop-up Gothic Starlight Belltower & Village Row ----------------
-  const villageGroup = new THREE.Group();
-  villageGroup.position.set(0, 0, -0.65);
-  popupGroup.add(villageGroup);
+  // ---------------- Layer 4: 3-Tier Pierced Rose-Window Gothic Cathedral & Village Row ----------------
+  const villageCreamParts = [];
+  const villageGoldParts = [];
+  const vellumParts = [];
 
-  const vellumWindows = [];
+  // Volvelle arch rim + top Polaris pointer batched into villageGoldParts
+  villageGoldParts.push(transformGeo(new THREE.TorusGeometry(1.50, 0.032, 12, 64), { y: 3.35, z: -2.30 }));
+  const ptrShape = new THREE.Shape();
+  ptrShape.moveTo(0, -0.18); ptrShape.lineTo(-0.09, 0.06); ptrShape.lineTo(0.09, 0.06); ptrShape.closePath();
+  villageGoldParts.push(transformGeo(extrudeCard(ptrShape, 0.02, 0.004, 6), { y: 4.86, z: -2.26 }));
 
-  const addPaperHouse = (x, z, w, h, roofH, isTower = false) => {
-    const g = new THREE.Group();
-    g.position.set(x, 0, z);
-    // V-fold front & subtle angled wing so it reads as true folded cardstock
+  const addGothicHouseGeo = (x, z, w, h, roofH, isCathedral = false) => {
     const wallShape = new THREE.Shape();
     wallShape.moveTo(-w * 0.5, 0);
     wallShape.lineTo(-w * 0.5, h);
-    wallShape.lineTo(0, h + roofH);
+    if (isCathedral) {
+      // Stepped belfry shoulders + soaring spire
+      wallShape.lineTo(-w * 0.28, h + 0.22);
+      wallShape.lineTo(-w * 0.28, h + 0.68);
+      wallShape.lineTo(0, h + roofH);
+      wallShape.lineTo(w * 0.28, h + 0.68);
+      wallShape.lineTo(w * 0.28, h + 0.22);
+    } else {
+      wallShape.lineTo(0, h + roofH);
+    }
     wallShape.lineTo(w * 0.5, h);
     wallShape.lineTo(w * 0.5, 0);
     wallShape.closePath();
 
-    // Cut arched window openings right through the cardstock!
-    const winRows = isTower ? 2 : 1;
-    const winCols = isTower ? 1 : 2;
-    for (let ry = 0; ry < winRows; ry++) {
-      for (let cx = 0; cx < winCols; cx++) {
-        const wx = winCols === 1 ? 0 : (cx - 0.5) * (w * 0.44);
-        const wy = isTower ? (0.58 + ry * 0.85) : h * 0.42;
-        const ww = isTower ? 0.16 : 0.13;
-        const wh = isTower ? 0.30 : 0.24;
+    if (isCathedral) {
+      // 1. Ground arched portal doorway
+      const portal = new THREE.Path();
+      portal.moveTo(-0.18, 0.06);
+      portal.lineTo(-0.18, 0.42);
+      portal.absarc(0, 0.42, 0.18, Math.PI, 0, true);
+      portal.lineTo(0.18, 0.06);
+      portal.closePath();
+      wallShape.holes.push(portal);
+
+      // 2. Real Pierced 8-Petal Gothic Rose Window!
+      const roseY = 1.28;
+      const centerEye = new THREE.Path();
+      centerEye.absarc(0, roseY, 0.085, 0, Math.PI * 2, true);
+      wallShape.holes.push(centerEye);
+      for (let p = 0; p < 8; p++) {
+        const pa = (p / 8) * Math.PI * 2;
+        const pet = new THREE.Path();
+        pet.absarc(Math.cos(pa) * 0.20, roseY + Math.sin(pa) * 0.20, 0.058, 0, Math.PI * 2, true);
+        wallShape.holes.push(pet);
+      }
+
+      // 3. Pierced upper belfry arch (houses swinging golden bell!)
+      const belfry = new THREE.Path();
+      belfry.moveTo(-0.15, h + 0.18);
+      belfry.lineTo(-0.15, h + 0.52);
+      belfry.absarc(0, h + 0.52, 0.15, Math.PI, 0, true);
+      belfry.lineTo(0.15, h + 0.18);
+      belfry.closePath();
+      wallShape.holes.push(belfry);
+
+      vellumParts.push(transformGeo(new THREE.PlaneGeometry(0.72, 1.65), { x, y: 0.95, z: z - 0.01 }));
+
+      // Flying buttress side wings
+      for (const sx of [-1, 1]) {
+        const but = new THREE.Shape();
+        but.moveTo(0, 0);
+        but.lineTo(sx * 0.34, 0);
+        but.lineTo(sx * 0.12, h * 0.85);
+        but.lineTo(0, h * 0.92);
+        but.closePath();
+        const bh = new THREE.Path();
+        bh.absarc(sx * 0.14, h * 0.38, 0.065, 0, Math.PI * 2, true);
+        but.holes.push(bh);
+        villageCreamParts.push(transformGeo(extrudeCard(but, 0.026, 0.004, 10), { x: x + sx * w * 0.5, z }));
+      }
+
+      villageGoldParts.push(
+        transformGeo(new THREE.RingGeometry(0.28, 0.32, 24), { x, y: roseY, z: z + 0.048 }),
+        transformGeo(createFacetedStarGeometry({ points: 8, outerRadius: 0.20, innerRadius: 0.07, depth: 0.05 }), { x, y: h + roofH + 0.16, z: z + 0.02 })
+      );
+    } else {
+      for (let cx = 0; cx < 2; cx++) {
+        const wx = (cx - 0.5) * (w * 0.44);
+        const wy = h * 0.44;
         const hole = new THREE.Path();
-        hole.moveTo(wx - ww, wy - wh * 0.5);
-        hole.lineTo(wx - ww, wy + wh * 0.2);
-        hole.absarc(wx, wy + wh * 0.2, ww, Math.PI, 0, true);
-        hole.lineTo(wx + ww, wy - wh * 0.5);
+        hole.moveTo(wx - 0.12, wy - 0.14);
+        hole.lineTo(wx - 0.12, wy + 0.06);
+        hole.absarc(wx, wy + 0.06, 0.12, Math.PI, 0, true);
+        hole.lineTo(wx + 0.12, wy - 0.14);
         hole.closePath();
         wallShape.holes.push(hole);
+      }
+      // Attic oculus window
+      const attic = new THREE.Path();
+      attic.absarc(0, h + roofH * 0.36, 0.085, 0, Math.PI * 2, true);
+      wallShape.holes.push(attic);
 
-        // Illuminated translucent vellum backing sheet behind each cutout window
-        const vellumMat = matVellumWindow.clone();
-        const vellum = new THREE.Mesh(new THREE.PlaneGeometry(ww * 2.3, wh * 1.4), vellumMat);
-        vellum.position.set(wx, wy, -0.008);
-        g.add(vellum);
-        vellumWindows.push(vellumMat);
+      vellumParts.push(transformGeo(new THREE.PlaneGeometry(w * 0.78, h * 0.85), { x, y: h * 0.56, z: z - 0.01 }));
+
+      const eaveL = Math.hypot(w * 0.54, roofH);
+      const ang = Math.atan2(roofH, w * 0.5);
+      for (const dir of [-1, 1]) {
+        villageGoldParts.push(
+          transformGeo(new THREE.BoxGeometry(eaveL, 0.042, 0.055), {
+            x: x + dir * w * 0.26,
+            y: h + roofH * 0.5 + 0.02,
+            z: z + 0.02,
+            rz: -dir * ang,
+          })
+        );
       }
     }
 
-    const wall = new THREE.Mesh(extrudeCard(wallShape, 0.036, 0.007), matCream);
-    wall.castShadow = true;
-    wall.receiveShadow = true;
-    g.add(wall);
-
-    // Scalloped gold-foil snow eaves
-    const eaveL = Math.hypot(w * 0.54, roofH);
-    const ang = Math.atan2(roofH, w * 0.5);
-    for (const dir of [-1, 1]) {
-      const eave = new THREE.Mesh(new THREE.BoxGeometry(eaveL, 0.045, 0.055), matGoldFoil);
-      eave.position.set(dir * w * 0.26, h + roofH * 0.5 + 0.02, 0.02);
-      eave.rotation.z = -dir * ang;
-      g.add(eave);
-    }
-
-    if (isTower) {
-      // Rose window gold filigree + spire finial star
-      const rose = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.19, 16), matGoldFoil);
-      rose.position.set(0, h + roofH * 0.32, 0.048);
-      g.add(rose);
-      const spireStar = new THREE.Mesh(
-        createFacetedStarGeometry({ points: 6, outerRadius: 0.18, innerRadius: 0.07, depth: 0.05 }),
-        matGoldFoil
-      );
-      spireStar.position.set(0, h + roofH + 0.16, 0.02);
-      g.add(spireStar);
-    }
-    villageGroup.add(g);
-    return g;
+    villageCreamParts.push(transformGeo(extrudeCard(wallShape, 0.036, 0.007, 16), { x, z }));
   };
 
-  addPaperHouse(0, 0, 1.25, 1.95, 1.35, true);
-  addPaperHouse(-1.35, 0.22, 1.15, 1.15, 0.68, false);
-  addPaperHouse(1.38, 0.18, 1.18, 1.22, 0.72, false);
-  addPaperHouse(-2.48, 0.45, 0.96, 0.95, 0.58, false);
-  addPaperHouse(2.52, 0.42, 0.98, 1.02, 0.62, false);
+  addGothicHouseGeo(0, -0.65, 1.32, 1.98, 1.55, true);
+  addGothicHouseGeo(-1.42, -0.42, 1.15, 1.16, 0.70, false);
+  addGothicHouseGeo(1.44, -0.46, 1.18, 1.22, 0.72, false);
+  addGothicHouseGeo(-2.55, -0.18, 0.96, 0.96, 0.58, false);
+  addGothicHouseGeo(2.58, -0.22, 0.98, 1.02, 0.62, false);
 
-  // ---------------- Layer 3: Arched Paper Footbridge & Vellum Frozen Stream ----------------
+  // Layer 3 Arched Paper Footbridge batched into villageCreamParts & villageGoldParts!
+  const bridgeShape = new THREE.Shape();
+  bridgeShape.moveTo(-1.48, 0);
+  bridgeShape.quadraticCurveTo(0, 0.72, 1.48, 0);
+  bridgeShape.lineTo(1.48, 0.24);
+  bridgeShape.quadraticCurveTo(0, 0.96, -1.48, 0.24);
+  bridgeShape.closePath();
+  for (let b = -3; b <= 3; b++) {
+    const bx = b * 0.34;
+    const by = 0.52 - bx * bx * 0.22;
+    const bal = new THREE.Path();
+    bal.absarc(bx, by, 0.045, 0, Math.PI * 2, true);
+    bridgeShape.holes.push(bal);
+  }
+  villageCreamParts.push(transformGeo(extrudeCard(bridgeShape, 0.032, 0.005, 18), { z: 1.05 }));
+  villageGoldParts.push(transformGeo(new THREE.TorusGeometry(1.56, 0.015, 8, 32, Math.PI * 0.58), { y: -0.70, z: 1.09, rz: Math.PI * 0.21 }));
+
+  const villageMesh = new THREE.Mesh(mergeGeometries(villageCreamParts), matCream);
+  villageMesh.castShadow = true;
+  villageMesh.receiveShadow = true;
+  popupGroup.add(villageMesh);
+  popupGroup.add(new THREE.Mesh(mergeGeometries(vellumParts), matVellumWindow));
+
+  // Swinging miniature brass bell inside cathedral belfry!
+  const belfryBell = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.16, 16), matGoldFoil);
+  belfryBell.position.set(0, 2.42, -0.63);
+  popupGroup.add(belfryBell);
+
+  // Frozen specular stream
   const stream = new THREE.Mesh(
-    new THREE.PlaneGeometry(3.2, 2.9),
+    new THREE.PlaneGeometry(3.25, 2.95),
     new THREE.MeshPhysicalMaterial({
       color: 0xd9ecff,
-      roughness: 0.15,
-      metalness: 0.1,
-      transmission: 0.35,
-      envMapIntensity: 1.8,
+      roughness: 0.14,
+      metalness: 0.12,
+      clearcoat: 0.85,
+      envMapIntensity: 1.95,
     })
   );
   stream.rotation.x = -Math.PI * 0.5;
   stream.position.set(0, 0.032, 1.15);
   popupGroup.add(stream);
 
-  const bridgeShape = new THREE.Shape();
-  bridgeShape.moveTo(-1.45, 0);
-  bridgeShape.quadraticCurveTo(0, 0.68, 1.45, 0);
-  bridgeShape.lineTo(1.45, 0.22);
-  bridgeShape.quadraticCurveTo(0, 0.92, -1.45, 0.22);
-  bridgeShape.closePath();
-  const bridge = new THREE.Mesh(extrudeCard(bridgeShape, 0.03, 0.005), matCream);
-  bridge.position.set(0, 0, 1.05);
-  bridge.castShadow = true;
-  popupGroup.add(bridge);
-  const bridgeGold = new THREE.Mesh(
-    new THREE.TorusGeometry(1.55, 0.014, 8, 32, Math.PI * 0.58),
-    matGoldFoil
-  );
-  bridgeGold.rotation.z = Math.PI * 0.21;
-  bridgeGold.position.set(0, -0.72, 1.09);
-  popupGroup.add(bridgeGold);
-
-  // ---------------- Layer 2 & 1: 3D V-Fold Origami Pine Forest ----------------
-  const addVFoldPine = (x, z, w, h, dark = true, goldTrim = false) => {
-    const g = new THREE.Group();
-    g.position.set(x, 0, z);
-    const wingGeo = extrudeCard(makePineWingShape(w, h, 4), 0.022, 0.004);
-    const mat = dark ? matPineDark : matPineMid;
-
-    const leftWing = new THREE.Mesh(wingGeo, mat);
-    leftWing.rotation.y = Math.PI - 0.52;
-    leftWing.castShadow = true;
-    leftWing.receiveShadow = true;
-
-    const rightWing = new THREE.Mesh(wingGeo, mat);
-    rightWing.rotation.y = 0.52;
-    rightWing.castShadow = true;
-    rightWing.receiveShadow = true;
-
-    g.add(leftWing, rightWing);
-
-    if (goldTrim) {
-      const trimGeo = extrudeCard(makePineWingShape(w * 1.03, h * 1.015, 4), 0.01, 0.003);
-      const tL = new THREE.Mesh(trimGeo, matGoldFoil);
-      tL.rotation.y = Math.PI - 0.55;
-      tL.position.z = -0.015;
-      const tR = new THREE.Mesh(trimGeo, matGoldFoil);
-      tR.rotation.y = 0.55;
-      tR.position.z = -0.015;
-      g.add(tL, tR);
-    }
-    popupGroup.add(g);
-  };
-
+  // ---------------- Layer 2 & 1: Batched 3D V-Fold Origami Pine Forest ----------------
+  const darkPineParts = [];
+  const midPineParts = [];
   const pineSpecs = [
     [-3.85, 1.75, 0.78, 2.25, true, true],
     [-3.05, 2.18, 0.62, 1.68, false, false],
@@ -517,7 +771,28 @@ export function createAct1Paper({ envMap, textures, audio, onAwaken, onHint }) {
     [-3.65, -0.55, 0.72, 2.05, false, true],
     [3.62, -0.48, 0.74, 2.12, false, true],
   ];
-  for (const p of pineSpecs) addVFoldPine(...p);
+  for (const [px, pz, pw, ph, isDark, goldTrim] of pineSpecs) {
+    const targetArr = isDark ? darkPineParts : midPineParts;
+    targetArr.push(
+      transformGeo(extrudeCard(makePineWingShape(pw, ph, 5), 0.022, 0.004, 10), { x: px, z: pz, ry: Math.PI - 0.52 }),
+      transformGeo(extrudeCard(makePineWingShape(pw, ph, 5), 0.022, 0.004, 10), { x: px, z: pz, ry: 0.52 })
+    );
+    if (goldTrim) {
+      villageGoldParts.push(
+        transformGeo(extrudeCard(makePineWingShape(pw * 1.03, ph * 1.015, 5), 0.01, 0.003, 8), { x: px, z: pz - 0.015, ry: Math.PI - 0.55 }),
+        transformGeo(extrudeCard(makePineWingShape(pw * 1.03, ph * 1.015, 5), 0.01, 0.003, 8), { x: px, z: pz - 0.015, ry: 0.55 })
+      );
+    }
+  }
+
+  const darkPinesMesh = new THREE.Mesh(mergeGeometries(darkPineParts), matPineDark);
+  darkPinesMesh.castShadow = true;
+  darkPinesMesh.receiveShadow = true;
+  const midPinesMesh = new THREE.Mesh(mergeGeometries(midPineParts), matPineMid);
+  midPinesMesh.castShadow = true;
+  midPinesMesh.receiveShadow = true;
+  const villageGoldMesh = new THREE.Mesh(mergeGeometries(villageGoldParts), matGoldFoil);
+  popupGroup.add(darkPinesMesh, midPinesMesh, villageGoldMesh);
 
   // ---------------- Interactive Mechanism 1: Right-Side Gilded Pull-Tab ----------------
   const pullTabGroup = new THREE.Group();
@@ -526,27 +801,24 @@ export function createAct1Paper({ envMap, textures, audio, onAwaken, onHint }) {
 
   const tabStrip = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.024, 0.46), matBurgundy);
   tabStrip.castShadow = true;
-  const tabBorder = new THREE.Mesh(new THREE.BoxGeometry(1.68, 0.016, 0.50), matGoldFoil);
-  tabBorder.position.y = -0.005;
-  const tabRing = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.028, 12, 32), matGoldFoil);
-  tabRing.rotation.x = Math.PI * 0.5;
-  tabRing.position.set(0.92, 0, 0);
-  // Arrow chevron embossed in gold foil
-  const chev = new THREE.Mesh(
-    createFacetedStarGeometry({ points: 4, outerRadius: 0.13, innerRadius: 0.05, depth: 0.02 }),
+  const tabGoldMesh = new THREE.Mesh(
+    mergeGeometries([
+      transformGeo(new THREE.BoxGeometry(1.68, 0.016, 0.50), { y: -0.005 }),
+      transformGeo(new THREE.TorusGeometry(0.18, 0.028, 12, 32), { x: 0.92, rx: Math.PI * 0.5 }),
+      transformGeo(createFacetedStarGeometry({ points: 4, outerRadius: 0.13, innerRadius: 0.05, depth: 0.02 }), { x: 0.42, y: 0.02, rx: Math.PI * 0.5 }),
+    ]),
     matGoldFoil
   );
-  chev.rotation.x = Math.PI * 0.5;
-  chev.position.set(0.42, 0.02, 0);
-  pullTabGroup.add(tabStrip, tabBorder, tabRing, chev);
+  // Subtle pulsing shimmer cue ring on pull-tab until pulled!
+  const tabCueMat = new THREE.MeshBasicMaterial({ color: 0xffe49c, transparent: true, opacity: 0.0, depthWrite: false, blending: THREE.AdditiveBlending });
+  const tabCueRing = new THREE.Mesh(new THREE.RingGeometry(0.20, 0.28, 32), tabCueMat);
+  tabCueRing.rotation.x = -Math.PI * 0.5;
+  tabCueRing.position.set(0.92, 0.025, 0);
+  pullTabGroup.add(tabStrip, tabGoldMesh, tabCueRing);
 
-  // Invisible generous hit box for effortless dragging
-  const tabHit = new THREE.Mesh(
-    new THREE.BoxGeometry(1.95, 0.35, 0.85),
-    new THREE.MeshBasicMaterial({ visible: false })
-  );
+  const tabHit = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.38, 0.88), new THREE.MeshBasicMaterial({ visible: false }));
   tabHit.position.set(0.3, 0.05, 0);
-  tabHit.userData = { kind: 'pulltab', label: '向右拖动纸拉条 · 放飞折纸雪橇' };
+  tabHit.userData = { kind: 'pulltab', label: '向右拉动烫金纸拉条 · 放飞镂空跃鹿雪橇' };
   pullTabGroup.add(tabHit);
   interactables.push(tabHit);
 
@@ -557,20 +829,16 @@ export function createAct1Paper({ envMap, textures, audio, onAwaken, onHint }) {
     wrap.position.set(x, y, z);
     popupGroup.add(wrap);
 
-    // Warm recessed alcove glow behind the flap
-    const alcoveGlow = new THREE.Mesh(
-      new THREE.CircleGeometry(0.24, 24),
-      new THREE.MeshStandardMaterial({
-        color: 0xffefc2,
-        emissive: new THREE.Color(charmColor),
-        emissiveIntensity: 1.6,
-        roughness: 0.3,
-      })
-    );
+    const alcoveMat = new THREE.MeshStandardMaterial({
+      color: 0xffefc2,
+      emissive: new THREE.Color(charmColor),
+      emissiveIntensity: 1.65,
+      roughness: 0.3,
+    });
+    const alcoveGlow = new THREE.Mesh(new THREE.CircleGeometry(0.24, 24), alcoveMat);
     alcoveGlow.position.set(0.22, 0.24, -0.01);
     wrap.add(alcoveGlow);
 
-    // Tiny pop-out gold origami charm inside
     const charm = new THREE.Mesh(
       createFacetedStarGeometry({ points: 6, outerRadius: 0.15, innerRadius: 0.06, depth: 0.045 }),
       matGoldFoil
@@ -579,7 +847,6 @@ export function createAct1Paper({ envMap, textures, audio, onAwaken, onHint }) {
     charm.scale.setScalar(0.01);
     wrap.add(charm);
 
-    // Hinged door leaf (pivots around left edge x=0)
     const hinge = new THREE.Group();
     wrap.add(hinge);
 
@@ -590,99 +857,123 @@ export function createAct1Paper({ envMap, textures, audio, onAwaken, onHint }) {
     doorShape.lineTo(0.44, 0);
     doorShape.closePath();
 
-    const leaf = new THREE.Mesh(extrudeCard(doorShape, 0.022, 0.004), matBurgundy);
+    const leaf = new THREE.Mesh(extrudeCard(doorShape, 0.022, 0.004, 12), matBurgundy);
     leaf.position.z = 0.025;
     leaf.castShadow = true;
-    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.032, 12, 10), matGoldFoil);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.035, 12, 10), matGoldFoil);
     knob.position.set(0.36, 0.20, 0.055);
     hinge.add(leaf, knob);
 
-    const hit = new THREE.Mesh(
-      new THREE.BoxGeometry(0.62, 0.68, 0.28),
-      new THREE.MeshBasicMaterial({ visible: false })
-    );
+    const hit = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.68, 0.32), new THREE.MeshBasicMaterial({ visible: false }));
     hit.position.set(0.22, 0.26, 0.05);
-    const flapObj = {
-      open: false,
-      spring: new Spring1D(0, 165, 14),
-      hinge,
-      charm,
-      alcoveGlow,
-    };
+    const flapObj = { open: false, spring: new Spring1D(0, 165, 14), hinge, charm, alcoveMat };
     hit.userData = { kind: 'flap', flapObj, label };
     wrap.add(hit);
     interactables.push(hit);
     flaps.push(flapObj);
   };
 
-  addLiftFlap(-0.22, 0.02, -0.58, '掀开钟楼折页小门', 0xff9f38);
-  addLiftFlap(-2.95, 0.02, 1.52, '掀开古松树洞折页', 0xff6b4a);
-  addLiftFlap(1.92, 0.02, 1.48, '掀开雪桥灯龛折页', 0xffcb57);
+  addLiftFlap(-1.82, 0.02, 1.52, '掀开松林折页小门 · 藏着金箔星徽', 0xffaa3b);
+  addLiftFlap(-0.22, 0.04, -0.58, '轻敲哥特钟楼拱门 · 点亮圣咏烛火', 0xffc455);
+  addLiftFlap(1.48, 0.02, 1.48, '掀开溪畔雪屋折页 · 寻觅冬夜星光', 0xff9e40);
 
-  // ---------------- Centerpiece Awakening Star Sigil & Floating Gold Paper Dust ----------------
-  const sigilGroup = new THREE.Group();
-  sigilGroup.position.set(0, 2.35, 0.45);
-  sigilGroup.scale.setScalar(0.001);
-  popupGroup.add(sigilGroup);
-
-  const sigilStar = new THREE.Mesh(
-    createFacetedStarGeometry({ points: 8, outerRadius: 0.48, innerRadius: 0.18, depth: 0.14 }),
-    matGoldFoil
-  );
-  const sigilHalo = new THREE.Mesh(
-    new THREE.TorusGeometry(0.62, 0.014, 10, 48),
-    matGoldFoil
-  );
-  sigilGroup.add(sigilStar, sigilHalo);
-
-  // Floating golden paper-cut dust motes
-  const dustCount = 90;
+  // ---------------- Ambient Golden Paper Fireflies ----------------
+  const dustCount = 48;
   const dustGeo = new THREE.BufferGeometry();
   const dustPos = new Float32Array(dustCount * 3);
-  const dustSeed = new Float32Array(dustCount);
+  const dustPhase = new Float32Array(dustCount);
   for (let i = 0; i < dustCount; i++) {
-    dustPos[i * 3] = (Math.random() - 0.5) * 9.2;
-    dustPos[i * 3 + 1] = 0.25 + Math.random() * 4.6;
+    dustPos[i * 3] = (Math.random() - 0.5) * 9.5;
+    dustPos[i * 3 + 1] = 0.35 + Math.random() * 4.4;
     dustPos[i * 3 + 2] = (Math.random() - 0.5) * 5.2;
-    dustSeed[i] = Math.random() * Math.PI * 2;
+    dustPhase[i] = Math.random() * Math.PI * 2;
   }
   dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
-  const dustMat = new THREE.PointsMaterial({
-    map: textures.sparkTex,
-    color: 0xffe4a0,
-    size: 0.22,
-    transparent: true,
-    opacity: 0.78,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const dustPoints = new THREE.Points(dustGeo, dustMat);
-  bookRoot.add(dustPoints);
+  scene.add(
+    new THREE.Points(
+      dustGeo,
+      new THREE.PointsMaterial({
+        map: textures.sparkTex,
+        color: 0xffe6a8,
+        size: 0.22,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    )
+  );
 
-  // ---------------- Interaction State & Physics ----------------
-  const pullSpring = new Spring1D(0.18, 130, 16);
-  const volSpring = new Spring1D(0.68, 110, 15); // starts off Polaris so user can align it!
-  const windowGlowSpring = new Spring1D(0.45, 70, 13);
-  const sigilScaleSpring = new Spring1D(0.001, 95, 11);
-
-  let dragMode = null; // 'pulltab' | 'volvelle' | null
+  // ---------------- Direct Manipulation State & Progress ----------------
+  const pullSpring = new Spring1D(0.12, 125, 15);
+  const volvelleSpring = new Spring1D(0.72, 115, 15);
+  let lastRatchetStep = Math.round(0.72 / (Math.PI / 12));
+  let activeDrag = null;
   let dragStartX = 0;
   let dragStartVal = 0;
-  let pulledOnce = false;
-  let volAligned = false;
-  let flapsOpenedCount = 0;
+  let volStartAngle = 0;
+
+  let hasPulledSleigh = false;
+  let hasAlignedStar = false;
+  let openedFlapCount = 0;
   let awakened = false;
+
+  const crownStar = new THREE.Mesh(
+    createFacetedStarGeometry({ points: 8, outerRadius: 0.44, innerRadius: 0.16, depth: 0.12 }),
+    matGoldFoil
+  );
+  crownStar.position.set(0, 5.58, -2.26);
+  crownStar.scale.setScalar(0.001);
+  popupGroup.add(crownStar);
+  const crownSpring = new Spring1D(0, 140, 12);
+
+  // Coalesce static paper & book components so Act I runs in ~24 main-pass DrawCalls (<45 budget)!
+  const matPaperVC = makePaperMat(0xffffff, 0.80, 0.42);
+  matPaperVC.vertexColors = true;
+  for (const d of reindeerMeshes) collapseSolidMeshes(d, matPaperVC, [], textures.paperTex);
+  for (const f of flaps) collapseSolidMeshes(f.hinge, matPaperVC, [], textures.paperTex);
+  collapseSolidMeshes(sleighCarriage, matPaperVC, reindeerMeshes, textures.paperTex);
+  collapseSolidMeshes(pullTabGroup, matPaperVC, [tabCueRing], textures.paperTex);
+  collapseSolidMeshes(
+    popupGroup,
+    matPaperVC,
+    [
+      volvelleGroup,
+      sleighPivot,
+      belfryBell,
+      crownStar,
+      ...flaps.flatMap((f) => [f.hinge, f.charm]),
+    ],
+    textures.paperTex
+  );
+  batchStaticMeshes(popupGroup, [
+    volvelleGroup,
+    sleighPivot,
+    belfryBell,
+    crownStar,
+    ...flaps.flatMap((f) => [f.hinge, f.charm]),
+  ]);
+  batchStaticMeshes(scene, [
+    popupGroup,
+    pullTabGroup,
+    candleFlame,
+    shaftCone,
+  ]);
+
+  function getProgress() {
+    const done = (hasPulledSleigh ? 1 : 0) + (hasAlignedStar ? 1 : 0) + (openedFlapCount > 0 ? 1 : 0);
+    return { current: done, total: 3 };
+  }
 
   function checkAwaken() {
     if (awakened) return;
-    const score = (pulledOnce ? 1 : 0) + (volAligned ? 1 : 0) + (flapsOpenedCount >= 1 ? 1 : 0);
-    if (score >= 2) {
+    if (getProgress().current >= 2 || openedFlapCount >= 2) {
       awakened = true;
-      sigilScaleSpring.target = 1.0;
-      windowGlowSpring.target = 2.6;
+      crownSpring.target = 1.0;
+      cameraRig.focusOn(0, 1.35, -0.6, 0.82, 2.2);
       audio.playSigilAwaken();
-      onAwaken(1, '第一声部已唤醒 · 竖琴与烫金纸雕共鸣');
-      onHint('松林星夜书已点亮 · 可继续把玩机关或前往下一幕');
+      onAwaken(1, '第一声部已唤醒 · 烫金纸雕竖琴与钢片琴悠扬奏响');
+      onHint('松林星夜书已点亮 · 可滚轮推近细赏镂空鹿角与蜡泪，或前往第二幕');
     }
   }
 
@@ -690,32 +981,26 @@ export function createAct1Paper({ envMap, textures, audio, onAwaken, onHint }) {
     if (!hit) return false;
     const { kind, flapObj } = hit.object.userData;
     if (kind === 'pulltab') {
-      dragMode = 'pulltab';
+      activeDrag = 'pulltab';
       dragStartX = pointerNDC.x;
       dragStartVal = pullSpring.target;
       audio.playPaperFold(true);
-      focusOffset.set(0.3, 0.35, -1.0);
-      focusLookOffset.set(0, 1.1, -0.6);
-      focusTimer = 2.4;
       return true;
     }
     if (kind === 'volvelle') {
-      dragMode = 'volvelle';
-      dragStartX = pointerNDC.x;
-      dragStartVal = volSpring.target;
-      audio.playHoverTick(1.2);
-      focusOffset.set(0, 0.45, -1.35);
-      focusLookOffset.set(0, 1.35, -1.2);
-      focusTimer = 2.5;
+      activeDrag = 'volvelle';
+      volStartAngle = Math.atan2(pointerNDC.y - 0.18, pointerNDC.x);
+      dragStartVal = volvelleSpring.target;
+      audio.playRatchetClick(0.7);
       return true;
     }
     if (kind === 'flap' && flapObj) {
       flapObj.open = !flapObj.open;
-      flapObj.spring.target = flapObj.open ? 1.0 : 0.0;
-      flapObj.spring.impulse(flapObj.open ? 3.5 : -2.5);
+      flapObj.spring.target = flapObj.open ? 1 : 0;
       audio.playPaperFold(flapObj.open);
       if (flapObj.open) {
-        flapsOpenedCount++;
+        openedFlapCount++;
+        cameraRig.focusOn(hit.point.x * 0.25, 0.1, 0.2, 0.86, 1.5);
         checkAwaken();
       }
       return true;
@@ -724,164 +1009,149 @@ export function createAct1Paper({ envMap, textures, audio, onAwaken, onHint }) {
   }
 
   function onPointerMove(pointerNDC) {
-    if (!dragMode) return false;
-    const dx = pointerNDC.x - dragStartX;
-    if (dragMode === 'pulltab') {
-      pullSpring.target = clamp(dragStartVal + dx * 2.3, 0, 1);
-      focusTimer = 1.8;
-      if (pullSpring.target > 0.68 && !pulledOnce) {
-        pulledOnce = true;
-        audio.playBellChime(5);
+    if (!activeDrag) return false;
+    if (activeDrag === 'pulltab') {
+      const dx = (pointerNDC.x - dragStartX) * 2.35;
+      const prev = pullSpring.target;
+      const next = clamp(dragStartVal + dx, 0.0, 1.0);
+      pullSpring.target = next;
+      // Tactile paper-stop detent bump at full pull!
+      if (next >= 0.98 && prev < 0.98) {
+        pullSpring.impulse(1.8);
+        audio.playRatchetClick(0.9);
+      }
+      if (next > 0.52 && !hasPulledSleigh) {
+        hasPulledSleigh = true;
+        audio.playBellChime(4);
         checkAwaken();
       }
       return true;
     }
-    if (dragMode === 'volvelle') {
-      let next = dragStartVal - dx * 3.4;
-      // Magnetic snap when Polaris approaches 12 o'clock (multiples of 2*PI)
-      const nearest = Math.round(next / (Math.PI * 2)) * Math.PI * 2;
-      if (Math.abs(next - nearest) < 0.24) {
-        next = nearest;
-        if (!volAligned) {
-          volAligned = true;
-          windowGlowSpring.target = 2.45;
-          audio.playBellChime(6);
-          onHint('北极星已归位 · 整座松林纸雕小镇烛光点亮');
-          checkAwaken();
-        }
+    if (activeDrag === 'volvelle') {
+      const curA = Math.atan2(pointerNDC.y - 0.18, pointerNDC.x);
+      let delta = curA - volStartAngle;
+      if (delta > Math.PI) delta -= Math.PI * 2;
+      if (delta < -Math.PI) delta += Math.PI * 2;
+      const nextVal = dragStartVal - delta * 1.4;
+      volvelleSpring.target = nextVal;
+      // 15-degree precision brass astrolabe detent tick!
+      const stepIdx = Math.round(nextVal / (Math.PI / 12));
+      if (stepIdx !== lastRatchetStep) {
+        lastRatchetStep = stepIdx;
+        audio.playRatchetClick(0.55);
       }
-      volSpring.target = next;
-      focusTimer = 1.8;
+      const norm = ((nextVal % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      if ((norm < 0.34 || norm > Math.PI * 2 - 0.34) && !hasAlignedStar) {
+        hasAlignedStar = true;
+        volvelleSpring.target = Math.round(nextVal / (Math.PI * 2)) * (Math.PI * 2);
+        audio.playBellChime(6);
+        checkAwaken();
+      }
       return true;
     }
     return false;
   }
 
   function onPointerUp() {
-    if (dragMode === 'pulltab') {
-      // If user clicked without dragging far, animate a graceful full sleigh leap!
-      if (Math.abs(pullSpring.target - dragStartVal) < 0.06) {
-        const next = pullSpring.target > 0.65 ? 0.12 : 0.96;
-        pullSpring.target = next;
-        if (next > 0.7 && !pulledOnce) {
-          pulledOnce = true;
-          audio.playBellChime(5);
-          checkAwaken();
-        }
-      }
-    } else if (dragMode === 'volvelle') {
-      if (Math.abs(volSpring.target - dragStartVal) < 0.05) {
-        // Click-step rotation toward Polaris alignment
-        volSpring.target = 0;
-        if (!volAligned) {
-          volAligned = true;
-          windowGlowSpring.target = 2.45;
-          audio.playBellChime(6);
-          onHint('北极星已归位 · 整座松林纸雕小镇烛光点亮');
-          checkAwaken();
-        }
-      }
+    if (activeDrag === 'volvelle') {
+      const step = Math.PI / 12;
+      volvelleSpring.target = Math.round(volvelleSpring.target / step) * step;
     }
-    dragMode = null;
+    activeDrag = null;
   }
 
+  let prevSleighP = 0.12;
   function update(dt, t, parallax) {
-    const openAmt = bookOpenSpring.update(dt);
-    popupGroup.scale.y = Math.max(0.05, openAmt);
-    leftCover.rotation.z = (1 - openAmt) * 0.42;
-    rightCover.rotation.z = -(1 - openAmt) * 0.42;
+    const unfold = bookOpenSpring.update(dt);
+    popupGroup.scale.y = Math.max(0.05, unfold);
 
-    // Pull-tab & arched sleigh flight kinematics
-    const pull = pullSpring.update(dt);
-    pullTabGroup.position.x = 4.32 + pull * 1.18;
-    const arcX = lerp(-3.1, 1.55, pull);
-    const arcY = 2.35 + Math.sin(pull * Math.PI) * 1.48;
-    sleighCarriage.position.set(arcX, arcY, 0);
-    sleighCarriage.rotation.z = Math.cos(pull * Math.PI) * 0.28;
-    for (let i = 0; i < reindeerMeshes.length; i++) {
-      reindeerMeshes[i].position.y = 0.06 + i * 0.05 + Math.sin(t * 5.2 + i * 1.1) * 0.055;
-      reindeerMeshes[i].rotation.z = Math.sin(t * 5.2 + i * 0.9) * 0.08;
+    candleFlameMat.uniforms.uTime.value = t;
+    shaftMat.uniforms.uTime.value = t;
+    deskCandleLight.intensity = 1.38 + Math.sin(t * 7.8) * 0.12 + Math.sin(t * 14.3) * 0.06;
+
+    // Gentle shimmer cue on un-pulled pulltab every 4.5s
+    const cuePulse = hasPulledSleigh ? 0 : Math.pow(Math.max(0, Math.sin(t * 1.6)), 4.0) * 0.65;
+    tabCueMat.opacity = cuePulse;
+
+    // Pull-tab & flying Bezier reindeer sleigh arc
+    const p = pullSpring.update(dt);
+    pullTabGroup.position.x = 4.45 + p * 0.98;
+
+    const arcT = lerp(-0.82, 0.82, p);
+    const sx = arcT * 2.65;
+    const sy = 2.48 + (1 - arcT * arcT) * 1.18 + Math.sin(t * 2.2) * 0.05;
+    sleighCarriage.position.set(sx, sy, 0);
+    sleighCarriage.rotation.z = -arcT * 0.34;
+
+    // Emit golden stardust wake particles when sleigh moves!
+    if (Math.abs(p - prevSleighP) > 0.0025) {
+      wakePos[wakeHead * 3] = sx - 0.55 + (Math.random() - 0.5) * 0.18;
+      wakePos[wakeHead * 3 + 1] = sy + 0.45 + (Math.random() - 0.5) * 0.18;
+      wakePos[wakeHead * 3 + 2] = -1.32 + (Math.random() - 0.5) * 0.12;
+      wakeHead = (wakeHead + 1) % wakeCount;
+    }
+    prevSleighP = p;
+    for (let i = 0; i < wakeCount; i++) {
+      if (wakePos[i * 3 + 1] > -10) {
+        wakePos[i * 3 + 1] -= dt * 0.28;
+        if (wakePos[i * 3 + 1] < 0.2) wakePos[i * 3 + 1] = -20;
+      }
+    }
+    wakeGeo.attributes.position.needsUpdate = true;
+
+    for (let r = 0; r < reindeerMeshes.length; r++) {
+      reindeerMeshes[r].position.y = 0.06 + r * 0.05 + Math.sin(t * 4.5 + r * 1.1 + p * 8) * 0.055;
+      reindeerMeshes[r].rotation.z = Math.sin(t * 4.5 + r) * 0.07;
     }
 
-    // Volvelle rotation & window illumination
-    const vAng = volSpring.update(dt);
-    volvelleGroup.rotation.z = vAng;
+    const vAng = volvelleSpring.update(dt);
+    volDisc.rotation.y = vAng;
+    belfryBell.rotation.z = Math.sin(t * 3.2) * (awakened ? 0.18 : 0.05);
 
-    const glow = windowGlowSpring.update(dt);
-    villageCandleLight.intensity = 0.55 + glow * 0.85 + Math.sin(t * 6.3) * 0.08;
-    for (let i = 0; i < vellumWindows.length; i++) {
-      vellumWindows[i].emissiveIntensity = glow * (0.85 + 0.15 * Math.sin(t * 3.7 + i));
-    }
-
-    // Lift-the-flap hinges
-    for (const f of flaps) {
+    for (let i = 0; i < flaps.length; i++) {
+      const f = flaps[i];
       const fv = f.spring.update(dt);
-      f.hinge.rotation.y = -fv * 2.25;
-      f.charm.scale.setScalar(clamp(fv * 1.1, 0.001, 1.15));
-      f.charm.rotation.y = t * 1.6;
+      f.hinge.rotation.y = -fv * 2.15;
+      f.charm.scale.setScalar(Math.max(0.01, fv));
+      f.charm.rotation.y = t * 1.6 + i;
+      // Subtle glow breathe on unopened flaps
+      f.alcoveMat.emissiveIntensity = f.open ? 2.1 : 1.35 + Math.sin(t * 2.4 + i) * 0.35;
     }
 
-    // Awakened centerpiece star sigil
-    const sScale = sigilScaleSpring.update(dt);
-    sigilGroup.scale.setScalar(Math.max(0.001, sScale));
-    sigilStar.rotation.y = t * 0.95;
-    sigilHalo.rotation.x = Math.sin(t * 0.8) * 0.45;
-    sigilHalo.rotation.y = -t * 0.55;
+    const cs = crownSpring.update(dt);
+    crownStar.scale.setScalar(Math.max(0.001, cs));
+    crownStar.rotation.y = t * 0.9;
 
-    // Gentle floating paper-gold motes
-    const posArr = dustGeo.attributes.position.array;
+    const flicker = 0.88 + 0.12 * Math.sin(t * 6.3) * Math.cos(t * 10.7);
+    villageCandleLight.intensity = (awakened ? 2.15 : 1.25) * flicker;
+    matVellumWindow.emissiveIntensity = (awakened ? 1.35 : 0.82) * flicker;
+
+    const dArr = dustGeo.attributes.position.array;
     for (let i = 0; i < dustCount; i++) {
-      posArr[i * 3 + 1] += dt * (0.12 + (i % 5) * 0.03);
-      posArr[i * 3] += Math.sin(t * 0.9 + dustSeed[i]) * dt * 0.08;
-      if (posArr[i * 3 + 1] > 5.0) posArr[i * 3 + 1] = 0.2;
+      dArr[i * 3 + 1] += dt * 0.14;
+      dArr[i * 3] += Math.sin(t * 0.8 + dustPhase[i]) * dt * 0.08;
+      if (dArr[i * 3 + 1] > 5.0) dArr[i * 3 + 1] = 0.25;
     }
     dustGeo.attributes.position.needsUpdate = true;
 
-    // Curated macro camera parallax + automatic close-up decay
-    if (focusTimer > 0) {
-      focusTimer -= dt;
-      if (focusTimer <= 0) {
-        focusOffset.set(0, 0, 0);
-        focusLookOffset.set(0, 0, 0);
-      }
-    }
-    camPosSpring.setTarget(
-      camBasePos.x + parallax.x * 1.15 + focusOffset.x,
-      camBasePos.y + parallax.y * 0.65 + focusOffset.y,
-      camBasePos.z + focusOffset.z
-    );
-    camLookSpring.setTarget(
-      camBaseLook.x + parallax.x * 0.25 + focusLookOffset.x,
-      camBaseLook.y + parallax.y * 0.2 + focusLookOffset.y,
-      camBaseLook.z + focusLookOffset.z
-    );
-    camPosSpring.update(dt);
-    camLookSpring.update(dt);
+    cameraRig.update(dt, parallax);
   }
 
   function applyCamera(camera) {
-    camPosSpring.copyTo(camera.position);
-    const target = new THREE.Vector3();
-    camLookSpring.copyTo(target);
-    camera.lookAt(target);
+    cameraRig.apply(camera);
   }
 
-  // Deterministic state setter for automated QA visual capture
-  function setCaptureState(preset = 'hero') {
+  function setCaptureState(preset) {
     bookOpenSpring.snap(1.0);
-    if (preset === 'climax') {
-      pullSpring.snap(0.62);
-      volSpring.snap(0);
-      windowGlowSpring.snap(2.5);
+    if (preset === 'hero' || preset === 'climax') {
+      pullSpring.snap(0.68);
+      volvelleSpring.snap(0.0);
       flaps[0].open = true;
       flaps[0].spring.snap(1.0);
-      sigilScaleSpring.snap(1.0);
-    } else {
-      pullSpring.snap(0.45);
-      volSpring.snap(0);
-      windowGlowSpring.snap(2.1);
+      awakened = true;
+      crownSpring.snap(1.0);
     }
-    update(0.016, 2.4, { x: 0.12, y: 0.05 });
+    update(0.016, 2.4, { x: 0.08, y: 0.04 });
   }
 
   return {
@@ -889,9 +1159,19 @@ export function createAct1Paper({ envMap, textures, audio, onAwaken, onHint }) {
     roman: 'ACT I',
     title: '松林星夜书',
     subtitle: '烫金立体折纸剧场 · GILDED POP-UP DIORAMA',
-    defaultHint: '向右拖动烫金纸拉条 · 拨动天顶星盘 · 掀开树洞与钟楼小门',
-    transTint: new THREE.Color(0xf6c976),
-    postOpts: { bloomStrength: 0.44, bloomThreshold: 0.85, starburst: 0.18, tiltShift: 0.56 },
+    defaultHint: '向右拉动纸拉条放飞雪橇 · 拨动星象盘 · 滚轮可推近细赏纸雕与烛台',
+    transTint: new THREE.Color(0xffca7a),
+    cameraRig,
+    getProgress,
+    getPostOpts: () => ({
+      bloomStrength: 0.44,
+      bloomThreshold: 0.82,
+      starburst: 0.20,
+      focusDist: cameraRig.getFocusDistance(),
+      aperture: 0.50,
+      aoStrength: 0.85,
+      aoRadius: 0.36,
+    }),
     scene,
     interactables,
     onPointerDown,

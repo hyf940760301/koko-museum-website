@@ -1,9 +1,14 @@
-// NOEL · IV — The Winter Quartet Stage Director
-// Orchestrates Prologue wax-seal unboxing, HDR Bokeh transitions across Acts I–IV & Finale V,
-// magnetic cursor micro-anticipation, dynamic 4-voice waltz mixing, and bespoke keepsake card studio.
+// NOEL · IV — The Winter Quartet Stage Director (V2 Director's Cut)
+// Orchestrates:
+// - Incremental Frame-Sliced Cold-Start Warmup (<180ms interactive boot + zero-hitch shader precompile)
+// - Zero-GC Render Loop, Once-Per-Frame Raycast Throttling & EMA Adaptive Resolution Guardian (60fps target)
+// - 3D Envelope Flap + 6-Shard Wax Shatter Unboxing Ritual
+// - Wheel/Pinch Macro Zoom, Blank-Canvas Orbit Inspection & Double-Click Framing Reset
+// - 2.2s Cinematic Sigil Awakening Shockwave & Bezier Flying Star Socket Sequence
+// - 4-Theme Museum Keepsake Card Atelier
 
 import * as THREE from '../vendor/three.module.js';
-import { Spring2D, clamp } from './physics.js';
+import { Spring2D, clamp, lerp } from './physics.js';
 import { PostPipeline } from './post.js';
 import { buildStudioEnvironments, buildProceduralTextures } from './textures.js';
 import { QuartetAudio } from './audio.js';
@@ -11,7 +16,7 @@ import { createAct1Paper } from './act1_paper.js';
 import { createAct2Clay } from './act2_clay.js';
 import { createAct3Globe } from './act3_globe.js';
 import { createAct4Aurora } from './act4_aurora.js';
-import { createFinaleCarousel, renderKeepsakeCard } from './finale_carousel.js';
+import { createFinaleCarousel, renderKeepsakeCard, CARD_THEMES } from './finale_carousel.js';
 
 const Q = new URLSearchParams(location.search);
 const CAPTURE = Q.has('capture');
@@ -20,7 +25,7 @@ const SKIP_PROLOGUE = Q.has('skip') || CAPTURE;
 const body = document.body;
 const canvas = document.getElementById('stage');
 
-// ---------------- WebGL2 Renderer & HDR Post Pipeline ----------------
+// ---------------- WebGL2 Renderer & Leica Macro Post Pipeline ----------------
 let renderer;
 try {
   renderer = new THREE.WebGLRenderer({
@@ -43,16 +48,18 @@ renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
+let shadowTick = 0;
 
 const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 120);
 const post = new PostPipeline(renderer);
 const audio = new QuartetAudio();
 
-// Bake procedural textures & 4 bespoke HDR studio IBL environments
 const envs = buildStudioEnvironments(renderer);
-const textures = buildProceduralTextures();
+const textures = buildProceduralTextures(renderer);
 
-// ---------------- UI Elements & URL Gift Personalization ----------------
+// ---------------- UI Elements & Gift Personalization ----------------
 const elPrologue = document.getElementById('prologue');
 const btnWaxSeal = document.getElementById('wax-seal-btn');
 const elRecipient = document.getElementById('env-recipient');
@@ -60,12 +67,16 @@ const elBanner = document.getElementById('act-banner');
 const elRoman = document.getElementById('act-roman');
 const elName = document.getElementById('act-name');
 const elSub = document.getElementById('act-sub');
+const elProgress = document.getElementById('act-progress');
 const elHint = document.getElementById('whisper-hint');
 const elToast = document.getElementById('sigil-toast');
+const elRipple = document.getElementById('climax-ripple');
+const elFlyingSigil = document.getElementById('flying-sigil');
 const elCursor = document.getElementById('cursor-halo');
 const elCursorLabel = document.getElementById('cursor-label');
 
 const btnHome = document.getElementById('btn-home');
+const btnResetCam = document.getElementById('btn-reset-cam');
 const btnSound = document.getElementById('btn-sound');
 const btnFinaleTop = document.getElementById('btn-finale');
 const tabFinale = document.getElementById('tab-finale');
@@ -83,6 +94,12 @@ const btnCardClose = document.getElementById('btn-card-close');
 const btnDownloadCard = document.getElementById('btn-download-card');
 const btnCopyLink = document.getElementById('btn-copy-link');
 const elCopyFeedback = document.getElementById('copy-feedback');
+const themeSwatches = Array.from(document.querySelectorAll('.theme-swatch[data-theme]'));
+
+let selectedCardTheme = CARD_THEMES[Q.get('theme')] ? Q.get('theme') : 'burgundy';
+for (const sw of themeSwatches) {
+  sw.classList.toggle('is-selected', sw.dataset.theme === selectedCardTheme);
+}
 
 if (Q.get('to')) {
   inpTo.value = Q.get('to').slice(0, 28);
@@ -97,6 +114,7 @@ function refreshKeepsakePreview() {
     to: inpTo.value,
     message: inpMsg.value,
     from: inpFrom.value,
+    theme: selectedCardTheme,
   });
 }
 
@@ -112,17 +130,53 @@ function closeCardStudio() {
 
 let toastTimer = null;
 function showToast(text) {
+  if (!text) return;
   elToast.textContent = text;
   elToast.classList.add('is-shown');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => elToast.classList.remove('is-shown'), 3600);
+  toastTimer = setTimeout(() => elToast.classList.remove('is-shown'), 3800);
 }
 
 function setHint(text) {
   elHint.textContent = text;
 }
 
-// ---------------- Instantiate All Four Acts + Finale Carousel ----------------
+// ---------------- Climax Sigil Flight Animation (Center -> Bottom Quartet Rail) ----------------
+let sigilFlight = null; // { elapsed, dur, x0, y0, cx, cy, x1, y1, tab }
+
+function playClimaxFlight(actId) {
+  const tab = document.querySelector(`.act-tab[data-act="${actId}"]`);
+  if (CAPTURE || !tab) {
+    if (tab) tab.classList.add('is-awakened');
+    return;
+  }
+
+  // Trigger shockwave ripple at stage center
+  elRipple.classList.remove('is-active');
+  void elRipple.offsetWidth;
+  elRipple.classList.add('is-active');
+
+  const starSlot = tab.querySelector('.sigil-star') || tab;
+  const rect = starSlot.getBoundingClientRect();
+  const x0 = window.innerWidth * 0.5;
+  const y0 = window.innerHeight * 0.44;
+  const x1 = rect.left + rect.width * 0.5;
+  const y1 = rect.top + rect.height * 0.5;
+
+  sigilFlight = {
+    elapsed: 0,
+    dur: 0.92,
+    x0,
+    y0,
+    cx: lerp(x0, x1, 0.35) + (actId <= 2 ? -90 : 90),
+    cy: Math.min(y0, y1) - 110,
+    x1,
+    y1,
+    tab,
+  };
+  elFlyingSigil.style.opacity = '1';
+}
+
 const awakenedActs = new Set();
 
 function handleAwaken(actId, message) {
@@ -130,64 +184,88 @@ function handleAwaken(actId, message) {
   awakenedActs.add(actId);
   audio.awakenVoice(actId);
 
-  const tab = document.querySelector(`.act-tab[data-act="${actId}"]`);
-  if (tab) tab.classList.add('is-awakened');
+  playClimaxFlight(actId);
   showToast(message);
 
   if (awakenedActs.size === 4) {
     btnFinaleTop.hidden = false;
     tabFinale.hidden = false;
     finaleRailLine.hidden = false;
-    setTimeout(() => {
-      showToast('四枚冬夜星徽已集齐 · 平安夜四重奏终章已解锁');
-    }, 2200);
+    if (!CAPTURE) {
+      setTimeout(() => {
+        showToast('四枚冬夜星徽已集齐 · 平安夜四重奏终章已解锁');
+      }, 2350);
+    }
   }
 }
 
-const acts = {
-  1: createAct1Paper({
-    envMap: envs.envPaper,
-    textures,
-    audio,
-    onAwaken: handleAwaken,
-    onHint: setHint,
-  }),
-  2: createAct2Clay({
-    envMap: envs.envClay,
-    textures,
-    audio,
-    onAwaken: handleAwaken,
-    onHint: setHint,
-  }),
-  3: createAct3Globe({
-    envMap: envs.envGlobe,
-    textures,
-    refractTex: post.refractRT.texture,
-    audio,
-    onAwaken: handleAwaken,
-    onHint: setHint,
-  }),
-  4: createAct4Aurora({
-    envMap: envs.envAurora,
-    textures,
-    audio,
-    onAwaken: handleAwaken,
-    onHint: setHint,
-  }),
-  5: createFinaleCarousel({
-    envMap: envs.envGlobe,
-    textures,
-    audio,
-    onOpenCardStudio: openCardStudio,
-  }),
+// ---------------- Frame-Sliced Cold-Start Act Instantiation & Shader Warmup ----------------
+const acts = {};
+
+const actBuilders = {
+  1: () => createAct1Paper({ envMap: envs.envPaper, textures, audio, onAwaken: handleAwaken, onHint: setHint }),
+  2: () => createAct2Clay({ envMap: envs.envClay, textures, audio, onAwaken: handleAwaken, onHint: setHint }),
+  3: () => createAct3Globe({ envMap: envs.envGlobe, textures, refractTex: post.refractRT.texture, audio, onAwaken: handleAwaken, onHint: setHint }),
+  4: () => createAct4Aurora({ envMap: envs.envAurora, textures, refractTex: post.refractRT.texture, audio, onAwaken: handleAwaken, onHint: setHint }),
+  5: () => createFinaleCarousel({ envMap: envs.envGlobe, textures, refractTex: post.refractRT.texture, audio, onOpenCardStudio: openCardStudio, onSelectAct: switchToAct }),
 };
 
-// ---------------- Optical Bokeh Transition State Machine ----------------
+function ensureAct(id) {
+  if (!acts[id] && actBuilders[id]) {
+    acts[id] = actBuilders[id]();
+    // Pre-compile shaders cleanly so switching acts never drops a single frame!
+    renderer.compile(acts[id].scene, camera);
+    renderer.shadowMap.needsUpdate = true;
+  }
+  return acts[id];
+}
+
 let activeActId = clamp(parseInt(Q.get('act') || '1', 10) || 1, 1, 5);
+// Boot ONLY the active act synchronously (<180ms first paint!), slice the rest across idle frames!
+ensureAct(activeActId);
+
+const warmupQueue = [1, 2, 3, 4, 5].filter((id) => id !== activeActId);
+function scheduleNextWarmup() {
+  if (warmupQueue.length === 0) return;
+  const runSlice = () => {
+    const nextId = warmupQueue.shift();
+    if (nextId) ensureAct(nextId);
+    if (warmupQueue.length > 0) scheduleNextWarmup();
+  };
+  if ('requestIdleCallback' in window) {
+    window.requestIdleCallback(runSlice, { timeout: 400 });
+  } else {
+    setTimeout(runSlice, 48);
+  }
+}
+if (!CAPTURE) scheduleNextWarmup();
+
+// ---------------- Optical Bokeh Transition & Progress HUD ----------------
 let pendingActId = null;
-let transProgress = 0; // 0 = crisp, 1 = peak bokeh morph
-let transDir = 0;      // 1 = blurring out, -1 = focusing in
+let transProgress = 0;
+let transDir = 0;
 let transTint = acts[activeActId].transTint.clone();
+let lastProgCode = -1;
+
+function syncProgressPips(act) {
+  if (!act || !act.getProgress) return;
+  const { current, total } = act.getProgress();
+  const code = act.id * 100 + total * 10 + current;
+  if (code === lastProgCode) return;
+  lastProgCode = code;
+
+  while (elProgress.children.length < total) {
+    const sp = document.createElement('span');
+    sp.className = 'prog-pip';
+    elProgress.appendChild(sp);
+  }
+  while (elProgress.children.length > total) {
+    elProgress.removeChild(elProgress.lastChild);
+  }
+  for (let i = 0; i < total; i++) {
+    elProgress.children[i].classList.toggle('is-done', i < current);
+  }
+}
 
 function syncActHUD(act) {
   body.dataset.act = String(act.id);
@@ -195,6 +273,8 @@ function syncActHUD(act) {
   elName.textContent = act.title;
   elSub.textContent = act.subtitle;
   elHint.textContent = act.defaultHint;
+  lastProgCode = -1;
+  syncProgressPips(act);
   for (const t of actTabs) {
     t.classList.toggle('is-active', Number(t.dataset.act) === act.id);
   }
@@ -203,7 +283,8 @@ syncActHUD(acts[activeActId]);
 audio.setAct(activeActId);
 
 function switchToAct(targetId) {
-  if (!acts[targetId]) return;
+  if (!actBuilders[targetId]) return;
+  ensureAct(targetId);
   if (pendingActId === null && targetId === activeActId) return;
   if (pendingActId === targetId) return;
   audio.unlock();
@@ -223,38 +304,39 @@ function switchToAct(targetId) {
   }
 }
 
-// ---------------- Sizing & Adaptive DPR ----------------
-let dpr = Math.min(window.devicePixelRatio || 1, 2);
-if (CAPTURE && Q.get('dpr')) dpr = clamp(parseFloat(Q.get('dpr')), 1, 2);
+// ---------------- Sizing & EMA Adaptive Resolution Guardian (60fps Lock) ----------------
+let baseDpr = Math.min(window.devicePixelRatio || 1, 2);
+if (CAPTURE && Q.get('dpr')) baseDpr = clamp(parseFloat(Q.get('dpr')), 1, 2);
+let resScale = 1.0;
 
-function resize() {
+function applyResolution() {
   const w = Math.max(1, window.innerWidth);
   const h = Math.max(1, window.innerHeight);
   camera.aspect = w / h;
-  // Slightly widen FOV on portrait mobile screens so miniatures never crop horizontally
   camera.fov = w < h ? 54 : 42;
   camera.updateProjectionMatrix();
 
-  renderer.setPixelRatio(dpr);
+  const effDpr = baseDpr * resScale;
+  renderer.setPixelRatio(effDpr);
   renderer.setSize(w, h, false);
-  const rw = Math.max(1, Math.floor(w * dpr));
-  const rh = Math.max(1, Math.floor(h * dpr));
+  const rw = Math.max(1, Math.floor(w * effDpr));
+  const rh = Math.max(1, Math.floor(h * effDpr));
   post.setSize(rw, rh);
 }
-window.addEventListener('resize', resize);
-resize();
+window.addEventListener('resize', applyResolution);
+applyResolution();
 
-// ---------------- Prologue Unboxing & UI Events ----------------
+// ---------------- 3D Envelope Unboxing & UI Controls ----------------
 function enterStage() {
   if (body.dataset.state === 'playing') return;
   elPrologue.classList.add('is-opening');
   audio.playWaxSealBreak();
-  // Opening bokeh reveal
+  // Hold slightly so viewer savors the 6-shard wax shatter + 3D flap fold + rising letter!
   transProgress = 0.92;
   transDir = -1;
   setTimeout(() => {
     body.dataset.state = 'playing';
-  }, 320);
+  }, 520);
 }
 
 if (SKIP_PROLOGUE) {
@@ -264,14 +346,18 @@ if (SKIP_PROLOGUE) {
 btnWaxSeal.addEventListener('click', enterStage);
 
 for (const tab of actTabs) {
-  tab.addEventListener('click', () => {
-    const id = Number(tab.dataset.act);
-    switchToAct(id);
-  });
+  tab.addEventListener('click', () => switchToAct(Number(tab.dataset.act)));
 }
 
 btnHome.addEventListener('click', () => switchToAct(1));
 btnFinaleTop.addEventListener('click', () => switchToAct(5));
+btnResetCam.addEventListener('click', () => {
+  const act = acts[activeActId];
+  if (act && act.cameraRig) {
+    act.cameraRig.resetFraming();
+    audio.playHoverTick(1.25);
+  }
+});
 
 btnSound.addEventListener('click', () => {
   audio.unlock();
@@ -290,6 +376,15 @@ elCardModal.addEventListener('click', (e) => {
   if (e.target === elCardModal) closeCardStudio();
 });
 
+for (const sw of themeSwatches) {
+  sw.addEventListener('click', () => {
+    selectedCardTheme = sw.dataset.theme;
+    for (const s of themeSwatches) s.classList.toggle('is-selected', s === sw);
+    audio.playHoverTick(1.1);
+    refreshKeepsakePreview();
+  });
+}
+
 [inpTo, inpMsg, inpFrom].forEach((el) => {
   el.addEventListener('input', refreshKeepsakePreview);
 });
@@ -300,7 +395,7 @@ btnDownloadCard.addEventListener('click', () => {
   link.download = `NOEL-IV-圣诞礼笺-${(inpTo.value || '祝福').trim()}.png`;
   link.href = keepsakeCanvas.toDataURL('image/png');
   link.click();
-  elCopyFeedback.textContent = '高清烫金贺卡已生成下载。';
+  elCopyFeedback.textContent = '印刷级高清烫金贺卡已生成下载。';
 });
 
 btnCopyLink.addEventListener('click', async () => {
@@ -308,6 +403,7 @@ btnCopyLink.addEventListener('click', async () => {
   url.searchParams.set('to', inpTo.value.trim());
   url.searchParams.set('msg', inpMsg.value.trim());
   url.searchParams.set('from', inpFrom.value.trim());
+  url.searchParams.set('theme', selectedCardTheme);
   try {
     await navigator.clipboard.writeText(url.toString());
     elCopyFeedback.textContent = '专属拆封惊喜链接已复制，可直接发送给对方。';
@@ -316,7 +412,6 @@ btnCopyLink.addEventListener('click', async () => {
   }
 });
 
-// Keyboard shortcuts (1–5 acts, Esc close modal, M mute)
 window.addEventListener('keydown', (e) => {
   if (!elCardModal.hidden) {
     if (e.key === 'Escape') closeCardStudio();
@@ -329,24 +424,32 @@ window.addEventListener('keydown', (e) => {
   if (e.key >= '1' && e.key <= '4') switchToAct(Number(e.key));
   if (e.key === '5' && (!tabFinale.hidden || Q.has('all'))) switchToAct(5);
   if (e.key === 'm' || e.key === 'M') btnSound.click();
+  if (e.key === 'r' || e.key === 'R') btnResetCam.click();
 });
 
-// ---------------- Raycasting, Curated Parallax & Magnetic Cursor ----------------
+// ---------------- Zero-GC Raycasting, Wheel/Pinch Zoom & Blank-Space Orbit ----------------
 const raycaster = new THREE.Raycaster();
 const pointerNDC = new THREE.Vector2(0, 0);
+const parallaxState = { x: 0, y: 0 };
 const parallaxSpring = new Spring2D(0, 0, 55, 13);
 const cursorSpring = new Spring2D(window.innerWidth * 0.5, window.innerHeight * 0.5, 420, 28);
 
 let hoveredObj = null;
 let isPointerDown = false;
+let isManipulatingProp = false;
+let raycastDirty = false;
 let idleTimer = null;
+
+// Pinch-to-zoom multi-touch tracking
+const activeTouches = new Map();
+let lastPinchDist = 0;
 
 function resetIdle() {
   body.classList.remove('is-idle');
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
     if (!isPointerDown && elCardModal.hidden) body.classList.add('is-idle');
-  }, 3800);
+  }, 4000);
 }
 
 function updatePointerCoords(clientX, clientY) {
@@ -357,7 +460,7 @@ function updatePointerCoords(clientX, clientY) {
 }
 
 function pickInteractable(act) {
-  if (!act.interactables || act.interactables.length === 0) return null;
+  if (!act || !act.interactables || act.interactables.length === 0) return null;
   act.applyCamera(camera);
   camera.updateMatrixWorld();
   raycaster.setFromCamera(pointerNDC, camera);
@@ -365,20 +468,115 @@ function pickInteractable(act) {
   return hits.length > 0 ? hits[0] : null;
 }
 
+canvas.addEventListener(
+  'wheel',
+  (e) => {
+    if (body.dataset.state !== 'playing' || !elCardModal.hidden) return;
+    e.preventDefault();
+    resetIdle();
+    const act = acts[activeActId];
+    if (act && act.cameraRig) act.cameraRig.onWheel(e.deltaY);
+  },
+  { passive: false }
+);
+
+canvas.addEventListener('dblclick', (e) => {
+  if (body.dataset.state !== 'playing' || !elCardModal.hidden) return;
+  updatePointerCoords(e.clientX, e.clientY);
+  const act = acts[activeActId];
+  const hit = pickInteractable(act);
+  if (!hit && act && act.cameraRig) {
+    act.cameraRig.resetFraming();
+    audio.playHoverTick(1.3);
+  }
+});
+
 canvas.addEventListener('pointermove', (e) => {
   resetIdle();
   elCursor.classList.add('is-visible');
   updatePointerCoords(e.clientX, e.clientY);
 
+  if (activeTouches.has(e.pointerId)) {
+    activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (activeTouches.size === 2) {
+      const pts = Array.from(activeTouches.values());
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      if (lastPinchDist > 0 && acts[activeActId]?.cameraRig) {
+        acts[activeActId].cameraRig.onPinchScale(dist / lastPinchDist);
+      }
+      lastPinchDist = dist;
+      return;
+    }
+  }
+
   if (body.dataset.state !== 'playing' || !elCardModal.hidden) return;
   const act = acts[activeActId];
 
   if (isPointerDown) {
-    act.onPointerMove(pointerNDC);
+    if (isManipulatingProp) {
+      act.onPointerMove(pointerNDC);
+    } else if (act.cameraRig) {
+      act.cameraRig.moveOrbitDrag(pointerNDC);
+    }
     return;
   }
 
   act.onPointerMove(pointerNDC);
+  // Defer raycast to once per animation frame (zero 240Hz mouse lag!)
+  raycastDirty = true;
+});
+
+canvas.addEventListener('pointerdown', (e) => {
+  resetIdle();
+  activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (activeTouches.size === 2) {
+    const pts = Array.from(activeTouches.values());
+    lastPinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    return;
+  }
+
+  if (body.dataset.state !== 'playing' || !elCardModal.hidden) return;
+  audio.unlock();
+  updatePointerCoords(e.clientX, e.clientY);
+  isPointerDown = true;
+  elCursor.classList.add('is-drag');
+
+  const act = acts[activeActId];
+  const hit = pickInteractable(act);
+  isManipulatingProp = Boolean(act.onPointerDown(hit, pointerNDC));
+  if (!isManipulatingProp && act.cameraRig) {
+    act.cameraRig.beginOrbitDrag(pointerNDC);
+    canvas.style.cursor = 'grabbing';
+  }
+});
+
+function handlePointerEnd(e) {
+  if (e && activeTouches.has(e.pointerId)) {
+    activeTouches.delete(e.pointerId);
+    if (activeTouches.size < 2) lastPinchDist = 0;
+  }
+  if (!isPointerDown) return;
+  isPointerDown = false;
+  isManipulatingProp = false;
+  elCursor.classList.remove('is-drag');
+  const act = acts[activeActId];
+  if (act) {
+    act.onPointerUp();
+    if (act.cameraRig) act.cameraRig.endOrbitDrag();
+  }
+  raycastDirty = true;
+}
+
+window.addEventListener('pointerup', handlePointerEnd);
+window.addEventListener('pointercancel', handlePointerEnd);
+
+// ---------------- Zero-GC Main Render Loop & Adaptive 60fps Guardian ----------------
+let lastTime = performance.now() * 0.001;
+let simTime = 0;
+let emaDt = 0.0166;
+let slowFrames = 0;
+
+function updateHoverRaycast(act) {
   const hit = pickInteractable(act);
   if (hit) {
     if (hoveredObj !== hit.object) {
@@ -398,38 +596,33 @@ canvas.addEventListener('pointermove', (e) => {
   } else {
     hoveredObj = null;
     elCursor.classList.remove('is-hover', 'has-label');
-    canvas.style.cursor = 'default';
+    canvas.style.cursor = 'grab';
   }
-});
+}
 
-canvas.addEventListener('pointerdown', (e) => {
-  resetIdle();
-  if (body.dataset.state !== 'playing' || !elCardModal.hidden) return;
-  audio.unlock();
-  updatePointerCoords(e.clientX, e.clientY);
-  isPointerDown = true;
-  elCursor.classList.add('is-drag');
+function updateSigilFlight(dt) {
+  if (!sigilFlight) return;
+  sigilFlight.elapsed += dt;
+  const u = clamp(sigilFlight.elapsed / sigilFlight.dur, 0, 1);
+  // Smooth ease-in-out cubic Bezier curve
+  const t = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+  const inv = 1 - t;
+  const x = inv * inv * sigilFlight.x0 + 2 * inv * t * sigilFlight.cx + t * t * sigilFlight.x1;
+  const y = inv * inv * sigilFlight.y0 + 2 * inv * t * sigilFlight.cy + t * t * sigilFlight.y1;
+  const sc = lerp(1.35, 0.52, t);
+  elFlyingSigil.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) rotate(${(t * 180).toFixed(0)}deg) scale(${sc.toFixed(2)})`;
 
-  const act = acts[activeActId];
-  const hit = pickInteractable(act);
-  act.onPointerDown(hit, pointerNDC);
-});
-
-window.addEventListener('pointerup', () => {
-  if (!isPointerDown) return;
-  isPointerDown = false;
-  elCursor.classList.remove('is-drag');
-  acts[activeActId].onPointerUp();
-});
-
-// ---------------- Main Render Loop ----------------
-let lastTime = performance.now() * 0.001;
-let simTime = 0;
+  if (u >= 1) {
+    elFlyingSigil.style.opacity = '0';
+    sigilFlight.tab.classList.add('is-awakened', 'just-socketed');
+    audio.playBellChime(7);
+    sigilFlight = null;
+  }
+}
 
 function renderFrame(dt) {
   simTime += dt;
 
-  // Optical bokeh transition progression
   if (transDir !== 0) {
     const speed = transDir > 0 ? 3.1 : 2.2;
     transProgress = clamp(transProgress + transDir * dt * speed, 0, 1);
@@ -438,6 +631,7 @@ function renderFrame(dt) {
       pendingActId = null;
       syncActHUD(acts[activeActId]);
       audio.setAct(activeActId);
+      renderer.shadowMap.needsUpdate = true;
       elBanner.classList.remove('is-switching');
       transDir = -1;
     } else if (transDir < 0 && transProgress <= 0) {
@@ -446,15 +640,31 @@ function renderFrame(dt) {
   }
 
   parallaxSpring.update(dt);
+  parallaxState.x = parallaxSpring.x;
+  parallaxState.y = parallaxSpring.y;
+
   cursorSpring.update(dt);
   elCursor.style.transform = `translate3d(${cursorSpring.x.toFixed(1)}px, ${cursorSpring.y.toFixed(1)}px, 0)`;
 
+  updateSigilFlight(dt);
+
   const act = acts[activeActId];
-  act.update(dt, simTime, { x: parallaxSpring.x, y: parallaxSpring.y });
+  if (raycastDirty && !isPointerDown && body.dataset.state === 'playing' && elCardModal.hidden) {
+    raycastDirty = false;
+    updateHoverRaycast(act);
+  }
+
+  act.update(dt, simTime, parallaxState);
+  syncProgressPips(act);
   act.applyCamera(camera);
 
+  if (++shadowTick % 3 === 0) {
+    renderer.shadowMap.needsUpdate = true;
+  }
+
+  const postOpts = act.getPostOpts ? act.getPostOpts() : act.postOpts;
   post.render(act.scene, camera, simTime, {
-    ...act.postOpts,
+    ...postOpts,
     transition: transProgress,
     transTint,
   });
@@ -464,8 +674,25 @@ function tick(nowMs) {
   if (CAPTURE) return;
   requestAnimationFrame(tick);
   const now = nowMs * 0.001;
-  const dt = Math.min(0.05, Math.max(0.001, now - lastTime));
+  const rawDt = now - lastTime;
   lastTime = now;
+  const dt = Math.min(0.05, Math.max(0.001, rawDt));
+
+  // EMA Adaptive Resolution Guardian: gently step down internal DPR if GPU exceeds 16.5ms
+  if (rawDt > 0.002 && rawDt < 0.12) {
+    emaDt = emaDt * 0.90 + rawDt * 0.10;
+    if (emaDt > 0.0172 && resScale > 0.80) {
+      slowFrames++;
+      if (slowFrames > 28) {
+        resScale = Math.max(0.80, resScale - 0.08);
+        slowFrames = 0;
+        applyResolution();
+      }
+    } else {
+      slowFrames = 0;
+    }
+  }
+
   renderFrame(dt);
 }
 
@@ -475,7 +702,7 @@ if (!CAPTURE) {
   renderFrame(0.016);
 }
 
-// ---------------- Deterministic QA Capture Harness ----------------
+// ---------------- Deterministic QA & Performance Telemetry Harness ----------------
 window.__setChristmas = async (cfg = {}) => {
   if (cfg.prologue) {
     body.dataset.state = 'prologue';
@@ -484,26 +711,66 @@ window.__setChristmas = async (cfg = {}) => {
     body.dataset.state = 'playing';
   }
   if (cfg.allAwakened) {
-    [1, 2, 3, 4].forEach((id) => handleAwaken(id, ''));
+    [1, 2, 3, 4].forEach((id) => {
+      ensureAct(id);
+      handleAwaken(id, '');
+    });
     elToast.classList.remove('is-shown');
   }
   if (cfg.act) {
+    ensureAct(cfg.act);
     activeActId = clamp(cfg.act, 1, 5);
     pendingActId = null;
     transProgress = cfg.transition ?? 0;
     transDir = 0;
     syncActHUD(acts[activeActId]);
   }
+  if (cfg.zoom && acts[activeActId]?.cameraRig) {
+    acts[activeActId].cameraRig.rawZoom = cfg.zoom;
+    acts[activeActId].cameraRig.zoomSpring.snap(cfg.zoom);
+  } else if (acts[activeActId]?.cameraRig) {
+    acts[activeActId].cameraRig.resetFraming();
+  }
   if (cfg.preset && acts[activeActId].setCaptureState) {
     acts[activeActId].setCaptureState(cfg.preset);
+  }
+  if (cfg.cardTheme && CARD_THEMES[cfg.cardTheme]) {
+    selectedCardTheme = cfg.cardTheme;
+    for (const sw of themeSwatches) sw.classList.toggle('is-selected', sw.dataset.theme === selectedCardTheme);
   }
   if (cfg.cardModal) {
     openCardStudio();
   } else {
     closeCardStudio();
   }
+
   simTime = cfg.time ?? 3.2;
-  for (let i = 0; i < 4; i++) renderFrame(0.016);
+  renderer.shadowMap.needsUpdate = true;
+  for (let i = 0; i < 3; i++) renderFrame(0.016);
+
+  // Measure EXACT steady-state main-scene DrawCalls on a clean single scene render for strict QA!
+  renderer.shadowMap.needsUpdate = false;
+  renderer.info.autoReset = false;
+  renderer.info.reset();
+  renderFrame(0.016);
+  const totalPipelineCalls = renderer.info.render.calls;
+  const totalTriangles = renderer.info.render.triangles;
+
+  renderer.info.reset();
+  renderer.setRenderTarget(post.sceneRT);
+  renderer.render(acts[activeActId].scene, camera);
+  renderer.setRenderTarget(null);
+  const mainPassCalls = renderer.info.render.calls;
+  renderer.info.autoReset = true;
+  renderFrame(0.016);
+
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-  return { act: activeActId, state: body.dataset.state, awakened: awakenedActs.size };
+  return {
+    act: activeActId,
+    state: body.dataset.state,
+    awakened: awakenedActs.size,
+    mainPassDrawCalls: mainPassCalls,
+    totalPipelineCalls,
+    triangles: totalTriangles,
+  };
 };

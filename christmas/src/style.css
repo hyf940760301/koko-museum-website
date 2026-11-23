@@ -10,6 +10,10 @@
   --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -94,8 +98,8 @@ html, body {
   font-size: 11.5px;
   letter-spacing: 0.14em;
   color: var(--gold-bright);
-  background: rgba(14, 11, 12, 0.72);
-  border: 1px solid rgba(213, 171, 99, 0.35);
+  background: rgba(14, 11, 12, 0.76);
+  border: 1px solid rgba(213, 171, 99, 0.38);
   padding: 4px 10px;
   border-radius: 99px;
   backdrop-filter: blur(8px);
@@ -109,7 +113,7 @@ html, body {
   transform: translateY(0);
 }
 
-/* ---------------- Prologue Wax-Sealed Invitation ---------------- */
+/* ---------------- Prologue 3D Envelope Unboxing & 6-Shard Wax Shatter ---------------- */
 #prologue {
   position: fixed;
   inset: 0;
@@ -118,7 +122,7 @@ html, body {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  transition: opacity 0.95s cubic-bezier(0.22, 1, 0.36, 1), visibility 0.95s;
+  transition: opacity 0.85s cubic-bezier(0.22, 1, 0.36, 1), visibility 0.85s;
 }
 
 body[data-state="playing"] #prologue {
@@ -133,6 +137,17 @@ body[data-state="playing"] #prologue {
   background:
     radial-gradient(circle at 50% 42%, rgba(92, 24, 30, 0.42) 0%, rgba(16, 11, 13, 0.88) 62%, rgba(8, 6, 7, 0.96) 100%);
   backdrop-filter: blur(14px);
+  transition: opacity 0.85s ease;
+}
+
+#prologue.is-opening .envelope-backdrop {
+  opacity: 0;
+}
+
+.envelope-stage {
+  perspective: 1300px;
+  position: relative;
+  z-index: 2;
 }
 
 .envelope-card {
@@ -141,26 +156,82 @@ body[data-state="playing"] #prologue {
   padding: 44px 36px 38px;
   background:
     radial-gradient(ellipse at 50% 18%, #4d1720 0%, #2c0d13 64%, #1d080c 100%);
-  border: 1px solid rgba(226, 186, 118, 0.38);
+  border: 1px solid rgba(226, 186, 118, 0.40);
   border-radius: 6px;
+  transform-style: preserve-3d;
   box-shadow:
     0 32px 90px rgba(0, 0, 0, 0.78),
     inset 0 0 60px rgba(0, 0, 0, 0.45),
     0 0 0 1px rgba(255, 232, 184, 0.08);
   text-align: center;
-  transition: transform 0.85s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.75s ease;
+  transition: transform 0.9s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.72s ease 0.25s;
 }
 
-#prologue.is-opening .envelope-card {
-  transform: scale(1.08) translateY(-18px);
-  opacity: 0;
+/* 3D Triangular Burgundy Flap hinged at top edge */
+.env-flap-3d {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 175px;
+  pointer-events: none;
+  transform-origin: top center;
+  transform: rotateX(0deg);
+  opacity: 0.55;
+  z-index: 3;
+  transition: transform 0.68s cubic-bezier(0.24, 1, 0.32, 1), opacity 0.55s ease;
+}
+
+.env-flap-3d svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#prologue.is-opening .env-flap-3d {
+  transform: rotateX(176deg);
+  opacity: 0.95;
 }
 
 .env-paper-frame {
   position: relative;
+  z-index: 2;
   padding: 26px 20px 18px;
   color: var(--gold-mid);
+  transition: transform 0.78s cubic-bezier(0.2, 0.95, 0.32, 1) 0.14s, opacity 0.62s ease 0.28s;
 }
+
+/* Letter sheet slides gracefully upward out of the opened envelope! */
+#prologue.is-opening .env-paper-frame {
+  transform: translateY(-64px) scale(1.04);
+  opacity: 0;
+}
+
+#prologue.is-opening .envelope-card {
+  transform: translateY(28px) scale(0.97);
+  opacity: 0;
+}
+
+/* 6-Shard Radial Wax Shatter Physics on Click */
+.wax-shard {
+  transform-origin: 60px 60px;
+  transition: transform 0.58s cubic-bezier(0.16, 0.9, 0.3, 1), opacity 0.48s ease;
+}
+.wax-emblem {
+  transform-origin: 60px 60px;
+  transition: transform 0.45s ease, opacity 0.32s ease;
+}
+
+#prologue.is-opening .wax-emblem {
+  transform: scale(1.35);
+  opacity: 0;
+}
+#prologue.is-opening .wax-shard.s1 { transform: translate(18px, -36px) rotate(24deg); opacity: 0; }
+#prologue.is-opening .wax-shard.s2 { transform: translate(38px, -8px) rotate(36deg); opacity: 0; }
+#prologue.is-opening .wax-shard.s3 { transform: translate(26px, 34px) rotate(-28deg); opacity: 0; }
+#prologue.is-opening .wax-shard.s4 { transform: translate(-22px, 36px) rotate(32deg); opacity: 0; }
+#prologue.is-opening .wax-shard.s5 { transform: translate(-38px, 6px) rotate(-35deg); opacity: 0; }
+#prologue.is-opening .wax-shard.s6 { transform: translate(-24px, -34px) rotate(-22deg); opacity: 0; }
 
 .env-filigree {
   position: absolute;
@@ -239,6 +310,7 @@ body[data-state="playing"] #prologue {
 .seal-svg {
   width: 98px;
   height: 98px;
+  overflow: visible;
   filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.62));
   transition: transform 0.38s cubic-bezier(0.22, 1, 0.36, 1), filter 0.35s ease;
 }
@@ -280,7 +352,54 @@ body[data-state="playing"] #prologue {
   50% { transform: scale(1.16); opacity: 1; }
 }
 
-/* ---------------- Editorial Minimalist HUD ---------------- */
+/* ---------------- Climax Awakening Shockwave & Flying Sigil Star ---------------- */
+#climax-ripple {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 240px;
+  height: 240px;
+  margin-left: -120px;
+  margin-top: -120px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 230, 168, 0.85);
+  box-shadow: 0 0 45px rgba(255, 212, 128, 0.45), inset 0 0 32px rgba(255, 212, 128, 0.25);
+  pointer-events: none;
+  z-index: 38;
+  opacity: 0;
+  transform: scale(0.2);
+}
+
+#climax-ripple.is-active {
+  animation: climaxShockwave 1.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes climaxShockwave {
+  0% { opacity: 0.95; transform: scale(0.18); }
+  100% { opacity: 0; transform: scale(3.4); }
+}
+
+#flying-sigil {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 34px;
+  height: 34px;
+  margin-left: -17px;
+  margin-top: -17px;
+  pointer-events: none;
+  z-index: 48;
+  opacity: 0;
+  filter: drop-shadow(0 0 14px rgba(255, 232, 175, 0.95)) drop-shadow(0 0 28px rgba(244, 196, 104, 0.75));
+}
+
+#flying-sigil svg {
+  width: 100%;
+  height: 100%;
+  fill: #fff3d1;
+}
+
+/* ---------------- Editorial Minimalist HUD & Discovery Progress Pips ---------------- */
 #hud {
   position: fixed;
   inset: 0;
@@ -384,6 +503,31 @@ body.is-idle #hud .whisper-hint {
   margin-top: 3px;
 }
 
+/* Diamond Discovery Pips below act subtitle */
+.act-progress {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  margin-top: 8px;
+}
+
+.prog-pip {
+  width: 6.5px;
+  height: 6.5px;
+  transform: rotate(45deg);
+  border: 1px solid rgba(213, 171, 99, 0.55);
+  background: rgba(16, 12, 12, 0.45);
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), background 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.prog-pip.is-done {
+  background: var(--gold-bright);
+  border-color: #fff6de;
+  transform: rotate(45deg) scale(1.22);
+  box-shadow: 0 0 9px rgba(244, 223, 174, 0.92);
+}
+
 .hud-tools {
   justify-self: end;
   display: flex;
@@ -449,16 +593,15 @@ body.is-muted .sound-mute {
   display: block;
 }
 
-/* Whisper Interaction Hint */
 .whisper-hint {
   margin-top: auto;
   margin-bottom: 14px;
   align-self: center;
   font-size: 12px;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.20em;
   color: rgba(246, 239, 226, 0.78);
-  background: rgba(12, 10, 11, 0.46);
-  border: 1px solid rgba(213, 171, 99, 0.2);
+  background: rgba(12, 10, 11, 0.48);
+  border: 1px solid rgba(213, 171, 99, 0.22);
   padding: 6px 18px;
   border-radius: 99px;
   backdrop-filter: blur(8px);
@@ -475,8 +618,8 @@ body.is-muted .sound-mute {
   gap: 6px;
   padding: 6px 10px;
   border-radius: 99px;
-  background: rgba(13, 11, 12, 0.68);
-  border: 1px solid rgba(213, 171, 99, 0.3);
+  background: rgba(13, 11, 12, 0.70);
+  border: 1px solid rgba(213, 171, 99, 0.32);
   backdrop-filter: blur(14px);
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.52);
 }
@@ -488,6 +631,7 @@ body.is-muted .sound-mute {
 }
 
 .act-tab {
+  position: relative;
   background: transparent;
   border: 1px solid transparent;
   color: rgba(246, 239, 226, 0.62);
@@ -529,21 +673,30 @@ body.is-muted .sound-mute {
   transform: rotate(45deg) scale(0.85);
   border: 1px solid rgba(213, 171, 99, 0.55);
   background: transparent;
-  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), background 0.35s ease, box-shadow 0.35s ease;
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), background 0.35s ease, box-shadow 0.35s ease;
 }
 
 .act-tab.is-awakened .sigil-star,
 .sigil-star.is-lit {
   background: var(--gold-bright);
   border-color: #fff6dc;
-  transform: rotate(45deg) scale(1.08);
-  box-shadow: 0 0 10px rgba(244, 223, 174, 0.95);
+  transform: rotate(45deg) scale(1.15);
+  box-shadow: 0 0 12px rgba(244, 223, 174, 0.98);
+}
+
+.act-tab.just-socketed {
+  animation: socketPulse 0.65s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes socketPulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 228, 162, 0.75); }
+  100% { box-shadow: 0 0 0 16px rgba(255, 228, 162, 0); }
 }
 
 /* Sigil Toast */
 #sigil-toast {
   position: fixed;
-  top: 94px;
+  top: 108px;
   left: 50%;
   transform: translateX(-50%) translateY(-10px);
   z-index: 40;
@@ -565,7 +718,7 @@ body.is-muted .sound-mute {
   transform: translateX(-50%) translateY(0);
 }
 
-/* ---------------- Bespoke Gilded Keepsake Card Modal ---------------- */
+/* ---------------- Bespoke Gilded Keepsake Card Modal & Theme Swatches ---------------- */
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -578,14 +731,10 @@ body.is-muted .sound-mute {
   padding: 20px;
 }
 
-.modal-backdrop[hidden] {
-  display: none !important;
-}
-
 .card-studio {
   position: relative;
-  width: min(880px, 95vw);
-  max-height: 90vh;
+  width: min(900px, 95vw);
+  max-height: 92vh;
   overflow-y: auto;
   background: linear-gradient(155deg, #1b1415 0%, #110d0e 100%);
   border: 1px solid rgba(213, 171, 99, 0.42);
@@ -632,7 +781,7 @@ body.is-muted .sound-mute {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 14px;
+  gap: 12px;
 }
 
 .studio-eyebrow {
@@ -649,16 +798,53 @@ body.is-muted .sound-mute {
 }
 
 .studio-desc {
-  font-size: 13px;
-  line-height: 1.65;
+  font-size: 12.5px;
+  line-height: 1.6;
   color: var(--ivory-muted);
   font-family: var(--sans);
+}
+
+.theme-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 4px;
+}
+
+.theme-swatch {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(213, 171, 99, 0.28);
+  border-radius: 99px;
+  padding: 5px 11px 5px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ivory-muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: border-color 0.22s ease, color 0.22s ease, background 0.22s ease;
+}
+
+.theme-swatch i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid rgba(244, 223, 174, 0.65);
+  display: inline-block;
+}
+
+.theme-swatch.is-selected {
+  color: var(--gold-bright);
+  border-color: var(--gold-bright);
+  background: rgba(213, 171, 99, 0.16);
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .field span {
@@ -671,7 +857,7 @@ body.is-muted .sound-mute {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(213, 171, 99, 0.3);
   border-radius: 6px;
-  padding: 9px 12px;
+  padding: 8px 12px;
   color: var(--ivory);
   font-family: var(--serif);
   font-size: 14px;
@@ -689,7 +875,7 @@ body.is-muted .sound-mute {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .btn-gold, .btn-ghost {
@@ -730,10 +916,6 @@ body.is-muted .sound-mute {
   font-size: 12px;
   letter-spacing: 0.1em;
   color: var(--gold-bright);
-}
-
-[hidden] {
-  display: none !important;
 }
 
 #nogl {

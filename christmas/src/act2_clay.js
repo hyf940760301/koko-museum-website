@@ -1,147 +1,187 @@
-// Act II: Tactile Claymation & Dollhouse Advent — "The Gingerbread Wonder-Workshop" (姜饼奇遇屋)
-// Wes Anderson symmetrical cross-section dollhouse, thumbprint polymer clay, needle-felted sheen
-// characters quantized to 12fps stop-motion, glossy piped royal icing, fairy-light pull-cord,
-// numbered Advent doors, and a Rube Goldberg peppermint candy marble run!
+// Act II: Tactile Claymation & Dollhouse Advent — "The Gingerbread Wonder-Workshop" (姜饼奇遇屋 · V2 Director's Cut)
+// Craftsmanship highlights:
+// - Hand-piped scalloped shell royal icing trim, catenary twisted fairy-light wire with brass sockets,
+//   and continuous elastic pull-cord stretching with spring snap-back!
+// - Unbroken 3-story Rube Goldberg Peppermint Coaster: Chimney -> 3F Attic Chute & 4 Turned Brass Bells
+//   -> Blown-Glass Funnel -> Twin-Rail Candy-Cane S-Curve Coaster -> 1F Dotted Biscuit Dominoes -> Ribboned Gift!
+//   Exact arc-length rolling rotation (dTheta = ds / r, zero slip) + sugar-frost burst particles on impacts!
+// - Expressive 12fps clay puppets (Nutcracker with moustache, rosy cheeks, gold epaulets & saluting arms;
+//   Penguin Postman with mailbag & letter; Chef Snowman with carrot nose & gingerbread tray).
+// - Cozy 1F parlor dressed with Scottish tartan plaid rug, wingback clay armchair, steaming cocoa table & cuckoo clock!
 
 import * as THREE from '../vendor/three.module.js';
 import {
   Spring1D,
-  Spring3D,
   clamp,
   lerp,
   steppedTime,
+  mergeGeometries,
+  transformGeo,
+  batchStaticMeshes,
+  collapseSolidMeshes,
   createRoundedBlockGeometry,
   createFacetedStarGeometry,
+  createPipedIcingGeometry,
+  injectClayMicrograin,
+  injectAnisotropicBrass,
 } from './physics.js';
+import { CuratedMacroRig } from './camera_rig.js';
+
+const _tangent = new THREE.Vector3();
+const _rollAxis = new THREE.Vector3();
+const _upVec = new THREE.Vector3(0, 1, 0);
+const _dq = new THREE.Quaternion();
 
 export function createAct2Clay({ envMap, textures, audio, onAwaken, onHint }) {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x160e11);
+  scene.background = new THREE.Color(0x150d10);
   scene.environment = envMap;
 
-  // Symmetrical Wes Anderson miniature macro camera
-  const camBasePos = new THREE.Vector3(0, 2.75, 9.65);
-  const camBaseLook = new THREE.Vector3(0, 2.45, 0);
-  const camPosSpring = new Spring3D(camBasePos.x, camBasePos.y, camBasePos.z, 68, 14);
-  const camLookSpring = new Spring3D(camBaseLook.x, camBaseLook.y, camBaseLook.z, 76, 15);
-  const focusOffset = new THREE.Vector3();
-  const focusLookOffset = new THREE.Vector3();
-  let focusTimer = 0;
+  const cameraRig = new CuratedMacroRig(
+    new THREE.Vector3(0, 2.72, 9.55),
+    new THREE.Vector3(0, 2.42, 0),
+    { parallaxX: 0.72, parallaxY: 0.42, minZoom: 0.56, maxZoom: 1.18 }
+  );
 
-  // Cozy studio tabletop lighting
-  const amb = new THREE.AmbientLight(0x4b333a, 0.95);
-  scene.add(amb);
+  // ---------------- Cozy Tabletop Studio Lighting ----------------
+  scene.add(new THREE.AmbientLight(0x4c343b, 0.95));
 
-  const key = new THREE.DirectionalLight(0xfff0d8, 2.35);
+  const key = new THREE.DirectionalLight(0xfff0d8, 2.38);
   key.position.set(4.8, 9.2, 7.5);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
   key.shadow.camera.near = 2;
   key.shadow.camera.far = 22;
-  key.shadow.camera.left = -6.5;
-  key.shadow.camera.right = 6.5;
+  key.shadow.camera.left = -6.8;
+  key.shadow.camera.right = 6.8;
   key.shadow.camera.top = 7.5;
   key.shadow.camera.bottom = -2.5;
-  key.shadow.bias = -0.0006;
-  key.shadow.radius = 4.0;
+  key.shadow.bias = -0.0005;
+  key.shadow.radius = 3.6;
   scene.add(key);
 
   const fill = new THREE.DirectionalLight(0xa2c8ff, 0.85);
   fill.position.set(-6.5, 4.5, 5.0);
   scene.add(fill);
 
-  const hearthLight = new THREE.PointLight(0xff7b29, 1.35, 6.5, 1.6);
-  hearthLight.position.set(-1.65, 0.82, 0.45);
+  const hearthLight = new THREE.PointLight(0xff7b29, 1.55, 6.8, 1.6);
+  hearthLight.position.set(-1.72, 0.78, 0.35);
   scene.add(hearthLight);
 
-  // ---------------- Tactile Clay, Felt & Royal Icing Materials ----------------
+  // ---------------- Dual-Scale Polymer Clay, Tartan Felt & Royal Icing Materials ----------------
   const makeClayMat = (hex, rough = 0.72) =>
-    new THREE.MeshPhysicalMaterial({
-      color: hex,
-      bumpMap: textures.clayBump,
-      bumpScale: 0.024,
-      roughness: rough,
-      metalness: 0.01,
-      sheen: 0.35,
-      sheenRoughness: 0.85,
-      sheenColor: new THREE.Color(0xffe8d6),
-      envMapIntensity: 0.75,
-    });
+    injectClayMicrograin(
+      new THREE.MeshPhysicalMaterial({
+        color: hex,
+        bumpMap: textures.clayBump,
+        bumpScale: 0.022,
+        roughness: rough,
+        metalness: 0.01,
+        sheen: 0.35,
+        sheenRoughness: 0.85,
+        sheenColor: new THREE.Color(0xffe8d6),
+        envMapIntensity: 0.78,
+      }),
+      { ridgeScale: 44.0, ridgeStrength: 0.055, icingScatter: 0.14 }
+    );
 
   const makeFeltMat = (hex) =>
     new THREE.MeshPhysicalMaterial({
       color: hex,
       bumpMap: textures.paperTex,
-      bumpScale: 0.03,
+      bumpScale: 0.028,
       roughness: 0.92,
       sheen: 1.0,
-      sheenRoughness: 0.78,
+      sheenRoughness: 0.76,
       sheenColor: new THREE.Color(0xfff5ea),
       envMapIntensity: 0.65,
     });
 
-  const matGinger = makeClayMat(0x9e5a34, 0.76);
-  const matGingerDark = makeClayMat(0x6e3b1f, 0.78);
+  const matGinger = makeClayMat(0x9e5a34, 0.75);
+  const matGingerDark = makeClayMat(0x6c391d, 0.78);
   const matWallMint = makeClayMat(0x365b56, 0.75);
   const matWallRose = makeClayMat(0x883b46, 0.75);
   const matWallCream = makeClayMat(0xeedcc5, 0.74);
+  const matPeachSkin = makeClayMat(0xf5cfb4, 0.68);
+  const matCarrot = makeClayMat(0xf27d24, 0.58);
+  const matCoal = makeClayMat(0x1b1615, 0.55);
 
-  // Glossy piped royal icing (egg-white sugar glaze)
-  const matIcing = new THREE.MeshPhysicalMaterial({
-    color: 0xfdf8f0,
-    bumpMap: textures.clayBump,
-    bumpScale: 0.008,
-    roughness: 0.24,
-    clearcoat: 0.88,
-    clearcoatRoughness: 0.14,
-    envMapIntensity: 1.25,
-  });
+  const matIcing = injectClayMicrograin(
+    new THREE.MeshPhysicalMaterial({
+      color: 0xfdf8f0,
+      bumpMap: textures.clayBump,
+      bumpScale: 0.007,
+      roughness: 0.22,
+      clearcoat: 0.90,
+      clearcoatRoughness: 0.12,
+      envMapIntensity: 1.32,
+    }),
+    { ridgeScale: 28.0, ridgeStrength: 0.018, icingScatter: 0.26 }
+  );
 
   const matCandyStripe = new THREE.MeshPhysicalMaterial({
     map: textures.candyStripeTex,
-    roughness: 0.22,
-    clearcoat: 0.85,
-    clearcoatRoughness: 0.12,
-    envMapIntensity: 1.2,
+    roughness: 0.20,
+    clearcoat: 0.88,
+    clearcoatRoughness: 0.10,
+    envMapIntensity: 1.25,
   });
 
-  const matBrass = new THREE.MeshPhysicalMaterial({
-    color: 0xf0c875,
-    metalness: 0.92,
-    roughness: 0.24,
-    envMapIntensity: 2.1,
+  const matBrass = injectAnisotropicBrass(
+    new THREE.MeshPhysicalMaterial({
+      color: 0xf2ca78,
+      roughnessMap: textures.brassTex,
+      metalness: 0.94,
+      roughness: 0.22,
+      envMapIntensity: 2.25,
+    }),
+    { anisoStrength: 0.36, patinaStrength: 0.18 }
+  );
+
+  const matGlassFunnel = new THREE.MeshPhysicalMaterial({
+    color: 0xdff6ff,
+    roughness: 0.12,
+    metalness: 0.1,
+    transparent: true,
+    opacity: 0.42,
+    clearcoat: 1.0,
+    envMapIntensity: 2.2,
   });
 
   const matFeltRed = makeFeltMat(0xc43238);
   const matFeltGreen = makeFeltMat(0x285e46);
   const matFeltWhite = makeFeltMat(0xf8f2e8);
   const matFeltCocoa = makeFeltMat(0x4b2e22);
+  const matTartan = new THREE.MeshPhysicalMaterial({
+    map: textures.plaidTex,
+    bumpMap: textures.paperTex,
+    bumpScale: 0.022,
+    roughness: 0.90,
+    sheen: 0.95,
+    sheenColor: new THREE.Color(0xffe6cc),
+  });
 
-  // ---------------- Plinth & Snow Felt Cushion ----------------
+  // ---------------- Dollhouse Shell & Batched Architectural Craftsmanship ----------------
   const houseRoot = new THREE.Group();
   scene.add(houseRoot);
 
-  const tableBase = new THREE.Mesh(
-    new THREE.CylinderGeometry(6.8, 7.2, 0.36, 48),
-    makeClayMat(0x261816, 0.65)
-  );
+  const tableBase = new THREE.Mesh(new THREE.CylinderGeometry(6.9, 7.3, 0.36, 48), makeClayMat(0x261816, 0.65));
   tableBase.position.y = -0.22;
   tableBase.receiveShadow = true;
   houseRoot.add(tableBase);
 
-  const snowBlanket = new THREE.Mesh(
-    createRoundedBlockGeometry(7.8, 0.26, 4.4, 0.35, 0.09),
-    matIcing
-  );
-  snowBlanket.rotation.x = Math.PI * 0.5;
-  snowBlanket.position.y = 0.02;
-  snowBlanket.receiveShadow = true;
-  houseRoot.add(snowBlanket);
+  const W = 5.4, H1 = 1.65, H2 = 3.25, D = 1.78;
 
-  // ---------------- 3-Story Symmetrical Gingerbread Dollhouse Shell ----------------
-  const W = 5.4, H1 = 1.65, H2 = 3.25, H3 = 4.65, D = 1.75;
+  const gingerLightParts = [];
+  const gingerDarkParts = [];
+  const icingParts = [
+    transformGeo(createRoundedBlockGeometry(7.9, 0.26, 4.5, 0.35, 0.09), { y: 0.02, rx: Math.PI * 0.5 }),
+  ];
+  const staticBrassParts = [];
+  const staticGreenParts = [];
+  const staticRedParts = [];
 
-  // Back wallpapers per story (1F warm rose, 2F pistachio mint, 3F cream attic)
+  // Back wallpapers
   const back1F = new THREE.Mesh(new THREE.BoxGeometry(W - 0.16, 1.58, 0.12), matWallRose);
   back1F.position.set(0, 0.86, -D * 0.5);
   back1F.receiveShadow = true;
@@ -149,292 +189,419 @@ export function createAct2Clay({ envMap, textures, audio, onAwaken, onHint }) {
   back2F.position.set(0, 2.45, -D * 0.5);
   back2F.receiveShadow = true;
 
-  // Triangular gable attic back wall
   const gableShape = new THREE.Shape();
   gableShape.moveTo(-W * 0.5, 0);
   gableShape.lineTo(W * 0.5, 0);
-  gableShape.lineTo(0, 1.95);
+  gableShape.lineTo(0, 1.98);
   gableShape.closePath();
-  const back3F = new THREE.Mesh(
-    new THREE.ExtrudeGeometry(gableShape, { depth: 0.12, bevelEnabled: false }),
-    matWallCream
-  );
+  const back3F = new THREE.Mesh(new THREE.ExtrudeGeometry(gableShape, { depth: 0.12, bevelEnabled: false }), matWallCream);
   back3F.position.set(0, 3.22, -D * 0.5 - 0.06);
   back3F.receiveShadow = true;
   houseRoot.add(back1F, back2F, back3F);
 
-  // Side gingerbread walls & floor slabs with rounded cookie edges
-  for (const sx of [-1, 1]) {
-    const sideWall = new THREE.Mesh(
-      createRoundedBlockGeometry(0.18, 3.25, D, 0.04, 0.03),
-      matGinger
-    );
-    sideWall.position.set(sx * (W * 0.5 - 0.06), 1.66, 0);
-    sideWall.castShadow = true;
-    sideWall.receiveShadow = true;
-    houseRoot.add(sideWall);
+  const candyStripeParts = [
+    transformGeo(new THREE.CylinderGeometry(0.32, 0.32, 0.12, 24), { y: 5.18, z: D * 0.5 + 0.16, rx: Math.PI * 0.5 }),
+  ];
 
-    // Candy-cane front corner columns
-    const caneCol = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.095, 3.22, 20), matCandyStripe);
-    caneCol.position.set(sx * (W * 0.5 + 0.02), 1.66, D * 0.5 - 0.06);
-    caneCol.castShadow = true;
-    houseRoot.add(caneCol);
+  for (const sx of [-1, 1]) {
+    gingerLightParts.push(
+      transformGeo(createRoundedBlockGeometry(0.18, 3.25, D, 0.04, 0.03), { x: sx * (W * 0.5 - 0.06), y: 1.66 })
+    );
+    candyStripeParts.push(
+      transformGeo(new THREE.CylinderGeometry(0.095, 0.095, 3.22, 20), { x: sx * (W * 0.5 + 0.02), y: 1.66, z: D * 0.5 - 0.06 })
+    );
   }
 
   for (const fy of [0.08, H1, H2]) {
-    const slab = new THREE.Mesh(
-      createRoundedBlockGeometry(W + 0.18, 0.14, D + 0.14, 0.04, 0.03),
-      matGingerDark
+    gingerDarkParts.push(transformGeo(createRoundedBlockGeometry(W + 0.18, 0.14, D + 0.14, 0.04, 0.03), { y: fy }));
+    // Hand-piped royal icing shell trim along each floor cornice!
+    icingParts.push(
+      createPipedIcingGeometry(
+        new THREE.Vector3(-W * 0.5, fy + 0.06, D * 0.5 + 0.08),
+        new THREE.Vector3(W * 0.5, fy + 0.06, D * 0.5 + 0.08),
+        { beads: 26, radius: 0.038 }
+      )
     );
-    slab.position.set(0, fy, 0);
-    slab.castShadow = true;
-    slab.receiveShadow = true;
-    houseRoot.add(slab);
   }
 
-  // Thick frosted gingerbread roof slopes + scalloped icing drips & gumdrop studs
+  // Frosted gingerbread roof slopes + piped scalloped icing borders
   const roofLen = Math.hypot(W * 0.56, 2.05);
   const roofAng = Math.atan2(2.05, W * 0.56);
   for (const sx of [-1, 1]) {
-    const roofG = new THREE.Group();
-    roofG.position.set(sx * W * 0.27, 4.22, 0.04);
-    roofG.rotation.z = -sx * roofAng;
+    const cx = sx * W * 0.27;
+    const cy = 4.22;
+    const rz = -sx * roofAng;
+    gingerLightParts.push(transformGeo(createRoundedBlockGeometry(roofLen, 0.16, D + 0.36, 0.05, 0.04), { x: cx, y: cy, z: 0.04, rz }));
+    icingParts.push(transformGeo(createRoundedBlockGeometry(roofLen + 0.08, 0.11, D + 0.44, 0.05, 0.045), { x: cx - Math.sin(rz) * 0.09, y: cy + Math.cos(rz) * 0.09, z: 0.04, rz }));
 
-    const cookieSlab = new THREE.Mesh(
-      createRoundedBlockGeometry(roofLen, 0.16, D + 0.36, 0.05, 0.04),
-      matGinger
+    // Piped icing border along front gable slope
+    icingParts.push(
+      createPipedIcingGeometry(
+        new THREE.Vector3(0, 5.22, D * 0.5 + 0.24),
+        new THREE.Vector3(sx * (W * 0.5 + 0.35), 3.16, D * 0.5 + 0.24),
+        { beads: 18, radius: 0.046 }
+      )
     );
-    cookieSlab.castShadow = true;
-    const icingBlanket = new THREE.Mesh(
-      createRoundedBlockGeometry(roofLen + 0.08, 0.11, D + 0.44, 0.05, 0.045),
-      matIcing
-    );
-    icingBlanket.position.y = 0.09;
-    icingBlanket.castShadow = true;
-    roofG.add(cookieSlab, icingBlanket);
-
-    // Colorful clay gumdrops along the roof ridge
-    const gumColors = [0xd93b44, 0x3da67a, 0xf2b63d, 0x5c8be6];
-    for (let k = 0; k < 5; k++) {
-      const gum = new THREE.Mesh(
-        new THREE.SphereGeometry(0.085, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.65),
-        makeClayMat(gumColors[k % gumColors.length], 0.45)
-      );
-      gum.position.set((k - 2) * 0.58, 0.14, D * 0.5 + 0.12);
-      roofG.add(gum);
-    }
-
-    // Piped icing droplets hanging along front roof eave
     for (let d = 0; d < 9; d++) {
-      const drop = new THREE.Mesh(
-        new THREE.CapsuleGeometry(0.052, 0.09 + (d % 2) * 0.05, 8, 12),
-        matIcing
-      );
-      drop.position.set(-roofLen * 0.44 + d * (roofLen * 0.11), -0.04, D * 0.5 + 0.20);
-      roofG.add(drop);
+      const u = (d + 0.5) / 9;
+      const dx = lerp(0.12 * sx, sx * (W * 0.5 + 0.28), u);
+      const dy = lerp(5.12, 3.18, u);
+      icingParts.push(transformGeo(new THREE.CapsuleGeometry(0.048, 0.08 + (d % 2) * 0.05, 6, 10), { x: dx, y: dy - 0.12, z: D * 0.5 + 0.22 }));
     }
-    houseRoot.add(roofG);
   }
 
-  // Crown ridge icing & peppermint rosette medallion at apex
-  const apexRosette = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.32, 0.32, 0.12, 24),
-    matCandyStripe
-  );
-  apexRosette.rotation.x = Math.PI * 0.5;
-  apexRosette.position.set(0, 5.18, D * 0.5 + 0.16);
-  // Festive felt Holly Wreath & Red Berries below the apex rosette
-  const wreathGroup = new THREE.Group();
-  wreathGroup.position.set(0, 4.42, D * 0.5 + 0.14);
-  const wreathRing = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.075, 12, 24), matFeltGreen);
-  wreathGroup.add(wreathRing);
+  // Apex Holly Wreath
+  staticGreenParts.push(transformGeo(new THREE.TorusGeometry(0.26, 0.075, 10, 24), { y: 4.42, z: D * 0.5 + 0.14 }));
   for (let wb = 0; wb < 6; wb++) {
     const wa = (wb / 6) * Math.PI * 2;
-    const berry = new THREE.Mesh(new THREE.SphereGeometry(0.038, 10, 10), matFeltRed);
-    berry.position.set(Math.cos(wa) * 0.26, Math.sin(wa) * 0.26, 0.065);
-    wreathGroup.add(berry);
+    staticRedParts.push(transformGeo(new THREE.SphereGeometry(0.04, 8, 8), { x: Math.cos(wa) * 0.26, y: 4.42 + Math.sin(wa) * 0.26, z: D * 0.5 + 0.205 }));
   }
-  houseRoot.add(apexRosette, wreathGroup);
 
   const interactables = [];
 
-  // ---------------- Mechanism 3 Trigger: Chimney Candy Hopper (Top-Right Roof) ----------------
+  // ---------------- Brick-Course Clay Chimney & Candy Hopper (Top-Right) ----------------
   const chimneyGroup = new THREE.Group();
-  chimneyGroup.position.set(1.78, 4.55, 0.05);
+  chimneyGroup.position.set(1.78, 4.55, 0.08);
   houseRoot.add(chimneyGroup);
 
-  const chimBody = new THREE.Mesh(
-    createRoundedBlockGeometry(0.62, 0.92, 0.62, 0.06, 0.04),
-    matWallRose
-  );
+  const chimBrickParts = [createRoundedBlockGeometry(0.60, 0.92, 0.60, 0.05, 0.03)];
+  for (let row = 0; row < 4; row++) {
+    for (let b = -1; b <= 1; b += 2) {
+      chimBrickParts.push(
+        transformGeo(createRoundedBlockGeometry(0.24, 0.13, 0.06, 0.02, 0.01), {
+          x: b * 0.14 + (row % 2) * 0.05,
+          y: -0.28 + row * 0.19,
+          z: 0.30,
+        })
+      );
+    }
+  }
+  const chimBody = new THREE.Mesh(mergeGeometries(chimBrickParts), matWallRose);
   chimBody.castShadow = true;
-  const chimSnowRim = new THREE.Mesh(
-    new THREE.TorusGeometry(0.30, 0.095, 12, 24),
-    matIcing
-  );
-  chimSnowRim.rotation.x = Math.PI * 0.5;
-  chimSnowRim.position.y = 0.46;
-  // Peppermint candy waiting playfully on chimney rim!
-  const readyCandy = new THREE.Mesh(new THREE.SphereGeometry(0.18, 24, 20), matCandyStripe);
+  const chimSnow = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.095, 10, 22), matIcing);
+  chimSnow.rotation.x = Math.PI * 0.5;
+  chimSnow.position.y = 0.46;
+  const readyCandy = new THREE.Mesh(new THREE.SphereGeometry(0.175, 24, 20), matCandyStripe);
   readyCandy.position.y = 0.64;
-  chimneyGroup.add(chimBody, chimSnowRim, readyCandy);
+  chimneyGroup.add(chimBody, chimSnow, readyCandy);
 
-  const chimHit = new THREE.Mesh(
-    new THREE.BoxGeometry(0.95, 1.35, 0.95),
-    new THREE.MeshBasicMaterial({ visible: false })
-  );
+  const chimHit = new THREE.Mesh(new THREE.BoxGeometry(0.98, 1.38, 0.98), new THREE.MeshBasicMaterial({ visible: false }));
   chimHit.position.y = 0.35;
-  chimHit.userData = { kind: 'chimney', label: '点击烟囱 · 投递薄荷糖球触发连锁机关' };
+  chimHit.userData = { kind: 'chimney', label: '点击烟囱 · 投递薄荷糖球开启三层过山车连锁机关' };
   chimneyGroup.add(chimHit);
   interactables.push(chimHit);
 
-  // ---------------- Mechanism 1: Eave Fairy-Light Garland & Tactile Pull-Cord ----------------
-  const bulbColors = [0xff4f4f, 0xffc145, 0x45e09b, 0x5ca8ff];
+  // ---------------- Mechanism 1: Catenary Wired C9 Fairy Lights & Elastic Pull-Cord ----------------
+  const bulbColors = [0xff4747, 0xffc43d, 0x3ce69c, 0x56a8ff];
   const bulbs = [];
-  for (let i = 0; i < 11; i++) {
-    const u = i / 10;
-    const x = lerp(-2.52, 2.52, u);
-    const sag = Math.sin(u * Math.PI) * 0.16;
-    const y = 3.16 - sag;
-    const bMat = new THREE.MeshStandardMaterial({
-      color: bulbColors[i % bulbColors.length],
-      emissive: new THREE.Color(bulbColors[i % bulbColors.length]),
-      emissiveIntensity: 0.18,
-      roughness: 0.2,
-    });
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.068, 14, 12), bMat);
-    bulb.position.set(x, y, D * 0.5 + 0.10);
-    houseRoot.add(bulb);
-    bulbs.push({ mesh: bulb, mat: bMat, baseY: y });
+  const wirePts = [];
+  for (let i = 0; i <= 20; i++) {
+    const u = i / 20;
+    const x = lerp(-2.68, 2.92, u);
+    const sag = Math.sin(u * Math.PI) * 0.18 + Math.sin(u * Math.PI * 5) * 0.015;
+    wirePts.push(new THREE.Vector3(x, 3.18 - sag, D * 0.5 + 0.09));
   }
+  const wireCurve = new THREE.CatmullRomCurve3(wirePts);
+  staticGreenParts.push(new THREE.TubeGeometry(wireCurve, 56, 0.014, 6, false));
 
-  // Right-side knitted pull-cord with red felt pom-pom
+  const bulbGeo = new THREE.ConeGeometry(0.058, 0.135, 10);
+  bulbGeo.rotateX(Math.PI);
+  const bulbMat = new THREE.MeshPhysicalMaterial({
+    color: 0xffffff,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.20,
+    roughness: 0.16,
+    clearcoat: 0.9,
+  });
+  bulbMat.onBeforeCompile = (sh) => {
+    sh.fragmentShader = sh.fragmentShader.replace(
+      'vec3 totalEmissiveRadiance = emissive;',
+      'vec3 totalEmissiveRadiance = emissive * diffuseColor.rgb;'
+    );
+  };
+  const bulbInstanced = new THREE.InstancedMesh(bulbGeo, bulbMat, 11);
+  const _bulbDummy = new THREE.Object3D();
+  const _bulbCol = new THREE.Color();
+
+  for (let i = 0; i < 11; i++) {
+    const u = (i + 0.5) / 11;
+    const pt = wireCurve.getPoint(u);
+    staticBrassParts.push(transformGeo(new THREE.CylinderGeometry(0.032, 0.026, 0.055, 10), { x: pt.x, y: pt.y - 0.02, z: pt.z }));
+
+    _bulbDummy.position.set(pt.x, pt.y - 0.095, pt.z);
+    _bulbDummy.updateMatrix();
+    bulbInstanced.setMatrixAt(i, _bulbDummy.matrix);
+    _bulbCol.setHex(bulbColors[i % bulbColors.length]);
+    bulbInstanced.setColorAt(i, _bulbCol);
+    bulbs.push({ x: pt.x, baseY: pt.y - 0.095, z: pt.z });
+  }
+  bulbInstanced.instanceMatrix.needsUpdate = true;
+  if (bulbInstanced.instanceColor) bulbInstanced.instanceColor.needsUpdate = true;
+  houseRoot.add(bulbInstanced);
+
+  // Elastic Knitted Pull-Cord (Direct Manipulation: drag downward to stretch!)
   const cordAnchor = new THREE.Group();
-  cordAnchor.position.set(2.92, 3.15, D * 0.5 + 0.05);
+  cordAnchor.position.set(2.94, 3.16, D * 0.5 + 0.08);
   houseRoot.add(cordAnchor);
 
-  const cordLine = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.018, 0.018, 1.15, 8),
-    matFeltWhite
-  );
-  cordLine.position.y = -0.58;
-  const cordPom = new THREE.Mesh(new THREE.SphereGeometry(0.145, 20, 16), matFeltRed);
-  cordPom.position.y = -1.16;
-  const cordRing = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.016, 8, 18), matBrass);
-  cordRing.position.y = -1.0;
-  cordAnchor.add(cordLine, cordPom, cordRing);
+  const cordLine = new THREE.Mesh(new THREE.CylinderGeometry(0.019, 0.019, 1.0, 8), matFeltWhite);
+  cordLine.geometry.translate(0, -0.5, 0);
+  const cordKnobGroup = new THREE.Group();
+  cordKnobGroup.position.y = -1.08;
+  const cordPom = new THREE.Mesh(new THREE.SphereGeometry(0.15, 18, 14), matFeltRed);
+  const cordRing = new THREE.Mesh(new THREE.TorusGeometry(0.062, 0.016, 8, 18), matBrass);
+  cordRing.position.y = 0.14;
+  cordKnobGroup.add(cordPom, cordRing);
+  cordAnchor.add(cordLine, cordKnobGroup);
 
-  const cordHit = new THREE.Mesh(
-    new THREE.BoxGeometry(0.65, 1.55, 0.65),
-    new THREE.MeshBasicMaterial({ visible: false })
-  );
-  cordHit.position.y = -0.68;
-  cordHit.userData = { kind: 'cord', label: '拽一下毛绒拉绳 · 点亮整屋圣诞彩灯' };
+  const cordHit = new THREE.Mesh(new THREE.BoxGeometry(0.70, 1.65, 0.70), new THREE.MeshBasicMaterial({ visible: false }));
+  cordHit.position.y = -0.72;
+  cordHit.userData = { kind: 'cord', label: '向下拽动毛毡红绒球 · 点亮全屋复古彩灯' };
   cordAnchor.add(cordHit);
   interactables.push(cordHit);
 
-  // ---------------- 3F Attic: Sloped Candy Chute & 4 Musical Brass Bells ----------------
-  const chuteRamp = new THREE.Mesh(
-    createRoundedBlockGeometry(3.45, 0.09, 0.36, 0.03, 0.02),
-    matGingerDark
-  );
-  chuteRamp.position.set(0.15, 3.72, 0.18);
-  chuteRamp.rotation.z = 0.145; // slopes down from right (+x) to left (-x)
-  chuteRamp.castShadow = true;
-  houseRoot.add(chuteRamp);
+  // ---------------- Unbroken 3-Story Candy-Cane Coaster Track & Turned Brass Bells ----------------
+  // 3F Attic Sloped Chute
+  gingerDarkParts.push(transformGeo(createRoundedBlockGeometry(3.35, 0.08, 0.38, 0.03, 0.02), { x: 0.18, y: 3.74, z: 0.18, rz: 0.15 }));
 
   const bells = [];
   for (let b = 0; b < 4; b++) {
-    const bx = 1.15 - b * 0.78;
-    const by = 4.16 - b * 0.10;
+    const bx = 1.18 - b * 0.76;
+    const by = 4.18 - b * 0.11;
     const bellPivot = new THREE.Group();
     bellPivot.position.set(bx, by, 0.18);
-    const bellCup = new THREE.Mesh(
-      new THREE.ConeGeometry(0.115, 0.20, 18, 1, false),
+    const bellMesh = new THREE.Mesh(
+      mergeGeometries([
+        transformGeo(new THREE.ConeGeometry(0.115, 0.20, 16), { y: -0.10 }),
+        transformGeo(new THREE.TorusGeometry(0.112, 0.016, 8, 18), { y: -0.20, rx: Math.PI * 0.5 }),
+        transformGeo(new THREE.SphereGeometry(0.036, 10, 8), { y: -0.22 }), // clapper!
+      ]),
       matBrass
     );
-    bellCup.position.y = -0.10;
-    bellPivot.add(bellCup);
+    bellPivot.add(bellMesh);
     houseRoot.add(bellPivot);
-    bells.push({ pivot: bellPivot, swing: new Spring1D(0, 210, 9), hitInRun: false });
+    bells.push({ pivot: bellPivot, swing: new Spring1D(0, 215, 9), hitInRun: false, x: bx, y: by - 0.18 });
   }
 
-  // Rolling Peppermint Marble
-  const rollingCandy = new THREE.Mesh(new THREE.SphereGeometry(0.175, 24, 20), matCandyStripe);
+  // Left-Flank Blown-Glass Funnel + Twin-Rail Candy-Cane S-Coaster connecting 3F -> 2F -> 1F!
+  const funnel = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.42, 24, 1, true), matGlassFunnel);
+  funnel.rotation.x = Math.PI;
+  funnel.position.set(-1.62, 3.38, 0.22);
+  houseRoot.add(funnel);
+  staticBrassParts.push(transformGeo(new THREE.TorusGeometry(0.32, 0.022, 8, 24), { x: -1.62, y: 3.59, z: 0.22, rx: Math.PI * 0.5 }));
+
+  // Continuous 3D Coaster Spline from Chimney -> Attic Chute -> Left S-Coaster -> 1F Domino Entry!
+  const coasterWaypoints = [
+    new THREE.Vector3(1.78, 5.05, 0.12),   // 0: Chimney drop
+    new THREE.Vector3(1.62, 4.08, 0.18),   // 1: Attic chute top
+    new THREE.Vector3(0.42, 3.89, 0.18),   // 2: Bell 1-2
+    new THREE.Vector3(-0.95, 3.68, 0.18),  // 3: Bell 3-4
+    new THREE.Vector3(-1.62, 3.48, 0.22),  // 4: Into Glass Funnel!
+    new THREE.Vector3(-2.88, 2.85, 0.58),  // 5: Swing outside left wall (2F height)
+    new THREE.Vector3(-3.12, 2.02, 0.68),  // 6: S-curve outer apex
+    new THREE.Vector3(-2.65, 1.15, 0.52),  // 7: Swoop back into 1F parlor
+    new THREE.Vector3(-1.15, 0.36, 0.18),  // 8: 1F Parlor floor entry
+    new THREE.Vector3(-0.62, 0.34, 0.18),  // 9: Hit Domino #1!
+  ];
+  const marbleSpline = new THREE.CatmullRomCurve3(coasterWaypoints, false, 'catmullrom', 0.38);
+
+  // Build visible Twin-Rail Candy-Cane Coaster Track along the S-curve segment (u = 0.46 .. 0.88)!
+  const railLeftPts = [];
+  const railRightPts = [];
+  for (let s = 0; s <= 32; s++) {
+    const u = lerp(0.45, 0.90, s / 32);
+    const p = marbleSpline.getPoint(u);
+    railLeftPts.push(new THREE.Vector3(p.x, p.y - 0.11, p.z - 0.085));
+    railRightPts.push(new THREE.Vector3(p.x, p.y - 0.11, p.z + 0.085));
+    if (s % 5 === 0) {
+      staticBrassParts.push(transformGeo(new THREE.BoxGeometry(0.05, 0.03, 0.24), { x: p.x, y: p.y - 0.13, z: p.z }));
+    }
+  }
+  candyStripeParts.push(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(railLeftPts), 44, 0.024, 8, false),
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(railRightPts), 44, 0.024, 8, false)
+  );
+
+  const rollingCandy = new THREE.Mesh(new THREE.SphereGeometry(0.17, 24, 20), matCandyStripe);
   rollingCandy.castShadow = true;
   rollingCandy.visible = false;
   houseRoot.add(rollingCandy);
 
-  // ---------------- 2F Workshop: Three Numbered Advent Blind-Box Doors & 12fps Clay Puppets ----------------
+  // Sugar-frost burst particle pool on bell & domino impacts!
+  const burstCount = 36;
+  const burstGeo = new THREE.BufferGeometry();
+  const burstPos = new Float32Array(burstCount * 3);
+  const burstVel = new Float32Array(burstCount * 3);
+  for (let i = 0; i < burstCount; i++) burstPos[i * 3 + 1] = -20;
+  burstGeo.setAttribute('position', new THREE.BufferAttribute(burstPos, 3));
+  const burstPoints = new THREE.Points(
+    burstGeo,
+    new THREE.PointsMaterial({
+      map: textures.sparkTex,
+      color: 0xfff0c8,
+      size: 0.24,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  houseRoot.add(burstPoints);
+  let burstHead = 0;
+
+  function emitBurst(wx, wy, wz, count = 7) {
+    for (let k = 0; k < count; k++) {
+      const idx = burstHead;
+      burstHead = (burstHead + 1) % burstCount;
+      burstPos[idx * 3] = wx;
+      burstPos[idx * 3 + 1] = wy;
+      burstPos[idx * 3 + 2] = wz;
+      burstVel[idx * 3] = (Math.random() - 0.5) * 2.2;
+      burstVel[idx * 3 + 1] = 0.8 + Math.random() * 1.8;
+      burstVel[idx * 3 + 2] = (Math.random() - 0.2) * 1.6;
+    }
+  }
+
+  // ---------------- 2F Workshop: Expressive 12fps Clay Puppets with Faces, Moustaches & Props ----------------
   const adventDoors = [];
   const puppetTypes = ['nutcracker', 'penguin', 'snowman'];
   const doorLabels = [
-    '敲开 I 号盲盒窗 · 唤醒毛毡胡桃夹子',
-    '敲开 II 号盲盒窗 · 唤醒围巾小企鹅',
-    '敲开 III 号盲盒窗 · 唤醒糖霜雪人',
+    '敲开 I 号盲盒门 · 唤醒胡须敬礼胡桃夹子',
+    '敲开 II 号盲盒门 · 唤醒送信小企鹅邮差',
+    '敲开 III 号盲盒门 · 唤醒姜饼大厨雪人',
   ];
 
-  function buildClayPuppet(type) {
+  function buildExpressivePuppet(type) {
     const g = new THREE.Group();
+    const coalParts = [];
+    const icingDetailParts = [];
+    let armPivot = null;
+
     if (type === 'nutcracker') {
-      const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.16, 0.42, 16), matFeltRed);
-      torso.position.y = 0.24;
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.145, 16, 14), makeClayMat(0xf4cfb4, 0.7));
+      const coat = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.165, 0.42, 16), matFeltRed);
+      coat.position.y = 0.24;
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.145, 16, 14), matPeachSkin);
       head.position.y = 0.56;
-      const shakoHat = new THREE.Mesh(new THREE.CylinderGeometry(0.155, 0.14, 0.26, 16), matFeltCocoa);
-      shakoHat.position.y = 0.76;
-      const crownTrim = new THREE.Mesh(new THREE.TorusGeometry(0.148, 0.02, 8, 20), matBrass);
-      crownTrim.rotation.x = Math.PI * 0.5;
-      crownTrim.position.y = 0.66;
-      g.add(torso, head, shakoHat, crownTrim);
+      const shako = new THREE.Mesh(new THREE.CylinderGeometry(0.158, 0.142, 0.26, 16), matFeltCocoa);
+      shako.position.y = 0.77;
+      // Rosy cheeks
+      const cheeks = new THREE.Mesh(
+        mergeGeometries([
+          transformGeo(new THREE.SphereGeometry(0.032, 8, 8), { x: -0.085, y: 0.53, z: 0.12 }),
+          transformGeo(new THREE.SphereGeometry(0.032, 8, 8), { x: 0.085, y: 0.53, z: 0.12 }),
+        ]),
+        matFeltRed
+      );
+      // Curled white moustache + beard!
+      icingDetailParts.push(
+        transformGeo(new THREE.CapsuleGeometry(0.025, 0.09, 6, 8), { x: -0.055, y: 0.50, z: 0.14, rz: 1.32 }),
+        transformGeo(new THREE.CapsuleGeometry(0.025, 0.09, 6, 8), { x: 0.055, y: 0.50, z: 0.14, rz: -1.32 }),
+        transformGeo(new THREE.ConeGeometry(0.055, 0.14, 10), { y: 0.41, z: 0.12, rx: Math.PI })
+      );
+      // Beady coal eyes + boots
+      coalParts.push(
+        transformGeo(new THREE.SphereGeometry(0.022, 8, 8), { x: -0.05, y: 0.58, z: 0.135 }),
+        transformGeo(new THREE.SphereGeometry(0.022, 8, 8), { x: 0.05, y: 0.58, z: 0.135 })
+      );
+      // Gold epaulets, double-breasted buttons & shako plume badge
+      const goldTrim = new THREE.Mesh(
+        mergeGeometries([
+          transformGeo(new THREE.TorusGeometry(0.148, 0.02, 8, 20), { y: 0.66, rx: Math.PI * 0.5 }),
+          transformGeo(new THREE.SphereGeometry(0.048, 10, 8), { x: -0.17, y: 0.42, sx: 1.3, sy: 0.6 }),
+          transformGeo(new THREE.SphereGeometry(0.048, 10, 8), { x: 0.17, y: 0.42, sx: 1.3, sy: 0.6 }),
+          transformGeo(new THREE.SphereGeometry(0.022, 8, 8), { x: -0.05, y: 0.34, z: 0.155 }),
+          transformGeo(new THREE.SphereGeometry(0.022, 8, 8), { x: 0.05, y: 0.34, z: 0.155 }),
+          transformGeo(new THREE.SphereGeometry(0.022, 8, 8), { x: -0.05, y: 0.24, z: 0.158 }),
+          transformGeo(new THREE.SphereGeometry(0.022, 8, 8), { x: 0.05, y: 0.24, z: 0.158 }),
+        ]),
+        matBrass
+      );
+      // Articulated saluting right arm!
+      armPivot = new THREE.Group();
+      armPivot.position.set(0.18, 0.40, 0);
+      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.038, 0.18, 6, 10), matFeltRed);
+      arm.position.y = -0.10;
+      armPivot.add(arm);
+      g.add(coat, head, shako, cheeks, goldTrim, armPivot);
     } else if (type === 'penguin') {
       const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.24, 12, 16), matFeltCocoa);
       body.position.y = 0.28;
-      const belly = new THREE.Mesh(new THREE.SphereGeometry(0.145, 14, 12), matFeltWhite);
-      belly.scale.set(0.9, 1.15, 0.5);
-      belly.position.set(0, 0.26, 0.09);
-      const scarf = new THREE.Mesh(new THREE.TorusGeometry(0.155, 0.038, 10, 20), matFeltRed);
-      scarf.rotation.x = Math.PI * 0.5;
-      scarf.position.y = 0.42;
-      const beak = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.12, 12), makeClayMat(0xf29b2e, 0.6));
+      icingDetailParts.push(transformGeo(new THREE.SphereGeometry(0.145, 14, 12), { y: 0.26, z: 0.09, sx: 0.9, sy: 1.15, sz: 0.5 }));
+      const scarf = new THREE.Mesh(
+        mergeGeometries([
+          transformGeo(new THREE.TorusGeometry(0.155, 0.038, 10, 20), { y: 0.42, rx: Math.PI * 0.5 }),
+          transformGeo(new THREE.CapsuleGeometry(0.032, 0.14, 6, 8), { x: 0.11, y: 0.31, z: 0.14, rz: -0.2 }),
+        ]),
+        matFeltRed
+      );
+      const beak = new THREE.Mesh(new THREE.ConeGeometry(0.048, 0.12, 12), matCarrot);
       beak.rotation.x = Math.PI * 0.5;
       beak.position.set(0, 0.48, 0.19);
-      g.add(body, belly, scarf, beak);
+      coalParts.push(
+        transformGeo(new THREE.SphereGeometry(0.022, 8, 8), { x: -0.06, y: 0.53, z: 0.145 }),
+        transformGeo(new THREE.SphereGeometry(0.022, 8, 8), { x: 0.06, y: 0.53, z: 0.145 })
+      );
+      // Mini clay mailbag + golden letter corner!
+      const bag = new THREE.Mesh(createRoundedBlockGeometry(0.14, 0.12, 0.07, 0.02, 0.01), matGingerDark);
+      bag.position.set(-0.16, 0.22, 0.08);
+      const letter = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.07, 0.02), matBrass);
+      letter.position.set(-0.16, 0.28, 0.09);
+      letter.rotation.z = 0.25;
+
+      armPivot = new THREE.Group();
+      armPivot.position.set(0.17, 0.36, 0);
+      const flipper = new THREE.Mesh(new THREE.CapsuleGeometry(0.035, 0.16, 6, 8), matFeltCocoa);
+      flipper.position.y = -0.08;
+      armPivot.add(flipper);
+      g.add(body, scarf, beak, bag, letter, armPivot);
     } else {
-      const b1 = new THREE.Mesh(new THREE.SphereGeometry(0.20, 18, 16), matFeltWhite);
-      b1.position.y = 0.20;
-      const b2 = new THREE.Mesh(new THREE.SphereGeometry(0.145, 18, 16), matFeltWhite);
-      b2.position.y = 0.49;
-      const hat = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.28, 16), matFeltGreen);
-      hat.position.y = 0.72;
-      hat.rotation.z = -0.15;
-      const pom = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 10), matIcing);
-      pom.position.set(0.04, 0.86, 0);
-      g.add(b1, b2, hat, pom);
+      icingDetailParts.push(
+        transformGeo(new THREE.SphereGeometry(0.20, 18, 16), { y: 0.20 }),
+        transformGeo(new THREE.SphereGeometry(0.145, 18, 16), { y: 0.49 }),
+        // Tall puffy chef toque hat!
+        transformGeo(new THREE.CylinderGeometry(0.12, 0.11, 0.18, 14), { y: 0.68, rz: -0.1 }),
+        transformGeo(new THREE.SphereGeometry(0.145, 14, 12), { x: 0.02, y: 0.79, sy: 0.75 })
+      );
+      const nose = new THREE.Mesh(new THREE.ConeGeometry(0.036, 0.14, 10), matCarrot);
+      nose.rotation.x = Math.PI * 0.5;
+      nose.position.set(0, 0.49, 0.18);
+      coalParts.push(
+        transformGeo(new THREE.SphereGeometry(0.022, 8, 8), { x: -0.05, y: 0.53, z: 0.135 }),
+        transformGeo(new THREE.SphereGeometry(0.022, 8, 8), { x: 0.05, y: 0.53, z: 0.135 }),
+        transformGeo(new THREE.SphereGeometry(0.022, 8, 8), { y: 0.31, z: 0.185 }),
+        transformGeo(new THREE.SphereGeometry(0.022, 8, 8), { y: 0.21, z: 0.198 })
+      );
+      // Baking tray with tiny gingerbread cookie man!
+      armPivot = new THREE.Group();
+      armPivot.position.set(0, 0.34, 0.18);
+      const tray = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.02, 16), matBrass);
+      const miniCookie = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), matGinger);
+      miniCookie.scale.set(1, 0.4, 1);
+      miniCookie.position.y = 0.025;
+      armPivot.add(tray, miniCookie);
+      g.add(nose, armPivot);
     }
+
+    if (coalParts.length) g.add(new THREE.Mesh(mergeGeometries(coalParts), matCoal));
+    if (icingDetailParts.length) g.add(new THREE.Mesh(mergeGeometries(icingDetailParts), matIcing));
+    g.userData.armPivot = armPivot;
+    batchStaticMeshes(g, [armPivot]);
     return g;
   }
 
   for (let i = 0; i < 3; i++) {
-    const dx = (i - 1) * 1.55;
+    const dx = (i - 1) * 1.52;
     const slot = new THREE.Group();
     slot.position.set(dx, 1.74, 0.08);
     houseRoot.add(slot);
 
-    // Cozy recessed box frame
-    const frame = new THREE.Mesh(
-      createRoundedBlockGeometry(0.94, 1.18, 0.08, 0.05, 0.025),
-      matIcing
-    );
-    frame.position.set(0, 0.60, 0.26);
-    slot.add(frame);
+    icingParts.push(transformGeo(createRoundedBlockGeometry(0.94, 1.18, 0.08, 0.05, 0.025), { x: dx, y: 2.34, z: 0.34 }));
 
-    const puppet = buildClayPuppet(puppetTypes[i]);
-    puppet.position.set(0, 0.05, -0.12);
-    puppet.scale.setScalar(0.85);
+    const puppet = buildExpressivePuppet(puppetTypes[i]);
+    puppet.position.set(0, 0.05, -0.10);
+    puppet.scale.setScalar(0.86);
     slot.add(puppet);
 
-    // Hinged gingerbread shutter door
     const hinge = new THREE.Group();
     hinge.position.set(-0.41, 0.60, 0.31);
     slot.add(hinge);
@@ -446,20 +613,13 @@ export function createAct2Clay({ envMap, textures, audio, onAwaken, onHint }) {
     doorPanel.position.x = 0.41;
     doorPanel.castShadow = true;
 
-    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.048, 14, 12), matBrass);
-    knob.position.set(0.70, 0, 0.05);
-    // Brass Roman bar emblem (I, II, III)
+    const doorBrassParts = [transformGeo(new THREE.SphereGeometry(0.048, 12, 10), { x: 0.70, z: 0.05 })];
     for (let r = 0; r <= i; r++) {
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.24, 0.02), matBrass);
-      bar.position.set(0.41 + (r - i * 0.5) * 0.085, 0.14, 0.04);
-      hinge.add(bar);
+      doorBrassParts.push(transformGeo(new THREE.BoxGeometry(0.04, 0.24, 0.02), { x: 0.41 + (r - i * 0.5) * 0.085, y: 0.14, z: 0.04 }));
     }
-    hinge.add(doorPanel, knob);
+    hinge.add(doorPanel, new THREE.Mesh(mergeGeometries(doorBrassParts), matBrass));
 
-    const hit = new THREE.Mesh(
-      new THREE.BoxGeometry(1.05, 1.25, 0.55),
-      new THREE.MeshBasicMaterial({ visible: false })
-    );
+    const hit = new THREE.Mesh(new THREE.BoxGeometry(1.05, 1.25, 0.55), new THREE.MeshBasicMaterial({ visible: false }));
     hit.position.set(0, 0.60, 0.30);
     const doorObj = {
       idx: i,
@@ -475,77 +635,119 @@ export function createAct2Clay({ envMap, textures, audio, onAwaken, onHint }) {
     adventDoors.push(doorObj);
   }
 
-  // ---------------- 1F Parlor: Clay Hearth, Cookie Dominoes & Ribboned Finale Gift Box ----------------
+  // ---------------- 1F Cozy Parlor: Tartan Rug, Wingback Armchair, Cocoa Table, Clock & Hearth ----------------
+  // Scottish Tartan Plaid Circular Rug
+  const tartanRug = new THREE.Mesh(new THREE.CylinderGeometry(1.65, 1.68, 0.024, 40), matTartan);
+  tartanRug.position.set(0.15, 0.165, 0.05);
+  tartanRug.receiveShadow = true;
+  houseRoot.add(tartanRug);
+
+  // Cozy Clay Wingback Armchair + Side Table with Hot Cocoa Mug (back-center parlor behind dominoes!)
+  const chairParts = [
+    transformGeo(createRoundedBlockGeometry(0.62, 0.24, 0.56, 0.06, 0.04), { x: 0.42, y: 0.32, z: -0.46, ry: -0.28 }),
+    transformGeo(createRoundedBlockGeometry(0.58, 0.66, 0.16, 0.06, 0.04), { x: 0.46, y: 0.66, z: -0.66, ry: -0.28 }),
+    transformGeo(createRoundedBlockGeometry(0.14, 0.42, 0.52, 0.05, 0.03), { x: 0.16, y: 0.48, z: -0.39, ry: -0.28 }),
+    transformGeo(createRoundedBlockGeometry(0.14, 0.42, 0.52, 0.05, 0.03), { x: 0.68, y: 0.48, z: -0.53, ry: -0.28 }),
+  ];
+  staticGreenParts.push(...chairParts);
+
+  // Side wooden table + steaming red cocoa mug + fireplace logs!
+  gingerDarkParts.push(
+    transformGeo(new THREE.CylinderGeometry(0.24, 0.24, 0.05, 18), { x: -0.45, y: 0.50, z: -0.52 }),
+    transformGeo(new THREE.CylinderGeometry(0.05, 0.07, 0.34, 12), { x: -0.45, y: 0.32, z: -0.52 }),
+    // Bark logs in hearth
+    transformGeo(new THREE.CylinderGeometry(0.065, 0.065, 0.44, 10), { x: -1.72, y: 0.25, z: 0.04, rz: Math.PI * 0.48, ry: 0.2 }),
+    transformGeo(new THREE.CylinderGeometry(0.06, 0.06, 0.40, 10), { x: -1.72, y: 0.31, z: 0.09, rz: Math.PI * 0.52, ry: -0.25 }),
+    // Cuckoo wall clock body on 1F rose back wall!
+    transformGeo(createRoundedBlockGeometry(0.32, 0.38, 0.10, 0.03, 0.02), { x: 0.0, y: 1.24, z: -0.80 })
+  );
+  staticRedParts.push(transformGeo(new THREE.CylinderGeometry(0.065, 0.058, 0.13, 14), { x: -0.45, y: 0.59, z: -0.52 }));
+  icingParts.push(transformGeo(new THREE.SphereGeometry(0.058, 10, 8), { x: -0.45, y: 0.66, z: -0.52, sy: 0.6 })); // whipped cream!
+
+  // Swinging brass pendulum on 1F wall cuckoo clock
+  const clockPendulum = new THREE.Group();
+  clockPendulum.position.set(0, 1.05, -0.76);
+  const pendBob = new THREE.Mesh(
+    mergeGeometries([
+      transformGeo(new THREE.BoxGeometry(0.018, 0.22, 0.01), { y: -0.11 }),
+      transformGeo(new THREE.CylinderGeometry(0.055, 0.055, 0.02, 16), { y: -0.22, rx: Math.PI * 0.5 }),
+    ]),
+    matBrass
+  );
+  clockPendulum.add(pendBob);
+  houseRoot.add(clockPendulum);
+
   // Left Parlor Hearth
-  const hearth = new THREE.Group();
-  hearth.position.set(-1.68, 0.15, -0.05);
-  houseRoot.add(hearth);
+  icingParts.push(transformGeo(createRoundedBlockGeometry(1.26, 1.08, 0.56, 0.06, 0.04), { x: -1.72, y: 0.69, z: -0.05 }));
+  const firebox = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.62, 0.38), matCoal);
+  firebox.position.set(-1.72, 0.49, 0.07);
+  houseRoot.add(firebox);
 
-  const mantle = new THREE.Mesh(
-    createRoundedBlockGeometry(1.26, 1.08, 0.56, 0.06, 0.04),
-    matIcing
-  );
-  mantle.position.y = 0.54;
-  mantle.castShadow = true;
-  const firebox = new THREE.Mesh(
-    new THREE.BoxGeometry(0.68, 0.62, 0.38),
-    makeClayMat(0x1b0e0b, 0.9)
-  );
-  firebox.position.set(0, 0.34, 0.12);
-
-  // Sculpted clay flame teardrops
   const flameMat = new THREE.MeshStandardMaterial({
-    color: 0xffa834,
+    color: 0xffad38,
     emissive: new THREE.Color(0xff5e14),
-    emissiveIntensity: 2.2,
+    emissiveIntensity: 2.35,
     roughness: 0.3,
   });
   const flameGroup = new THREE.Group();
-  flameGroup.position.set(0, 0.24, 0.14);
+  flameGroup.position.set(-1.72, 0.36, 0.09);
+  const flameGeos = [];
   for (let f = -1; f <= 1; f++) {
-    const fl = new THREE.Mesh(new THREE.ConeGeometry(0.11 - Math.abs(f) * 0.02, 0.34, 12), flameMat);
-    fl.position.set(f * 0.13, 0.12, 0);
-    flameGroup.add(fl);
+    flameGeos.push(transformGeo(new THREE.ConeGeometry(0.11 - Math.abs(f) * 0.02, 0.34, 12), { x: f * 0.13, y: 0.12 }));
   }
-  // Three cute felt stockings hung on the mantlepiece
-  for (let s = -1; s <= 1; s++) {
-    const sock = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.055, 0.14, 8, 12),
-      s === 0 ? matFeltGreen : matFeltRed
-    );
-    sock.position.set(s * 0.32, 0.92, 0.31);
-    sock.rotation.z = 0.12;
-    hearth.add(sock);
-  }
-  hearth.add(mantle, firebox, flameGroup);
+  flameGroup.add(new THREE.Mesh(mergeGeometries(flameGeos, true), flameMat));
+  houseRoot.add(flameGroup);
 
-  // Center Biscuit Dominoes (topple in sequence during the candy run!)
+  for (let s = -1; s <= 1; s++) {
+    const sockGeo = transformGeo(new THREE.CapsuleGeometry(0.055, 0.14, 8, 10), { x: -1.72 + s * 0.32, y: 1.07, z: 0.26, rz: 0.14 });
+    if (s === 0) staticGreenParts.push(sockGeo);
+    else staticRedParts.push(sockGeo);
+  }
+
+  // Commit all batched static house meshes (massive DrawCall reduction!)
+  const addBatched = (arr, mat, shadow = true) => {
+    if (!arr.length) return;
+    const m = new THREE.Mesh(mergeGeometries(arr), mat);
+    m.castShadow = shadow;
+    m.receiveShadow = shadow;
+    houseRoot.add(m);
+  };
+  addBatched(gingerLightParts, matGinger);
+  addBatched(gingerDarkParts, matGingerDark);
+  addBatched(icingParts, matIcing);
+  addBatched(candyStripeParts, matCandyStripe);
+  addBatched(staticBrassParts, matBrass, false);
+  addBatched(staticGreenParts, matFeltGreen);
+  addBatched(staticRedParts, matFeltRed);
+
+  // Biscuit Dominoes with 1..4 Royal Icing Pips!
   const dominoes = [];
   for (let d = 0; d < 4; d++) {
     const domPivot = new THREE.Group();
-    domPivot.position.set(-0.62 + d * 0.42, 0.16, 0.18);
-    const cookie = new THREE.Mesh(
-      createRoundedBlockGeometry(0.09, 0.56, 0.34, 0.025, 0.015),
-      matGinger
-    );
+    domPivot.position.set(-0.62 + d * 0.44, 0.16, 0.18);
+    const cookie = new THREE.Mesh(createRoundedBlockGeometry(0.095, 0.56, 0.34, 0.025, 0.015), matGinger);
     cookie.position.y = 0.28;
     cookie.castShadow = true;
-    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 10), matIcing);
-    dot.position.set(0, 0.40, 0.17);
-    domPivot.add(cookie, dot);
+    const pipParts = [];
+    for (let p = 0; p <= d; p++) {
+      pipParts.push(
+        transformGeo(new THREE.SphereGeometry(0.028, 8, 8), {
+          y: 0.42 - p * 0.085,
+          z: 0.17,
+        })
+      );
+    }
+    domPivot.add(cookie, new THREE.Mesh(mergeGeometries(pipParts), matIcing));
     houseRoot.add(domPivot);
-    dominoes.push({ pivot: domPivot, spring: new Spring1D(0, 180, 13), fallen: false });
+    dominoes.push({ pivot: domPivot, spring: new Spring1D(0, 185, 13), fallen: false });
   }
 
-  // Right Parlor Grand Ribboned Gift Box (springs open to reveal Act II Star Sigil!)
+  // Right Parlor Grand Ribboned Gift Box
   const giftGroup = new THREE.Group();
   giftGroup.position.set(1.55, 0.16, 0.18);
   houseRoot.add(giftGroup);
 
-  const giftBox = new THREE.Mesh(
-    createRoundedBlockGeometry(0.92, 0.76, 0.86, 0.05, 0.03),
-    matFeltGreen
-  );
+  const giftBox = new THREE.Mesh(createRoundedBlockGeometry(0.92, 0.76, 0.86, 0.05, 0.03), matFeltGreen);
   giftBox.position.y = 0.38;
   giftBox.castShadow = true;
   const ribbonV = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.78, 0.89), matFeltRed);
@@ -556,21 +758,18 @@ export function createAct2Clay({ envMap, textures, audio, onAwaken, onHint }) {
   giftLidPivot.position.set(0.45, 0.76, 0);
   giftGroup.add(giftLidPivot);
 
-  const giftLid = new THREE.Mesh(
-    createRoundedBlockGeometry(0.98, 0.16, 0.92, 0.04, 0.025),
-    matFeltRed
-  );
+  const giftLid = new THREE.Mesh(createRoundedBlockGeometry(0.98, 0.16, 0.92, 0.04, 0.025), matFeltRed);
   giftLid.position.x = -0.45;
   giftLid.castShadow = true;
-  const bowL = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.042, 10, 20), matBrass);
-  bowL.position.set(-0.56, 0.14, 0);
-  bowL.rotation.z = 0.45;
-  const bowR = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.042, 10, 20), matBrass);
-  bowR.position.set(-0.34, 0.14, 0);
-  bowR.rotation.z = -0.45;
-  giftLidPivot.add(giftLid, bowL, bowR);
+  const bowMesh = new THREE.Mesh(
+    mergeGeometries([
+      transformGeo(new THREE.TorusGeometry(0.14, 0.042, 10, 20), { x: -0.56, y: 0.14, rz: 0.45 }),
+      transformGeo(new THREE.TorusGeometry(0.14, 0.042, 10, 20), { x: -0.34, y: 0.14, rz: -0.45 }),
+    ]),
+    matBrass
+  );
+  giftLidPivot.add(giftLid, bowMesh);
 
-  // Rising Star Sigil inside the gift box
   const sigilStar = new THREE.Mesh(
     createFacetedStarGeometry({ points: 8, outerRadius: 0.38, innerRadius: 0.15, depth: 0.12 }),
     matBrass
@@ -579,26 +778,83 @@ export function createAct2Clay({ envMap, textures, audio, onAwaken, onHint }) {
   sigilStar.scale.setScalar(0.001);
   giftGroup.add(sigilStar);
 
-  const giftHit = new THREE.Mesh(
-    new THREE.BoxGeometry(1.1, 1.1, 1.1),
-    new THREE.MeshBasicMaterial({ visible: false })
-  );
+  const giftHit = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 1.1), new THREE.MeshBasicMaterial({ visible: false }));
   giftHit.position.y = 0.5;
   giftHit.userData = { kind: 'gift', label: '点击烟囱投递糖球（或轻敲礼盒）开启惊喜' };
   giftGroup.add(giftHit);
   interactables.push(giftHit);
 
-  // ---------------- State & Rube Goldberg Machine Timeline ----------------
+  // Coalesce static clay & parlor props so Act II stays comfortably within <45 DrawCalls!
+  const matClayVC = injectClayMicrograin(
+    new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      bumpMap: textures.clayBump,
+      bumpScale: 0.022,
+      roughness: 0.62,
+      clearcoat: 0.14,
+    }),
+    { ridgeStrength: 0.024, icingScatter: 0.25 }
+  );
+  for (const d of adventDoors) {
+    collapseSolidMeshes(d.puppet, matClayVC, [d.puppet.userData.armPivot]);
+    if (d.puppet.userData.armPivot) collapseSolidMeshes(d.puppet.userData.armPivot, matClayVC);
+    collapseSolidMeshes(d.hinge, matClayVC);
+  }
+  for (const dm of dominoes) collapseSolidMeshes(dm.pivot, matClayVC);
+  collapseSolidMeshes(giftLidPivot, matClayVC);
+  collapseSolidMeshes(cordKnobGroup, matClayVC);
+
+  batchStaticMeshes(chimneyGroup, [readyCandy]);
+  batchStaticMeshes(giftGroup, [giftLidPivot, sigilStar]);
+  collapseSolidMeshes(houseRoot, matClayVC, [
+    chimneyGroup,
+    cordAnchor,
+    bulbInstanced,
+    rollingCandy,
+    readyCandy,
+    clockPendulum,
+    flameGroup,
+    giftGroup,
+    ...bells.map((b) => b.pivot),
+    ...dominoes.map((d) => d.pivot),
+    ...adventDoors.flatMap((d) => [d.hinge, d.puppet]),
+  ]);
+  batchStaticMeshes(houseRoot, [
+    chimneyGroup,
+    cordAnchor,
+    bulbInstanced,
+    rollingCandy,
+    readyCandy,
+    clockPendulum,
+    flameGroup,
+    giftGroup,
+    ...bells.map((b) => b.pivot),
+    ...dominoes.map((d) => d.pivot),
+    ...adventDoors.flatMap((d) => [d.hinge, d.puppet]),
+  ]);
+
+  // ---------------- Direct Manipulation & Coaster Physics State ----------------
   let lightsOn = false;
-  const cordPullSpring = new Spring1D(0, 220, 12);
-  const lightsSpring = new Spring1D(0.15, 85, 14);
+  const cordPullSpring = new Spring1D(0, 210, 11);
+  const lightsSpring = new Spring1D(0.16, 85, 14);
   const lidOpenSpring = new Spring1D(0, 150, 11);
   const sigilRiseSpring = new Spring1D(0, 110, 12);
 
-  let candyRunTime = -1; // >= 0 while the peppermint marble is running
+  let cordDragging = false;
+  let cordDragStartY = 0;
+
+  let candyRunU = -1; // 0..1 spline parameter while running, >1 domino phase
+  let prevSplinePos = new THREE.Vector3();
   let doorsOpened = 0;
   let candyCompleted = false;
   let awakened = false;
+  let funnelChimed = false;
+
+  function getProgress() {
+    const done = (lightsOn ? 1 : 0) + (doorsOpened > 0 ? 1 : 0) + (candyCompleted ? 1 : 0);
+    return { current: done, total: 3 };
+  }
 
   function triggerAwaken() {
     if (awakened) return;
@@ -606,210 +862,244 @@ export function createAct2Clay({ envMap, textures, audio, onAwaken, onHint }) {
     lidOpenSpring.target = 1.0;
     sigilRiseSpring.target = 1.0;
     lightsOn = true;
-    lightsSpring.target = 2.4;
+    lightsSpring.target = 2.5;
+    cameraRig.focusOn(1.1, -0.8, 0.4, 0.80, 2.2);
+    emitBurst(1.55, 0.95, 0.25, 14);
     audio.playSigilAwaken();
-    onAwaken(2, '第二声部已唤醒 · 木琴与雪橇银铃加入合奏');
-    onHint('姜饼奇遇屋全屋点亮 · 可继续开启盲盒窗或前往下一幕');
+    onAwaken(2, '第二声部已唤醒 · 温暖木琴与雪橇银铃汇入合奏');
+    onHint('姜饼奇遇屋全屋点亮 · 可滚轮推近观赏玩偶胡须与格纹地毯');
   }
 
   function startCandyRun() {
-    if (candyRunTime >= 0) return;
-    // Reset dominoes & bells for repeatable delight!
+    if (candyRunU >= 0) return;
     for (const b of bells) b.hitInRun = false;
     for (const d of dominoes) {
       d.fallen = false;
       d.spring.snap(0);
     }
-    candyRunTime = 0;
+    funnelChimed = false;
+    candyRunU = 0;
+    marbleSpline.getPoint(0, prevSplinePos);
+    rollingCandy.position.copy(prevSplinePos);
+    rollingCandy.quaternion.identity();
     rollingCandy.visible = true;
-    readyCandy.scale.setScalar(0.01);
-    audio.playClayPop(2);
-    focusOffset.set(0, 0.25, -1.25);
-    focusLookOffset.set(0, 0.35, 0);
-    focusTimer = 3.6;
+    readyCandy.visible = false;
+    audio.playClayPop(1);
+    onHint('薄荷糖球已入轨 · 撞响铜钟并滑入左侧拐杖糖双轨过山车…');
   }
 
-  function onPointerDown(hit) {
+  function onPointerDown(hit, pointerNDC) {
     if (!hit) return false;
     const { kind, doorObj } = hit.object.userData;
+
     if (kind === 'cord') {
-      lightsOn = !lightsOn;
-      lightsSpring.target = lightsOn ? 2.45 : 0.22;
-      cordPullSpring.impulse(-4.2);
-      audio.playClayPop(4);
-      if (lightsOn) audio.playBellChime(3);
-      if (lightsOn && doorsOpened >= 2) triggerAwaken();
+      cordDragging = true;
+      cordDragStartY = pointerNDC.y;
+      cordPullSpring.target = 0.28;
       return true;
     }
+
     if (kind === 'advent' && doorObj) {
       doorObj.open = !doorObj.open;
       doorObj.doorSpring.target = doorObj.open ? 1 : 0;
       doorObj.popSpring.target = doorObj.open ? 1 : 0;
-      doorObj.popSpring.impulse(doorObj.open ? 3.5 : -2.0);
-      audio.playClayPop(doorObj.idx);
+      audio.playClayPop(doorObj.idx + 1);
       if (doorObj.open) {
-        audio.playBellChime(doorObj.idx * 2);
         doorsOpened++;
-        if (doorsOpened >= 2 && (lightsOn || candyCompleted)) triggerAwaken();
+        audio.playBellChime(doorObj.idx * 2);
+        cameraRig.focusOn((doorObj.idx - 1) * 0.95, 0.0, 0.2, 0.84, 1.45);
+        if (doorsOpened >= 3) triggerAwaken();
       }
       return true;
     }
-    if (kind === 'chimney' || kind === 'gift') {
+
+    if (kind === 'chimney') {
       startCandyRun();
+      return true;
+    }
+
+    if (kind === 'gift') {
+      if (!candyCompleted && candyRunU < 0) {
+        startCandyRun();
+      } else {
+        triggerAwaken();
+      }
       return true;
     }
     return false;
   }
 
-  function onPointerMove() { return false; }
-  function onPointerUp() {}
+  function onPointerMove(pointerNDC) {
+    if (!cordDragging) return false;
+    const pull = clamp((cordDragStartY - pointerNDC.y) * 1.9 + 0.22, 0.0, 0.82);
+    cordPullSpring.target = pull;
+    return true;
+  }
+
+  function onPointerUp() {
+    if (cordDragging) {
+      cordDragging = false;
+      lightsOn = !lightsOn;
+      lightsSpring.target = lightsOn ? 2.5 : 0.16;
+      cordPullSpring.impulse(-4.5);
+      cordPullSpring.target = 0;
+      audio.playClayPop(lightsOn ? 3 : 0);
+      if (lightsOn) audio.playBellChime(5);
+    }
+  }
 
   function update(dt, t, parallax) {
-    // 12fps quantized stop-motion clock for claymation puppets & hearth fire!
-    const t12 = steppedTime(t, 12);
+    const qTime = steppedTime(t, 12);
 
-    // Pull-cord & fairy lights
-    const pullY = cordPullSpring.update(dt);
-    cordAnchor.position.y = 3.15 + pullY * 0.22;
+    // Elastic pull-cord stretch + fairy light sag response
+    const cPull = cordPullSpring.update(dt);
+    const stretch = Math.max(0.55, 1.0 + cPull * 0.68);
+    cordLine.scale.y = stretch;
+    cordKnobGroup.position.y = -1.08 * stretch;
+
     const bulbGlow = lightsSpring.update(dt);
+    bulbMat.emissiveIntensity = bulbGlow * (0.88 + 0.12 * Math.sin(qTime * 6.0));
     for (let i = 0; i < bulbs.length; i++) {
-      const b = bulbs[i];
-      const twinkle = lightsOn ? 0.8 + 0.25 * Math.sin(t12 * 5.0 + i * 1.3) : 1.0;
-      b.mat.emissiveIntensity = bulbGlow * twinkle;
-      b.mesh.position.y = b.baseY + Math.sin(t * 4.0 + i * 0.6) * Math.abs(pullY) * 0.06;
+      _bulbDummy.position.set(
+        bulbs[i].x,
+        bulbs[i].baseY - Math.max(0, cPull) * (i / 10) * 0.08,
+        bulbs[i].z
+      );
+      _bulbDummy.updateMatrix();
+      bulbInstanced.setMatrixAt(i, _bulbDummy.matrix);
     }
+    bulbInstanced.instanceMatrix.needsUpdate = true;
 
-    // Stop-motion hearth fire dance
-    flameGroup.scale.y = 0.92 + 0.18 * Math.sin(t12 * 11.0);
-    flameGroup.rotation.z = 0.06 * Math.cos(t12 * 8.5);
-    hearthLight.intensity = 1.25 + 0.25 * Math.sin(t12 * 9.0) + bulbGlow * 0.35;
+    // 12fps Stop-Motion Puppets + Saluting Arms + Cuckoo Pendulum!
+    clockPendulum.rotation.z = Math.sin(qTime * 4.2) * 0.28;
 
-    // Advent blind-box doors & 12fps bobbing felt puppets
-    for (const d of adventDoors) {
-      const openV = d.doorSpring.update(dt);
-      const popV = d.popSpring.update(dt);
-      d.hinge.rotation.y = -openV * 2.15;
-      d.puppet.position.z = lerp(-0.14, 0.22, popV);
-      if (d.open) {
-        d.puppet.rotation.z = Math.sin(t12 * 6.2 + d.idx) * 0.14;
-        d.puppet.rotation.y = Math.cos(t12 * 4.5 + d.idx * 2) * 0.26;
-        d.puppet.position.y = 0.05 + Math.abs(Math.sin(t12 * 6.2 + d.idx)) * 0.06;
+    for (let i = 0; i < adventDoors.length; i++) {
+      const d = adventDoors[i];
+      const dv = d.doorSpring.update(dt);
+      const pv = d.popSpring.update(dt);
+      d.hinge.rotation.y = -dv * 2.22;
+      d.puppet.position.z = lerp(-0.10, 0.30, pv);
+      if (pv > 0.2) {
+        d.puppet.rotation.z = Math.sin(qTime * 5.5 + i * 2.1) * 0.12 * pv;
+        d.puppet.position.y = 0.05 + Math.abs(Math.sin(qTime * 6.2 + i)) * 0.065 * pv;
+        if (d.puppet.userData.armPivot) {
+          d.puppet.userData.armPivot.rotation.x = -Math.abs(Math.sin(qTime * 5.5 + i)) * 0.95 * pv;
+        }
       }
     }
 
-    // Rube Goldberg Peppermint Marble Run Kinematics!
-    if (candyRunTime >= 0) {
-      candyRunTime += dt;
-      if (candyRunTime < 0.45) {
-        // Phase 1: Drop down chimney into 3F attic chute
-        const u = candyRunTime / 0.45;
-        rollingCandy.position.set(1.78, lerp(5.15, 3.98, u * u), 0.18);
-      } else if (candyRunTime < 1.75) {
-        // Phase 2: Roll along sloped 3F attic chute, striking all 4 brass bells!
-        const u = (candyRunTime - 0.45) / 1.30;
-        const x = lerp(1.72, -1.52, u);
-        const y = lerp(3.98, 3.52, u) + 0.16;
-        rollingCandy.position.set(x, y, 0.18);
-        rollingCandy.rotation.z += dt * 11.0;
+    // Unbroken Spline Coaster Physics with Exact Arc-Length Rolling!
+    if (candyRunU >= 0 && candyRunU <= 1.0) {
+      // Gravity speed boost on steep S-coaster drop (u = 0.45..0.85)
+      const slopeBoost = candyRunU > 0.44 && candyRunU < 0.86 ? 0.38 : 0.25;
+      candyRunU += dt * slopeBoost;
+      const clampedU = Math.min(1.0, candyRunU);
 
-        for (let i = 0; i < bells.length; i++) {
-          const bx = 1.15 - i * 0.78;
-          if (!bells[i].hitInRun && x <= bx + 0.12) {
-            bells[i].hitInRun = true;
-            bells[i].swing.impulse(9.5);
-            audio.playBellChime(i * 2);
+      marbleSpline.getPoint(clampedU, rollingCandy.position);
+      const ds = rollingCandy.position.distanceTo(prevSplinePos);
+      if (ds > 1e-5) {
+        _tangent.copy(rollingCandy.position).sub(prevSplinePos).normalize();
+        _rollAxis.crossVectors(_upVec, _tangent).normalize();
+        if (_rollAxis.lengthSq() > 0.01) {
+          _dq.setFromAxisAngle(_rollAxis, ds / 0.17);
+          rollingCandy.quaternion.premultiply(_dq);
+        }
+        prevSplinePos.copy(rollingCandy.position);
+      }
+
+      // Check 4 Attic Brass Bells along chute (u < 0.46)
+      if (clampedU < 0.46) {
+        for (let b = 0; b < bells.length; b++) {
+          if (!bells[b].hitInRun && rollingCandy.position.x <= bells[b].x + 0.08) {
+            bells[b].hitInRun = true;
+            bells[b].swing.impulse(-9.2);
+            emitBurst(bells[b].x, bells[b].y, 0.25, 6);
+            audio.playBellChime(b * 2);
           }
         }
-      } else if (candyRunTime < 2.20) {
-        // Phase 3: Drop down left shaft onto 1F domino parlor floor!
-        const u = (candyRunTime - 1.75) / 0.45;
-        const x = lerp(-1.52, -0.82, u);
-        const y = lerp(3.68, 0.34, u * u);
-        rollingCandy.position.set(x, y, 0.18);
-        rollingCandy.rotation.z += dt * 14.0;
-      } else if (candyRunTime < 3.05) {
-        // Phase 4: Topple the 4 cookie dominoes into the ribboned gift box!
-        const u = (candyRunTime - 2.20) / 0.85;
-        rollingCandy.position.set(lerp(-0.82, -0.58, Math.min(1, u * 3)), 0.34, 0.18);
-        for (let i = 0; i < dominoes.length; i++) {
-          if (!dominoes[i].fallen && u >= i * 0.19) {
-            dominoes[i].fallen = true;
-            dominoes[i].spring.target = i === dominoes.length - 1 ? 1.18 : 0.92;
-            audio.playClayPop(i + 1);
-          }
+      } else if (!funnelChimed) {
+        funnelChimed = true;
+        emitBurst(-1.62, 3.48, 0.26, 8);
+        audio.playClayPop(4);
+      }
+    } else if (candyRunU > 1.0) {
+      candyRunU += dt;
+      // Domino Cascade Phase (candyRunU: 1.0 -> 1.85)
+      const domElapsed = candyRunU - 1.0;
+      rollingCandy.visible = false;
+      for (let d = 0; d < dominoes.length; d++) {
+        if (!dominoes[d].fallen && domElapsed >= d * 0.15) {
+          dominoes[d].fallen = true;
+          dominoes[d].spring.target = -1.24;
+          emitBurst(-0.62 + d * 0.44, 0.55, 0.24, 5);
+          audio.playClayPop(d + 2);
         }
-      } else {
-        // Phase 5: Grand Gift Box pops open & awakens Act II Sigil!
-        candyRunTime = -1;
-        rollingCandy.visible = false;
-        readyCandy.scale.setScalar(1.0);
+      }
+      if (domElapsed >= 0.72) {
+        candyRunU = -1;
+        readyCandy.visible = true;
         candyCompleted = true;
         triggerAwaken();
       }
     } else {
-      readyCandy.position.y = 0.64 + Math.sin(t12 * 4.5) * 0.035;
-      readyCandy.rotation.y = t12 * 1.2;
+      readyCandy.position.y = 0.64 + Math.abs(Math.sin(qTime * 3.8)) * 0.06;
+      readyCandy.rotation.y = qTime * 1.4;
     }
+
+    // Update Sugar Burst Particles
+    for (let i = 0; i < burstCount; i++) {
+      if (burstPos[i * 3 + 1] > -10) {
+        burstPos[i * 3] += burstVel[i * 3] * dt;
+        burstPos[i * 3 + 1] += burstVel[i * 3 + 1] * dt;
+        burstPos[i * 3 + 2] += burstVel[i * 3 + 2] * dt;
+        burstVel[i * 3 + 1] -= 4.8 * dt;
+        if (burstPos[i * 3 + 1] < 0.05) burstPos[i * 3 + 1] = -20;
+      }
+    }
+    burstGeo.attributes.position.needsUpdate = true;
 
     for (const b of bells) {
       b.pivot.rotation.z = b.swing.update(dt);
     }
     for (const dm of dominoes) {
-      dm.pivot.rotation.z = -dm.spring.update(dt);
+      dm.pivot.rotation.z = dm.spring.update(dt);
     }
 
-    // Finale Gift Lid & Rising Star Sigil
     const lidV = lidOpenSpring.update(dt);
     giftLidPivot.rotation.z = -lidV * 2.05;
+
     const sigV = sigilRiseSpring.update(dt);
     sigilStar.scale.setScalar(Math.max(0.001, sigV));
-    sigilStar.position.y = lerp(0.45, 1.26, sigV);
+    sigilStar.position.y = lerp(0.45, 1.25, sigV) + Math.sin(t * 2.6) * 0.05 * sigV;
     sigilStar.rotation.y = t * 1.25;
 
-    // Camera rig
-    if (focusTimer > 0) {
-      focusTimer -= dt;
-      if (focusTimer <= 0) {
-        focusOffset.set(0, 0, 0);
-        focusLookOffset.set(0, 0, 0);
-      }
-    }
-    camPosSpring.setTarget(
-      camBasePos.x + parallax.x * 0.95 + focusOffset.x,
-      camBasePos.y + parallax.y * 0.55 + focusOffset.y,
-      camBasePos.z + focusOffset.z
-    );
-    camLookSpring.setTarget(
-      camBaseLook.x + parallax.x * 0.2 + focusLookOffset.x,
-      camBaseLook.y + parallax.y * 0.18 + focusLookOffset.y,
-      camBaseLook.z + focusLookOffset.z
-    );
-    camPosSpring.update(dt);
-    camLookSpring.update(dt);
+    flameGroup.scale.y = 0.88 + 0.20 * Math.sin(qTime * 9.5);
+    hearthLight.intensity = 1.40 + 0.28 * Math.sin(qTime * 8.2);
+
+    cameraRig.update(dt, parallax);
   }
 
   function applyCamera(camera) {
-    camPosSpring.copyTo(camera.position);
-    const target = new THREE.Vector3();
-    camLookSpring.copyTo(target);
-    camera.lookAt(target);
+    cameraRig.apply(camera);
   }
 
-  function setCaptureState(preset = 'hero') {
-    lightsOn = true;
-    lightsSpring.snap(2.45);
-    adventDoors[0].open = true;
-    adventDoors[0].doorSpring.snap(1.0);
-    adventDoors[0].popSpring.snap(1.0);
-    adventDoors[1].open = true;
-    adventDoors[1].doorSpring.snap(1.0);
-    adventDoors[1].popSpring.snap(1.0);
-    if (preset === 'climax') {
-      for (const d of dominoes) d.spring.snap(0.92);
-      lidOpenSpring.snap(1.0);
-      sigilRiseSpring.snap(1.0);
+  function setCaptureState(preset) {
+    if (preset === 'hero' || preset === 'climax') {
+      lightsOn = true;
+      lightsSpring.snap(2.5);
+      adventDoors[0].open = true;
+      adventDoors[0].doorSpring.snap(1);
+      adventDoors[0].popSpring.snap(1);
+      adventDoors[1].open = true;
+      adventDoors[1].doorSpring.snap(1);
+      adventDoors[1].popSpring.snap(1);
+      for (const dm of dominoes) dm.spring.snap(-1.24);
+      awakened = true;
+      candyCompleted = true;
+      lidOpenSpring.snap(1);
+      sigilRiseSpring.snap(1);
     }
-    update(0.016, 3.1, { x: -0.08, y: 0.04 });
+    update(0.016, 2.6, { x: -0.05, y: 0.04 });
   }
 
   return {
@@ -817,9 +1107,19 @@ export function createAct2Clay({ envMap, textures, audio, onAwaken, onHint }) {
     roman: 'ACT II',
     title: '姜饼奇遇屋',
     subtitle: '定格黏土礼盒工坊 · TACTILE CLAYMATION WORKSHOP',
-    defaultHint: '拽动右侧彩灯拉绳 · 敲开编号盲盒门 · 点击烟囱投递薄荷糖球',
-    transTint: new THREE.Color(0xff9a62),
-    postOpts: { bloomStrength: 0.42, bloomThreshold: 0.86, starburst: 0.12, tiltShift: 0.62 },
+    defaultHint: '向下拽动毛毡绒球点亮彩灯 · 敲开盲盒门 · 点击烟囱开启拐杖糖过山车连锁',
+    transTint: new THREE.Color(0xff9d5c),
+    cameraRig,
+    getProgress,
+    getPostOpts: () => ({
+      bloomStrength: 0.42,
+      bloomThreshold: 0.84,
+      starburst: 0.16,
+      focusDist: cameraRig.getFocusDistance(),
+      aperture: 0.48,
+      aoStrength: 0.82,
+      aoRadius: 0.34,
+    }),
     scene,
     interactables,
     onPointerDown,

@@ -1,11 +1,14 @@
-// Synthesized Four-Voice Winter Waltz Quartet & Tactile Foley Engine (Web Audio API, zero external files)
-// All 4 voices share a quantized 3/4 waltz clock (84 BPM) in F Major / D Minor so toggling or
-// awakening acts blends into a rich orchestral music-box arrangement without ever drifting out of phase.
+// Synthesized Four-Voice Winter Waltz Quartet, Spatial Ambience Beds & Tactile Foley Engine
+// Zero external audio files. Features:
+// - 84 BPM 3/4 quantized 4-voice waltz (Celesta/Harp, Marimba/Sleighbells, Swiss Music-Box, Glass Harmonica)
+// - 4 Bespoke Spatial Ambience Room-Tones with 1.2s crossfades:
+//   Act I: Warm study air & subtle candlewick crackle
+//   Act II: Cozy fireplace hearth rumble & crackling wood pops
+//   Act III: 6Hz precision watchmaker escapement balance-wheel pulse
+//   Act IV: Polar glacial singing wind LFO sweep & crystal shimmer
 
 const MIDI_TO_HZ = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
-// 8-bar poetic winter waltz progression (24 beats in 3/4 time)
-// Bars: Fmaj7 | C/E | Dm7 | Am7 | Bbmaj7 | F/A | Gm7 | C7sus4 -> C7
 const CHORDS = [
   [53, 57, 60, 64], // Fmaj7
   [52, 55, 60, 64], // C/E
@@ -17,7 +20,6 @@ const CHORDS = [
   [48, 55, 58, 64], // C7
 ];
 
-// Act III Music-box principal melody (24 quarter-note slots; 0 = sustain/rest)
 const MELODY = [
   77, 0, 76,   79, 0, 72,   74, 0, 72,   69, 0, 72,
   74, 76, 77,  81, 0, 77,   76, 0, 74,   72, 0, 0,
@@ -40,6 +42,8 @@ export class QuartetAudio {
     this.beatIndex = 0;
     this.timerId = null;
     this.noiseBuf = null;
+    this.ambienceBeds = null;
+    this.nextMicroAmbTime = 0;
   }
 
   unlock() {
@@ -51,18 +55,16 @@ export class QuartetAudio {
       this.master = this.ctx.createGain();
       this.master.gain.value = this.muted ? 0 : 0.72;
 
-      // Soft warm limiter/compressor
       const comp = this.ctx.createDynamicsCompressor();
       comp.threshold.value = -14;
       comp.ratio.value = 3.5;
       comp.attack.value = 0.01;
       comp.release.value = 0.25;
 
-      // Algorithmic warm wooden hall impulse response (1.9s)
       this.reverb = this.ctx.createConvolver();
       this.reverb.buffer = this._buildHallIR(1.9, 2.6);
       const revGain = this.ctx.createGain();
-      revGain.gain.value = 0.34;
+      revGain.gain.value = 0.35;
 
       this.dryBus = this.ctx.createGain();
       this.dryBus.gain.value = 0.85;
@@ -73,8 +75,8 @@ export class QuartetAudio {
       comp.connect(this.master);
       this.master.connect(this.ctx.destination);
 
-      // Shared white/pink noise buffer for crisp paper, snow & steam foley
-      const len = this.ctx.sampleRate * 2;
+      // Shared pink/warm noise buffer (3s loopable)
+      const len = this.ctx.sampleRate * 3;
       this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
       const d = this.noiseBuf.getChannelData(0);
       let b0 = 0, b1 = 0, b2 = 0;
@@ -83,8 +85,13 @@ export class QuartetAudio {
         b0 = 0.997 * b0 + w * 0.029;
         b1 = 0.985 * b1 + w * 0.032;
         b2 = 0.950 * b2 + w * 0.048;
-        d[i] = (b0 + b1 + b2 + w * 0.18) * 0.65;
+        // Crossfade endpoints slightly so looping is seamless
+        const env = Math.min(1, i / 1200, (len - i) / 1200);
+        d[i] = (b0 + b1 + b2 + w * 0.16) * 0.65 * env;
       }
+
+      this._initAmbienceBeds();
+      this._applyAmbienceCrossfade();
     }
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
@@ -92,7 +99,56 @@ export class QuartetAudio {
     if (!this.running && this.ctx) {
       this.running = true;
       this.nextBeatTime = this.ctx.currentTime + 0.12;
-      this.timerId = setInterval(() => this._schedule(), 90);
+      this.nextMicroAmbTime = this.ctx.currentTime + 0.20;
+      this.timerId = setInterval(() => this._schedule(), 85);
+    }
+  }
+
+  _initAmbienceBeds() {
+    if (!this.ctx || !this.noiseBuf) return;
+    const makeBed = (filterType, freq, Q, targetGain, withLfo = false) => {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noiseBuf;
+      src.loop = true;
+      const flt = this.ctx.createBiquadFilter();
+      flt.type = filterType;
+      flt.frequency.value = freq;
+      flt.Q.value = Q;
+      const g = this.ctx.createGain();
+      g.gain.value = 0.0001;
+      src.connect(flt);
+      flt.connect(g);
+      g.connect(this.dryBus);
+
+      if (withLfo) {
+        const lfo = this.ctx.createOscillator();
+        const lfoGain = this.ctx.createGain();
+        lfo.frequency.value = 0.14; // slow polar wind breath
+        lfoGain.gain.value = 260;
+        lfo.connect(lfoGain);
+        lfoGain.connect(flt.frequency);
+        lfo.start();
+      }
+      src.start(0, Math.random() * 1.5);
+      return { gain: g, maxGain: targetGain };
+    };
+
+    this.ambienceBeds = {
+      1: makeBed('lowpass', 280, 0.8, 0.018, false),   // Act I: Quiet warm study air
+      2: makeBed('lowpass', 195, 1.2, 0.028, false),   // Act II: Cozy hearth warm rumble
+      3: makeBed('bandpass', 920, 2.2, 0.009, false),  // Act III: Velvet horology room tone
+      4: makeBed('bandpass', 580, 4.8, 0.022, true),   // Act IV: Singing polar aurora wind
+      5: makeBed('lowpass', 340, 0.9, 0.016, false),   // Finale V: Warm pavilion hall air
+    };
+  }
+
+  _applyAmbienceCrossfade() {
+    if (!this.ambienceBeds || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    for (let id = 1; id <= 5; id++) {
+      const bed = this.ambienceBeds[id];
+      const target = id === this.activeAct ? bed.maxGain : 0.0001;
+      bed.gain.gain.setTargetAtTime(target, now, 0.42); // ~1.2s smooth 95% crossfade!
     }
   }
 
@@ -107,7 +163,6 @@ export class QuartetAudio {
         const t = i / length;
         const env = Math.pow(1 - t, decay);
         const w = Math.random() * 2 - 1;
-        // Dampen high frequencies over time like velvet & warm timber
         const damp = 0.22 + 0.55 * (1 - t);
         lp = lp + damp * (w - lp);
         data[i] = lp * env * 0.5;
@@ -126,6 +181,7 @@ export class QuartetAudio {
   setAct(actNum) {
     this.activeAct = actNum;
     this.finaleMode = actNum === 5;
+    this._applyAmbienceCrossfade();
   }
 
   awakenVoice(actNum) {
@@ -141,11 +197,62 @@ export class QuartetAudio {
 
   _schedule() {
     if (!this.ctx || !this.running) return;
-    while (this.nextBeatTime < this.ctx.currentTime + 0.26) {
+    const now = this.ctx.currentTime;
+    while (this.nextBeatTime < now + 0.26) {
       this._playBeat(this.beatIndex, this.nextBeatTime);
       this.nextBeatTime += this.beatDur;
       this.beatIndex = (this.beatIndex + 1) % 24;
     }
+
+    // Schedule delicate act-specific micro-ambience events (escapement ticks / hearth crackles)
+    while (this.nextMicroAmbTime < now + 0.24) {
+      this._scheduleMicroAmbience(this.nextMicroAmbTime);
+      this.nextMicroAmbTime += 1 / 6; // 6Hz watchmaker escapement grid (166.7ms)
+    }
+  }
+
+  _scheduleMicroAmbience(t) {
+    if (this.muted) return;
+    if (this.activeAct === 3) {
+      // Delicate 6Hz Swiss pocket-watch escapement tick-tock!
+      this._escapementTick(t, (Math.round(t * 6) % 2 === 0) ? 4200 : 3650, 0.0085);
+    } else if (this.activeAct === 2 && Math.random() < 0.22) {
+      // Warm random fireplace wood-ember crackle pop!
+      this._hearthCrackle(t, 0.018 + Math.random() * 0.018);
+    } else if (this.activeAct === 1 && Math.random() < 0.07) {
+      // Very subtle candlewick sputter
+      this._hearthCrackle(t, 0.008);
+    }
+  }
+
+  _escapementTick(t, freq, amp) {
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(amp, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.012);
+    o.connect(g);
+    g.connect(this.dryBus);
+    o.start(t);
+    o.stop(t + 0.015);
+  }
+
+  _hearthCrackle(t, amp) {
+    if (!this.noiseBuf) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1400 + Math.random() * 1600;
+    bp.Q.value = 4.5;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(amp, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.028);
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(this.dryBus);
+    src.start(t, Math.random() * 2.0, 0.032);
   }
 
   _playBeat(beatIdx, t) {
@@ -153,14 +260,12 @@ export class QuartetAudio {
     const beatInBar = beatIdx % 3;
     const chord = CHORDS[bar];
 
-    // Voice I (Paper Diorama): Delicate celesta / paper harp arpeggio
     const v1 = this._voiceLevel(1);
     if (v1 > 0.01) {
       const note = chord[beatInBar === 0 ? 1 : beatInBar === 1 ? 2 : 3] + 12;
       this._celestaPluck(MIDI_TO_HZ(note), t, 0.095 * v1, 1.15);
     }
 
-    // Voice II (Clay Workshop): Warm wooden marimba bass & gentle sleigh bell pulse on beat 2 & 3
     const v2 = this._voiceLevel(2);
     if (v2 > 0.01) {
       if (beatInBar === 0) {
@@ -171,7 +276,6 @@ export class QuartetAudio {
       }
     }
 
-    // Voice III (Clockwork Snowglobe): Precision Swiss music-box tine melody
     const v3 = this._voiceLevel(3);
     if (v3 > 0.01) {
       const mNote = MELODY[beatIdx];
@@ -180,7 +284,6 @@ export class QuartetAudio {
       }
     }
 
-    // Voice IV (Aurora Crystal): Ethereal glass harmonica chord pad at bar start
     const v4 = this._voiceLevel(4);
     if (v4 > 0.01 && beatInBar === 0) {
       this._glassPad(MIDI_TO_HZ(chord[2] + 12), t, 0.055 * v4, this.beatDur * 2.9);
@@ -223,7 +326,7 @@ export class QuartetAudio {
     o.type = 'sine';
     oHarm.type = 'sine';
     o.frequency.value = freq;
-    oHarm.frequency.value = freq * 3.98; // classic hollow rosewood 4th harmonic
+    oHarm.frequency.value = freq * 3.98;
     gH.gain.setValueAtTime(amp * 0.25, t);
     gH.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
 
@@ -268,7 +371,7 @@ export class QuartetAudio {
     o.type = 'sine';
     overtone.type = 'sine';
     o.frequency.value = freq;
-    overtone.frequency.value = freq * 5.41; // metallic comb tine ping
+    overtone.frequency.value = freq * 5.41;
 
     gO.gain.setValueAtTime(amp * 0.22, t);
     gO.gain.exponentialRampToValueAtTime(0.0001, t + 0.055);
@@ -295,7 +398,7 @@ export class QuartetAudio {
     o1.type = 'sine';
     o2.type = 'sine';
     o1.frequency.value = freq;
-    o2.frequency.value = freq * 1.003; // gentle shimmer beating
+    o2.frequency.value = freq * 1.003;
     g.gain.setValueAtTime(0.0001, t);
     g.gain.linearRampToValueAtTime(amp, t + dur * 0.35);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
@@ -313,7 +416,6 @@ export class QuartetAudio {
     this.unlock();
     if (!this.ctx || this.muted) return;
     const t = this.ctx.currentTime;
-    // Crisp brittle wax snap + warm welcoming celesta chord
     if (this.noiseBuf) {
       const src = this.ctx.createBufferSource();
       src.buffer = this.noiseBuf;
@@ -322,15 +424,15 @@ export class QuartetAudio {
       bp.frequency.value = 1950;
       bp.Q.value = 2.8;
       const g = this.ctx.createGain();
-      g.gain.setValueAtTime(0.22, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.11);
+      g.gain.setValueAtTime(0.24, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
       src.connect(bp);
       bp.connect(g);
       g.connect(this.dryBus);
-      src.start(t, 0.2, 0.13);
+      src.start(t, 0.2, 0.14);
     }
     [65, 69, 72, 76, 81].forEach((m, idx) => {
-      this._musicBoxTine(MIDI_TO_HZ(m), t + 0.06 + idx * 0.065, 0.085);
+      this._musicBoxTine(MIDI_TO_HZ(m), t + 0.06 + idx * 0.065, 0.088);
     });
   }
 
