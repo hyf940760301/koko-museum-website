@@ -1,226 +1,205 @@
-// Surface Scene (Section 0):
-// - Hemispherical Igloo + Arched Entrance Tunnel built from ~188 beveled frozen-stone/ice blocks (1 InstancedMesh)
-// - Luminous glowing mortar seams + CAD construct scan wave + interactive radial normal hover lift
-// - Craggy windswept permafrost terrain + distant misty polar mountain ridge
-// - Architectural CAD triangular wireframe mesh overlay + vertex numeric index markers + blowing snow particles
+// Scene 0 — Surface Igloo & Polar Mountain Range (1:1 architectural match to F3 IglooScene):
+// - Camera: FOV 30° telephoto at (-13.25, 2.5, 13.25) -> target (0, 1.0, 0), intro swoop from (-14, 21, 14)
+// - High-poly sculpted Spherical Ashlar Igloo + Vaulted Entrance Tunnel (~16,000 tris continuous displaced stone-ice masonry)
+// - Per-brick ID vertex displacement on cursor hover ("exploded" glowing crevices) + CAD geodesic cage + ground triangle patch
+// - Ridged-multifractal polar mountain range + drifting ground blizzard smoke ribbons + snow particles
 
 import * as THREE from '../vendor/three.module.js';
 import { fbm, hash2 } from './noise_tex.js';
 
-function createBeveledBlockGeometry(w, h, d, bevel = 0.038) {
-  const geo = new THREE.BoxGeometry(w, h, d, 3, 3, 3);
-  const pos = geo.attributes.position;
-  // Store normalized local coordinates [-1, 1] in uv2 so fragment shader can render crisp glowing mortar seams!
-  const localNorm = new Float32Array(pos.count * 3);
-  const hw = w * 0.5;
-  const hh = h * 0.5;
-  const hd = d * 0.5;
-
-  for (let i = 0; i < pos.count; i++) {
-    let x = pos.getX(i);
-    let y = pos.getY(i);
-    let z = pos.getZ(i);
-
-    localNorm[i * 3] = x / hw;
-    localNorm[i * 3 + 1] = y / hh;
-    localNorm[i * 3 + 2] = z / hd;
-
-    // Subtle organic corner chamfer + slight rock irregularity
-    const ex = Math.max(0, Math.abs(x) - (hw - bevel)) / bevel;
-    const ey = Math.max(0, Math.abs(y) - (hh - bevel)) / bevel;
-    const ez = Math.max(0, Math.abs(z) - (hd - bevel)) / bevel;
-    const corner = ex * ey + ey * ez + ez * ex;
-    if (corner > 0) {
-      const pull = Math.min(1, corner * 0.42) * bevel * 0.65;
-      x -= Math.sign(x) * pull;
-      y -= Math.sign(y) * pull;
-      z -= Math.sign(z) * pull;
-    }
-    const n = (Math.sin(x * 19.3 + y * 13.7 + z * 23.1) * 0.5 + 0.5 - 0.5) * 0.012;
-    pos.setXYZ(i, x + n, y + n * 0.7, z + n);
+function ridgedFbm(x, y, oct = 5) {
+  let sum = 0;
+  let amp = 0.52;
+  let freq = 1.0;
+  let prev = 1.0;
+  for (let i = 0; i < oct; i++) {
+    const n = 1.0 - Math.abs(fbm(x * freq, y * freq, 2) * 2.0 - 1.0);
+    const sharp = n * n;
+    sum += sharp * amp * prev;
+    prev = sharp;
+    freq *= 2.12;
+    amp *= 0.5;
   }
-  geo.setAttribute('aLocalBox', new THREE.BufferAttribute(localNorm, 3));
-  geo.computeVertexNormals();
-  return geo;
+  return sum;
 }
 
-export function createIglooHeroScene({ envMap, textures, onBlockHoverSound }) {
-  const group = new THREE.Group();
+// Sculpt a high-resolution hemispherical dome or arch mesh into realistic chiseled masonry blocks with deep mortar grooves!
+function buildSculptedIglooMesh(textures, envMap, sharedUniforms) {
+  const R = 2.85;
+  // Entrance tunnel faces toward (-0.52, 0, 0.85) — angled pleasingly to the front-right of camera at (-13.25, 2.5, 13.25)!
+  const tunAngle = -0.42; // azimuth in XZ where atan2(x, z) = -0.42 -> faces (-sin(0.42), cos(0.42)) = (-0.41, 0.91)
+  const tunDir = new THREE.Vector3(Math.sin(tunAngle), 0, Math.cos(tunAngle)).normalize();
+  const tunRight = new THREE.Vector3(tunDir.z, 0, -tunDir.x);
 
-  // ---------------- Lighting ----------------
-  const hemi = new THREE.HemisphereLight(0xeef3ff, 0x5c6474, 1.35);
-  group.add(hemi);
+  // 1. High-resolution Dome Shell (112 x 52 = 11,648 tris)
+  const domeGeo = new THREE.SphereGeometry(R, 112, 52, 0, Math.PI * 2, 0, Math.PI * 0.51);
+  // 2. High-resolution Protruding Vaulted Tunnel (56 x 32)
+  const tunLen = 1.95;
+  const tunRad = 1.08;
+  const tunGeo = new THREE.CylinderGeometry(tunRad, tunRad * 1.04, tunLen, 56, 32, true, -Math.PI * 0.52, Math.PI * 1.04);
+  tunGeo.rotateZ(Math.PI * 0.5);
+  tunGeo.rotateY(tunAngle + Math.PI * 0.5);
+  // Move tunnel forward along tunDir
+  tunGeo.translate(tunDir.x * (R * 0.86 + tunLen * 0.32), 0.12, tunDir.z * (R * 0.86 + tunLen * 0.32));
 
-  const keyDir = new THREE.DirectionalLight(0xf6f9ff, 1.55);
-  keyDir.position.set(-7.5, 11.5, 6.5);
-  group.add(keyDir);
+  // Sculpt Dome vertices into staggered masonry courses
+  const sculptDome = (geo, isTunnel) => {
+    const nonIdx = geo.index ? geo : geo;
+    const pos = nonIdx.attributes.position;
+    const count = pos.count;
+    const seamAttr = new Float32Array(count);
+    const brickCenterAttr = new Float32Array(count * 3);
+    const brickNormAttr = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
 
-  const rimLight = new THREE.DirectionalLight(0xdce8ff, 1.15);
-  rimLight.position.set(6.5, 5.0, -8.5);
-  group.add(rimLight);
+    const v = new THREE.Vector3();
+    const nrm = new THREE.Vector3();
 
-  // Intense inner hearth/portal white energy light inside the igloo dome & tunnel!
-  const innerCoreLight = new THREE.PointLight(0xffffff, 6.5, 9.5, 1.6);
-  innerCoreLight.position.set(0.45, 0.75, 0.45);
-  group.add(innerCoreLight);
+    for (let i = 0; i < count; i++) {
+      v.fromBufferAttribute(pos, i);
 
-  // ---------------- 1. Igloo Block Layout (Dome + Arched Entrance Tunnel) ----------------
-  const R = 2.28;
-  const tunnelAzimuth = 0.68; // ~39 deg facing front-right (matches igloo.inc isometric composition!)
-  const tunnelDirX = Math.sin(tunnelAzimuth);
-  const tunnelDirZ = Math.cos(tunnelAzimuth);
+      let row, col, bricksInRow, uBrick, vBrick, bSeed;
+      if (!isTunnel) {
+        const rXZ = Math.hypot(v.x, v.z);
+        const phi = Math.atan2(Math.max(0, v.y), rXZ); // 0 at base -> pi/2 at crown
+        let theta = Math.atan2(v.x, v.z); // [-pi, pi]
+        if (theta < 0) theta += Math.PI * 2;
 
-  const blocks = []; // { basePos, normal, quat, scale, displacement, velocity, phase }
-  const dummy = new THREE.Object3D();
-  const upVec = new THREE.Vector3(0, 1, 0);
+        // Cut clean arch doorway opening where tunnel joins dome!
+        const dAng = Math.atan2(Math.sin(theta - (tunAngle + Math.PI * 2)), Math.cos(theta - (tunAngle + Math.PI * 2)));
+        if (Math.abs(dAng) < 0.36 && v.y < 1.05) {
+          // Pull doorway vertices slightly inward into dark portal throat
+          v.multiplyScalar(0.84);
+        }
 
-  const ringCount = 8;
-  for (let r = 0; r < ringCount; r++) {
-    const phi = ((r + 0.52) / (ringCount + 0.35)) * (Math.PI * 0.47); // 0 = base, pi/2 = apex
-    const y = Math.sin(phi) * R * 0.94;
-    const ringRad = Math.cos(phi) * R;
-    const circumference = 2 * Math.PI * ringRad;
-    const blockArcLen = 0.56;
-    const count = Math.max(4, Math.round(circumference / blockArcLen));
-    const stagger = (r % 2) * (Math.PI / count);
+        const courses = 9.0;
+        const fRow = (1.0 - phi / (Math.PI * 0.51)) * courses;
+        row = Math.floor(fRow);
+        vBrick = fRow - row;
 
-    for (let j = 0; j < count; j++) {
-      const theta = (j / count) * Math.PI * 2 + stagger;
-      // Carve opening arch on lower 3 rings where entrance tunnel protrudes!
-      let dAng = Math.atan2(Math.sin(theta - tunnelAzimuth), Math.cos(theta - tunnelAzimuth));
-      if (r < 3 && Math.abs(dAng) < 0.36 - r * 0.045) continue;
+        const ringCircum = Math.max(1.8, 2 * Math.PI * Math.cos(phi) * R);
+        bricksInRow = row === 0 ? 4 : Math.max(6, Math.round(ringCircum / 0.78));
+        const stagger = (row % 2) * 0.5;
+        const fCol = (theta / (Math.PI * 2)) * bricksInRow + stagger;
+        col = Math.floor(fCol);
+        uBrick = fCol - col;
+        bSeed = hash2(row * 17.3, (col % bricksInRow) * 11.9);
 
-      const nx = Math.cos(phi) * Math.sin(theta);
-      const ny = Math.sin(phi);
-      const nz = Math.cos(phi) * Math.cos(theta);
+        // Compute approximate center of this brick on the dome for rigid hover pop-out!
+        const cPhi = (1.0 - (row + 0.5) / courses) * (Math.PI * 0.51);
+        const cTheta = (((col + 0.5 - stagger) / bricksInRow) * Math.PI * 2);
+        nrm.set(Math.cos(cPhi) * Math.sin(cTheta), Math.sin(cPhi), Math.cos(cPhi) * Math.cos(cTheta)).normalize();
+        brickCenterAttr[i * 3] = nrm.x * R;
+        brickCenterAttr[i * 3 + 1] = nrm.y * R;
+        brickCenterAttr[i * 3 + 2] = nrm.z * R;
+        brickNormAttr[i * 3] = nrm.x;
+        brickNormAttr[i * 3 + 1] = nrm.y;
+        brickNormAttr[i * 3 + 2] = nrm.z;
+      } else {
+        // Tunnel arch courses (5 rings along tunnel axis, 9 arch stones across)
+        const relX = v.x - tunDir.x * (R * 0.82);
+        const relZ = v.z - tunDir.z * (R * 0.82);
+        const along = relX * tunDir.x + relZ * tunDir.z;
+        const side = relX * tunRight.x + relZ * tunRight.z;
+        const archA = Math.atan2(side, Math.max(0.05, v.y - 0.12));
 
-      const bx = nx * R;
-      const bz = nz * R;
+        const fRow = THREE.MathUtils.clamp(along / tunLen, 0, 0.999) * 5.0;
+        row = Math.floor(fRow);
+        vBrick = fRow - row;
 
-      const actualWidth = (circumference / count) * 0.965;
-      const actualHeight = (R * (Math.PI * 0.48) / ringCount) * 0.955;
-      const actualDepth = 0.36;
+        const stagger = (row % 2) * 0.35;
+        const fCol = ((archA + Math.PI * 0.55) / (Math.PI * 1.1)) * 8.0 + stagger;
+        col = Math.floor(fCol);
+        uBrick = fCol - col;
+        bSeed = hash2(row + 50, col * 7.1);
 
-      dummy.position.set(bx, y + 0.16, bz);
-      dummy.lookAt(bx + nx * 2, y + 0.16 + ny * 2, bz + nz * 2);
+        nrm.set(tunRight.x * Math.sin(archA), Math.cos(archA), tunRight.z * Math.sin(archA)).normalize();
+        brickCenterAttr[i * 3] = v.x;
+        brickCenterAttr[i * 3 + 1] = v.y;
+        brickCenterAttr[i * 3 + 2] = v.z;
+        brickNormAttr[i * 3] = nrm.x;
+        brickNormAttr[i * 3 + 1] = nrm.y;
+        brickNormAttr[i * 3 + 2] = nrm.z;
+      }
 
-      blocks.push({
-        basePos: dummy.position.clone(),
-        normal: new THREE.Vector3(nx, ny, nz).normalize(),
-        quat: dummy.quaternion.clone(),
-        scale: new THREE.Vector3(actualWidth, actualHeight, actualDepth),
-        disp: 0,
-        vel: 0,
-        seed: hash2(r * 13.1, j * 7.7),
-      });
+      // Distance from mortar joint edge [0 at joint -> 0.5 at block center]
+      const edgeU = Math.min(uBrick, 1.0 - uBrick);
+      const edgeV = Math.min(vBrick, 1.0 - vBrick);
+      const jointDist = Math.min(edgeU * 1.35, edgeV);
+
+      // Deep chiseled mortar groove + pillowed organic rock-ice face
+      const groove = THREE.MathUtils.smoothstep(jointDist, 0.018, 0.13);
+      const rockMacro = (fbm(v.x * 1.9 + bSeed * 9.0, v.z * 1.9 + v.y * 1.9, 4) - 0.48) * 0.11;
+      const pillow = Math.pow(groove, 0.55) * (0.12 + bSeed * 0.045) - (1.0 - groove) * 0.095;
+
+      const outDir = isTunnel ? nrm : v.clone().normalize();
+      v.addScaledVector(outDir, pillow + rockMacro * groove);
+      if (!isTunnel) v.y = Math.max(-0.05, v.y);
+      pos.setXYZ(i, v.x, v.y, v.z);
+
+      // Seam glow weight: 1.0 inside deep mortar crevice, 0.0 on block face
+      seamAttr[i] = 1.0 - THREE.MathUtils.smoothstep(jointDist, 0.012, 0.095);
+
+      // Baked weathered charcoal-ice stone palette (matches igloo_color.ktx2 + snow dusting on top!)
+      const snowTop = THREE.MathUtils.clamp((outDir.y - 0.25) * 0.85 + fbm(v.x * 2.2, v.z * 2.2, 3) * 0.35, 0, 1);
+      const baseTone = 0.34 + bSeed * 0.11 + snowTop * 0.38;
+      colors[i * 3] = baseTone * 0.94;
+      colors[i * 3 + 1] = baseTone * 0.97;
+      colors[i * 3 + 2] = Math.min(1.0, baseTone * 1.05);
     }
-  }
 
-  // Capstone 4-quadrant crown blocks (creates the signature glowing cross seam at the top of the dome!)
-  for (let q = 0; q < 4; q++) {
-    const ang = q * (Math.PI * 0.5) + tunnelAzimuth;
-    const cr = 0.24;
-    const bx = Math.sin(ang) * cr;
-    const bz = Math.cos(ang) * cr;
-    dummy.position.set(bx, R * 0.95 + 0.14, bz);
-    dummy.quaternion.setFromAxisAngle(upVec, ang);
-    blocks.push({
-      basePos: dummy.position.clone(),
-      normal: new THREE.Vector3(Math.sin(ang) * 0.18, 0.98, Math.cos(ang) * 0.18).normalize(),
-      quat: dummy.quaternion.clone(),
-      scale: new THREE.Vector3(0.42, 0.24, 0.42),
-      disp: 0,
-      vel: 0,
-      seed: 0.8 + q * 0.05,
-    });
-  }
-
-  // Protruding Arched Entrance Tunnel (4 rings of vaulted blocks facing front-right)
-  const perpX = Math.cos(tunnelAzimuth);
-  const perpZ = -Math.sin(tunnelAzimuth);
-  const tunnelRadius = 0.84;
-  for (let tr = 0; tr < 4; tr++) {
-    const distOut = R * 0.86 + tr * 0.36;
-    const archBlocks = 7;
-    for (let a = 0; a < archBlocks; a++) {
-      const archAng = -Math.PI * 0.46 + (a / (archBlocks - 1)) * (Math.PI * 0.92);
-      const localX = Math.sin(archAng) * tunnelRadius;
-      const localY = Math.cos(archAng) * tunnelRadius * 0.92;
-
-      const wx = tunnelDirX * distOut + perpX * localX;
-      const wz = tunnelDirZ * distOut + perpZ * localX;
-      const wy = localY + 0.14;
-
-      const nx = perpX * Math.sin(archAng) + tunnelDirX * 0.12;
-      const ny = Math.cos(archAng);
-      const nz = perpZ * Math.sin(archAng) + tunnelDirZ * 0.12;
-
-      dummy.position.set(wx, wy, wz);
-      // Align block tangent to arch curve and tunnel axis
-      const mRot = new THREE.Matrix4();
-      const zAxis = new THREE.Vector3(tunnelDirX, 0, tunnelDirZ);
-      const yAxis = new THREE.Vector3(perpX * Math.sin(archAng), Math.cos(archAng), perpZ * Math.sin(archAng)).normalize();
-      const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
-      mRot.makeBasis(xAxis, yAxis, zAxis);
-      dummy.quaternion.setFromRotationMatrix(mRot);
-
-      blocks.push({
-        basePos: dummy.position.clone(),
-        normal: new THREE.Vector3(nx, ny, nz).normalize(),
-        quat: dummy.quaternion.clone(),
-        scale: new THREE.Vector3(0.37, 0.25, 0.34),
-        disp: 0,
-        vel: 0,
-        seed: hash2(tr + 40, a * 3.3),
-      });
-    }
-  }
-
-  const unitBlockGeo = createBeveledBlockGeometry(1, 1, 1, 0.08);
-  const aGlowBoost = new Float32Array(blocks.length);
-  const instGlowAttr = new THREE.InstancedBufferAttribute(aGlowBoost, 1);
-  instGlowAttr.setUsage(THREE.DynamicDrawUsage);
-  unitBlockGeo.setAttribute('aGlowBoost', instGlowAttr);
-
-  const blockUniforms = {
-    uTime: { value: 0 },
-    uConstruct: { value: 0 }, // 0 = bright white construct energy -> 1 = dark frozen stone + glowing mortar seams
+    nonIdx.setAttribute('aSeam', new THREE.BufferAttribute(seamAttr, 1));
+    nonIdx.setAttribute('aBrickCenter', new THREE.BufferAttribute(brickCenterAttr, 3));
+    nonIdx.setAttribute('aBrickNorm', new THREE.BufferAttribute(brickNormAttr, 3));
+    nonIdx.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    nonIdx.computeVertexNormals();
+    return nonIdx;
   };
 
-  const blockMat = new THREE.MeshStandardMaterial({
-    color: 0x5c6370,
-    roughness: 0.68,
-    metalness: 0.12,
-    bumpMap: textures.stoneBumpTex,
-    bumpScale: 0.045,
+  sculptDome(domeGeo, false);
+  sculptDome(tunGeo, true);
+
+  const iglooMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.66,
+    metalness: 0.08,
+    normalMap: textures.iceNormalTex,
+    normalScale: new THREE.Vector2(0.85, 0.85),
     envMap,
-    envMapIntensity: 1.05,
+    envMapIntensity: 1.15,
   });
 
-  blockMat.onBeforeCompile = (shader) => {
-    shader.uniforms.uTime = blockUniforms.uTime;
-    shader.uniforms.uConstruct = blockUniforms.uConstruct;
+  iglooMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = sharedUniforms.uTime;
+    shader.uniforms.uHoverPos = sharedUniforms.uHoverPos;
+    shader.uniforms.uHoverStrength = sharedUniforms.uHoverStrength;
+    shader.uniforms.uConstruct = sharedUniforms.uConstruct;
+
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
         `#include <common>
-        attribute vec3 aLocalBox;
-        attribute float aGlowBoost;
-        varying vec3 vLocalBox;
-        varying vec3 vWorldPosI;
-        varying float vGlowBoost;`
+        attribute float aSeam;
+        attribute vec3 aBrickCenter;
+        attribute vec3 aBrickNorm;
+        uniform vec3 uHoverPos;
+        uniform float uHoverStrength;
+        uniform float uConstruct;
+        varying float vSeam;
+        varying float vExplode;
+        varying vec3 vWorldP;`
       )
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-        vLocalBox = aLocalBox;
-        vGlowBoost = aGlowBoost;
-        vec4 wpI = vec4(transformed, 1.0);
-        #ifdef USE_INSTANCING
-          wpI = instanceMatrix * wpI;
-        #endif
-        wpI = modelMatrix * wpI;
-        vWorldPosI = wpI.xyz;`
+        vSeam = aSeam;
+        float hDist = distance(aBrickCenter, uHoverPos);
+        float hoverPush = pow(clamp(1.0 - hDist / 1.85, 0.0, 1.0), 2.0) * uHoverStrength;
+        float introLift = pow(clamp(1.0 - uConstruct * 1.15, 0.0, 1.0), 2.0) * 0.45;
+        vExplode = hoverPush + introLift;
+        // Displace entire chiseled stone block outward along its masonry normal!
+        transformed += aBrickNorm * (hoverPush * 0.34 + introLift * 0.55);
+        vWorldP = (modelMatrix * vec4(transformed, 1.0)).xyz;`
       );
 
     shader.fragmentShader = shader.fragmentShader
@@ -229,369 +208,396 @@ export function createIglooHeroScene({ envMap, textures, onBlockHoverSound }) {
         `#include <common>
         uniform float uTime;
         uniform float uConstruct;
-        varying vec3 vLocalBox;
-        varying vec3 vWorldPosI;
-        varying float vGlowBoost;`
+        varying float vSeam;
+        varying float vExplode;
+        varying vec3 vWorldP;`
       )
       .replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
-        // Distance to nearest block edge on each face -> creates glowing mortar crevices & wireframe edges!
-        vec3 ab = abs(vLocalBox);
-        float edge2nd = max(min(ab.x, ab.y), max(min(ab.y, ab.z), min(ab.z, ab.x)));
-        float seamMask = smoothstep(0.80, 0.985, edge2nd);
-        float fineWire = smoothstep(0.93, 0.995, edge2nd);
+        float scanY = mix(3.4, -0.6, clamp(uConstruct, 0.0, 1.0));
+        float introBand = smoothstep(scanY - 0.9, scanY + 0.4, vWorldP.y) * (1.0 - smoothstep(0.86, 1.0, uConstruct));
 
-        // Construct intro scan wave from top apex downward
-        float scanHeight = mix(3.2, -0.8, clamp(uConstruct, 0.0, 1.0));
-        float constructGlow = smoothstep(scanHeight - 0.85, scanHeight + 0.55, vWorldPosI.y) * (1.0 - smoothstep(0.88, 1.0, uConstruct));
+        // Subtle living energy in deep mortar joints + intense white burst when hovered/exploded!
+        float pulse = 0.85 + 0.15 * sin(uTime * 1.8 + vWorldP.x * 1.9 + vWorldP.z * 1.7);
+        float jointGlow = vSeam * (0.72 * pulse + vExplode * 3.8 + introBand * 3.2);
+        float blockGlow = vExplode * 0.55 + introBand * 1.8;
 
-        // Warm-cool intense white interior bleed from dome crevices + tunnel mouth
-        float innerDist = length(vWorldPosI - vec3(0.55, 0.65, 0.75));
-        float portalBleed = smoothstep(3.4, 0.6, innerDist) * 0.65;
-
-        float pulse = 0.88 + 0.12 * sin(uTime * 1.9 + vWorldPosI.x * 2.2 + vWorldPosI.z * 1.7);
-        float seamIntensity = (seamMask * (1.35 + portalBleed) + fineWire * 1.45) * pulse;
-        seamIntensity += vGlowBoost * (1.85 + seamMask * 2.2);
-        seamIntensity += constructGlow * 3.4;
-
-        // Darken face centers slightly when settled for crisp stone-block contrast against radiant white seams
-        diffuseColor.rgb *= mix(1.25, 0.72 + 0.28 * vGlowBoost, clamp(uConstruct, 0.0, 1.0));
-        totalEmissiveRadiance += vec3(0.94, 0.97, 1.0) * seamIntensity;`
+        totalEmissiveRadiance += vec3(0.95, 0.98, 1.0) * (jointGlow + blockGlow);`
       );
   };
 
-  const iglooInst = new THREE.InstancedMesh(unitBlockGeo, blockMat, blocks.length);
-  iglooInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  for (let i = 0; i < blocks.length; i++) {
-    const b = blocks[i];
-    dummy.position.copy(b.basePos);
-    dummy.quaternion.copy(b.quat);
-    dummy.scale.copy(b.scale);
-    dummy.updateMatrix();
-    iglooInst.setMatrixAt(i, dummy.matrix);
-  }
-  iglooInst.instanceMatrix.needsUpdate = true;
-  group.add(iglooInst);
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(domeGeo, iglooMat));
+  group.add(new THREE.Mesh(tunGeo, iglooMat));
 
-  // Inner Glowing Core Dome & Entrance Volumetric Portal Glow (prevents seeing empty ground through block gaps)
-  const coreShellGeo = new THREE.SphereGeometry(R * 0.87, 28, 18, 0, Math.PI * 2, 0, Math.PI * 0.5);
-  const coreShellMat = new THREE.ShaderMaterial({
-    uniforms: { uTime: blockUniforms.uTime },
-    vertexShader: `
-      varying vec3 vPos;
-      void main() {
-        vPos = position;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform float uTime;
-      varying vec3 vPos;
-      void main() {
-        float g = 1.65 + 0.25 * sin(uTime * 2.1 + vPos.y * 3.0);
-        gl_FragColor = vec4(vec3(0.95, 0.98, 1.0) * g, 1.0);
-      }
-    `,
-    toneMapped: false,
-  });
-  const coreShell = new THREE.Mesh(coreShellGeo, coreShellMat);
-  coreShell.position.y = 0.08;
-  group.add(coreShell);
-
-  // Glowing arch portal plane inside tunnel entrance
-  const archPortal = new THREE.Mesh(
-    new THREE.CircleGeometry(tunnelRadius * 0.76, 24),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.7, 2.85), toneMapped: false })
+  // Inner luminous white hearth core + glowing tunnel portal throat
+  const innerCore = new THREE.Mesh(
+    new THREE.SphereGeometry(R * 0.84, 32, 20, 0, Math.PI * 2, 0, Math.PI * 0.5),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 2.3, 2.45), toneMapped: false })
   );
-  archPortal.position.set(tunnelDirX * (R * 1.15), 0.58, tunnelDirZ * (R * 1.15));
-  archPortal.lookAt(tunnelDirX * 8, 0.7, tunnelDirZ * 8);
-  group.add(archPortal);
+  group.add(innerCore);
 
-  // Invisible proxy collider for fast 0-overhead pointer hover raycast
-  const hitProxy = new THREE.Mesh(
-    new THREE.SphereGeometry(R * 1.14, 20, 14),
+  const portalMouth = new THREE.Mesh(
+    new THREE.CircleGeometry(tunRad * 0.82, 28),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.7, 2.9), side: THREE.DoubleSide, toneMapped: false })
+  );
+  portalMouth.position.set(tunDir.x * (R * 0.98), 0.52, tunDir.z * (R * 0.98));
+  portalMouth.lookAt(tunDir.x * 10, 0.55, tunDir.z * 10);
+  group.add(portalMouth);
+
+  // Architectural CAD Outer Geodesic Wireframe Cage (matches igloo_cage.drc!)
+  const cageGeo = new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(R * 1.055, 2));
+  const cageMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, depthWrite: false });
+  const cageLines = new THREE.LineSegments(cageGeo, cageMat);
+  cageLines.position.y = 0.15;
+  group.add(cageLines);
+
+  return { group, cageMat, R, tunDir };
+}
+
+export function createScene0Igloo({ envMap, textures, onHoverClink }) {
+  const scene = new THREE.Scene();
+  const bgCol = new THREE.Color(0xa0a5b1);
+  scene.background = bgCol;
+  scene.fog = new THREE.FogExp2(0xa0a5b1, 0.022);
+
+  // Exact camera from F3.cameraOptions(): FOV 30, basePosition (-13.25, 2.5, 13.25) -> (0, 1, 0)
+  const camera = new THREE.PerspectiveCamera(30, 16 / 9, 0.2, 160);
+
+  const hemi = new THREE.HemisphereLight(0xf3f6fc, 0x5c6372, 1.45);
+  scene.add(hemi);
+
+  const sunDir = new THREE.DirectionalLight(0xffffff, 1.65);
+  sunDir.position.set(-16, 18, 12);
+  scene.add(sunDir);
+
+  const fillDir = new THREE.DirectionalLight(0xd2dff2, 0.85);
+  fillDir.position.set(14, 7, -14);
+  scene.add(fillDir);
+
+  const sharedUniforms = {
+    uTime: { value: 0 },
+    uHoverPos: { value: new THREE.Vector3(99, 99, 99) },
+    uHoverStrength: { value: 0 },
+    uConstruct: { value: 0 },
+  };
+
+  // ---------------- 1. Sculpted Igloo + Cage ----------------
+  const iglooBuilt = buildSculptedIglooMesh(textures, envMap, sharedUniforms);
+  scene.add(iglooBuilt.group);
+
+  const hitCollider = new THREE.Mesh(
+    new THREE.SphereGeometry(3.25, 20, 14),
     new THREE.MeshBasicMaterial({ visible: false })
   );
-  hitProxy.position.y = 0.5;
-  group.add(hitProxy);
+  hitCollider.position.y = 0.8;
+  scene.add(hitCollider);
 
-  // ---------------- 2. Rugged Frozen Permafrost Mound & Distant Polar Mountains ----------------
-  const terrainGeo = new THREE.PlaneGeometry(56, 56, 96, 96);
-  terrainGeo.rotateX(-Math.PI * 0.5);
-  const tPos = terrainGeo.attributes.position;
-  const tCol = new Float32Array(tPos.count * 3);
-  for (let i = 0; i < tPos.count; i++) {
-    const x = tPos.getX(i);
-    const z = tPos.getZ(i);
+  // ---------------- 2. Wind-Swept Permafrost Ground & Glowing Ice Patch ----------------
+  const groundGeo = new THREE.PlaneGeometry(90, 90, 128, 128);
+  groundGeo.rotateX(-Math.PI * 0.5);
+  const gPos = groundGeo.attributes.position;
+  const gCol = new Float32Array(gPos.count * 3);
+  for (let i = 0; i < gPos.count; i++) {
+    const x = gPos.getX(i);
+    const z = gPos.getZ(i);
     const d = Math.hypot(x, z);
 
-    // Central raised rocky ice island + surrounding crater depression + distant jagged polar mountain ring
-    const island = Math.exp(-(d * d) / 15.0) * 0.22;
-    const crags = (fbm(x * 0.35 + 11.2, z * 0.35 - 4.7, 4) - 0.48) * 0.62 * Math.min(1, d * 0.22);
-    const mountainRing = Math.max(0, Math.min(1, (d - 11.5) / 14.0));
-    const ridge = Math.pow(fbm(x * 0.11 + 3.1, z * 0.11 + 8.4, 4), 1.65) * 8.2 * mountainRing * mountainRing;
-    const h = island + crags + ridge - 0.08;
-    tPos.setY(i, h);
+    // Raised flat rocky shelf under igloo + wind-carved snow sastrugi + rolling snow dunes
+    const shelf = Math.exp(-(d * d) / 26.0) * 0.24;
+    const sastrugi = (fbm(x * 0.28 + z * 0.12, z * 0.28, 4) - 0.48) * 0.68 * Math.min(1, d * 0.14);
+    const swell = Math.sin(x * 0.09) * Math.cos(z * 0.08) * 0.45 * Math.min(1, d * 0.08);
+    const y = shelf + sastrugi + swell - 0.12;
+    gPos.setY(i, y);
 
-    // Bright icy rim right around the igloo base + cool slate rock crevices
-    const icePatch = Math.exp(-(d * d) / 12.5);
-    const shade = 0.54 + 0.36 * icePatch + Math.min(0.22, Math.max(0, h * 0.06));
-    tCol[i * 3] = shade * 0.95;
-    tCol[i * 3 + 1] = shade * 0.98;
-    tCol[i * 3 + 2] = Math.min(1.0, shade * 1.04);
+    // Glowing snow-ice halo patch around the igloo base (matches ground_glow.ktx2!)
+    const halo = Math.exp(-(d * d) / 22.0);
+    const rockDark = fbm(x * 0.45, z * 0.45, 3);
+    const lum = 0.56 + halo * 0.42 + rockDark * 0.16;
+    gCol[i * 3] = Math.min(1.15, lum * 0.96);
+    gCol[i * 3 + 1] = Math.min(1.18, lum * 0.99);
+    gCol[i * 3 + 2] = Math.min(1.22, lum * 1.04);
   }
-  terrainGeo.setAttribute('color', new THREE.BufferAttribute(tCol, 3));
-  terrainGeo.computeVertexNormals();
+  groundGeo.setAttribute('color', new THREE.BufferAttribute(gCol, 3));
+  groundGeo.computeVertexNormals();
 
-  const terrainMat = new THREE.MeshStandardMaterial({
+  const groundMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
-    roughness: 0.84,
-    metalness: 0.06,
-    bumpMap: textures.frostGrainTex,
-    bumpScale: 0.06,
+    roughness: 0.82,
+    metalness: 0.05,
+    normalMap: textures.rockNormalTex,
+    normalScale: new THREE.Vector2(0.75, 0.75),
     envMap,
-    envMapIntensity: 0.75,
+    envMapIntensity: 0.8,
   });
-  const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
-  group.add(terrainMesh);
+  scene.add(new THREE.Mesh(groundGeo, groundMat));
 
-  // ---------------- 3. Architectural CAD Wireframe Grid & Vertex Index Markers ----------------
-  const cadGeo = new THREE.PlaneGeometry(28, 28, 18, 18);
-  cadGeo.rotateX(-Math.PI * 0.5);
-  const cPos = cadGeo.attributes.position;
-  const vertexMarkers = [];
-  for (let i = 0; i < cPos.count; i++) {
-    let x = cPos.getX(i);
-    let z = cPos.getZ(i);
-    // Jitter interior vertices into irregular architectural triangles like igloo.inc!
+  // ---------------- 3. Distant Ridged-Multifractal Polar Mountain Range ----------------
+  const mtnGeo = new THREE.PlaneGeometry(150, 150, 140, 140);
+  mtnGeo.rotateX(-Math.PI * 0.5);
+  const mPos = mtnGeo.attributes.position;
+  const mCol = new Float32Array(mPos.count * 3);
+  for (let i = 0; i < mPos.count; i++) {
+    const x = mPos.getX(i);
+    const z = mPos.getZ(i);
     const d = Math.hypot(x, z);
-    if (d > 1.2 && d < 13.0) {
-      x += (hash2(i, 2.1) - 0.5) * 0.78;
-      z += (hash2(i, 8.7) - 0.5) * 0.78;
-    }
-    const island = Math.exp(-(d * d) / 15.0) * 0.22;
-    const crags = (fbm(x * 0.35 + 11.2, z * 0.35 - 4.7, 4) - 0.48) * 0.62 * Math.min(1, d * 0.22);
-    const y = island + crags + 0.035;
-    cPos.setXYZ(i, x, y, z);
+    const ringMask = THREE.MathUtils.smoothstep(d, 22.0, 56.0) * (1.0 - THREE.MathUtils.smoothstep(d, 68.0, 75.0));
+    const peak = ridgedFbm(x * 0.045 + 4.2, z * 0.045 - 7.1, 5) * 19.5 * ringMask;
+    mPos.setY(i, peak - 0.6);
 
-    if (d > 3.1 && d < 9.5 && hash2(i, 19.3) > 0.72 && vertexMarkers.length < 26) {
-      vertexMarkers.push({ x, y: y + 0.12, z, cell: vertexMarkers.length % 16 });
-    }
+    // Snow-capped ridges + exposed dark slate cliffs on steep faces
+    const snowRatio = THREE.MathUtils.clamp(peak * 0.09 + fbm(x * 0.2, z * 0.2, 2) * 0.35, 0, 1);
+    const c = THREE.MathUtils.lerp(0.36, 0.88, snowRatio);
+    mCol[i * 3] = c * 0.95;
+    mCol[i * 3 + 1] = c * 0.98;
+    mCol[i * 3 + 2] = c * 1.05;
   }
-
-  const wireGeo = new THREE.WireframeGeometry(cadGeo);
-  const wireMat = new THREE.LineBasicMaterial({
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0.24,
-    depthWrite: false,
-  });
-  const cadWire = new THREE.LineSegments(wireGeo, wireMat);
-  group.add(cadWire);
-  cadGeo.dispose();
-
-  // Floating subtle sky geodesic wireframe dome (visible in igloo.inc's upper atmosphere!)
-  const skyDomeWireGeo = new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(19, 2));
-  const skyDomeWire = new THREE.LineSegments(
-    skyDomeWireGeo,
-    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.09, depthWrite: false })
+  mtnGeo.setAttribute('color', new THREE.BufferAttribute(mCol, 3));
+  mtnGeo.computeVertexNormals();
+  scene.add(
+    new THREE.Mesh(
+      mtnGeo,
+      new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 0.88,
+        metalness: 0.04,
+        envMap,
+        envMapIntensity: 0.65,
+      })
+    )
   );
-  skyDomeWire.position.y = 1.5;
-  group.add(skyDomeWire);
 
-  // Vertex numeric labels rendered in a single InstancedMesh draw call!
-  const labelPlane = new THREE.PlaneGeometry(0.32, 0.32);
-  const cellOffsets = new Float32Array(vertexMarkers.length * 2);
-  for (let i = 0; i < vertexMarkers.length; i++) {
-    const c = vertexMarkers[i].cell;
-    cellOffsets[i * 2] = (c % 4) * 0.25;
-    cellOffsets[i * 2 + 1] = 0.75 - Math.floor(c / 4) * 0.25;
+  // ---------------- 4. Ground CAD Triangle Patch & Vertex Number Indices ----------------
+  const patchGeo = new THREE.RingGeometry(2.9, 12.5, 28, 5);
+  patchGeo.rotateX(-Math.PI * 0.5);
+  const pPos = patchGeo.attributes.position;
+  const markers = [];
+  for (let i = 0; i < pPos.count; i++) {
+    let x = pPos.getX(i) + (hash2(i, 3.1) - 0.5) * 0.55;
+    let z = pPos.getZ(i) + (hash2(i, 9.7) - 0.5) * 0.55;
+    const d = Math.hypot(x, z);
+    const y = Math.exp(-(d * d) / 26.0) * 0.24 + (fbm(x * 0.28 + z * 0.12, z * 0.28, 4) - 0.48) * 0.68 * Math.min(1, d * 0.14) - 0.06;
+    pPos.setXYZ(i, x, y, z);
+    if (d > 3.6 && d < 10.5 && hash2(i, 21.4) > 0.72 && markers.length < 22) {
+      markers.push({ x, y: y + 0.14, z, cell: markers.length % 16 });
+    }
   }
-  labelPlane.setAttribute('aCellUv', new THREE.InstancedBufferAttribute(cellOffsets, 2));
+  const patchWire = new THREE.LineSegments(
+    new THREE.WireframeGeometry(patchGeo),
+    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.20, depthWrite: false })
+  );
+  scene.add(patchWire);
+  patchGeo.dispose();
 
-  const markerMat = new THREE.ShaderMaterial({
-    uniforms: {
-      tAtlas: { value: textures.numAtlasTex },
-      uOpacity: { value: 0.68 },
-    },
-    vertexShader: `
-      attribute vec2 aCellUv;
-      varying vec2 vUvCell;
-      void main() {
-        vUvCell = uv * 0.25 + aCellUv;
-        vec4 mvCenter = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-        mvCenter.xy += position.xy;
-        gl_Position = projectionMatrix * mvCenter;
-      }
-    `,
-    fragmentShader: `
-      uniform sampler2D tAtlas;
-      uniform float uOpacity;
-      varying vec2 vUvCell;
-      void main() {
-        vec4 c = texture2D(tAtlas, vUvCell);
-        if (c.a < 0.08) discard;
-        gl_FragColor = vec4(vec3(1.0), c.a * uOpacity);
-      }
-    `,
-    transparent: true,
-    depthWrite: false,
-  });
-  const markerInst = new THREE.InstancedMesh(labelPlane, markerMat, vertexMarkers.length);
-  for (let i = 0; i < vertexMarkers.length; i++) {
-    dummy.position.set(vertexMarkers[i].x, vertexMarkers[i].y, vertexMarkers[i].z);
-    dummy.rotation.set(0, 0, 0);
-    dummy.scale.set(1, 1, 1);
+  // Single-InstancedMesh Vertex Numbers (54, 83, 96...)
+  const numPlane = new THREE.PlaneGeometry(0.38, 0.38);
+  const cellUv = new Float32Array(markers.length * 2);
+  for (let i = 0; i < markers.length; i++) {
+    const c = markers[i].cell;
+    cellUv[i * 2] = (c % 4) * 0.25;
+    cellUv[i * 2 + 1] = 0.75 - Math.floor(c / 4) * 0.25;
+  }
+  numPlane.setAttribute('aCell', new THREE.InstancedBufferAttribute(cellUv, 2));
+  const numInst = new THREE.InstancedMesh(
+    numPlane,
+    new THREE.ShaderMaterial({
+      uniforms: { tAtlas: { value: textures.numAtlasTex }, uOpacity: { value: 0.62 } },
+      vertexShader: `
+        attribute vec2 aCell;
+        varying vec2 vCellUv;
+        void main() {
+          vCellUv = uv * 0.25 + aCell;
+          vec4 mv = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+          mv.xy += position.xy;
+          gl_Position = projectionMatrix * mv;
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tAtlas;
+        uniform float uOpacity;
+        varying vec2 vCellUv;
+        void main() {
+          vec4 c = texture2D(tAtlas, vCellUv);
+          if (c.a < 0.08) discard;
+          gl_FragColor = vec4(vec3(1.0), c.a * uOpacity);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+    }),
+    markers.length
+  );
+  const dummy = new THREE.Object3D();
+  markers.forEach((m, idx) => {
+    dummy.position.set(m.x, m.y, m.z);
     dummy.updateMatrix();
-    markerInst.setMatrixAt(i, dummy.matrix);
-  }
-  markerInst.instanceMatrix.needsUpdate = true;
-  group.add(markerInst);
+    numInst.setMatrixAt(idx, dummy.matrix);
+  });
+  numInst.instanceMatrix.needsUpdate = true;
+  scene.add(numInst);
 
-  // ---------------- 4. Polar Blowing Snow & Data Dust Particles ----------------
-  const snowCount = 520;
+  // ---------------- 5. Drifting Ground Blizzard Smoke Wisps & Snowflakes ----------------
+  const smokeCount = 22;
+  const smokePlane = new THREE.PlaneGeometry(6.5, 2.8);
+  const smokeInst = new THREE.InstancedMesh(
+    smokePlane,
+    new THREE.MeshBasicMaterial({
+      map: textures.smokeTex,
+      color: 0xe6ebf5,
+      transparent: true,
+      opacity: 0.22,
+      depthWrite: false,
+    }),
+    smokeCount
+  );
+  const smokeData = [];
+  for (let i = 0; i < smokeCount; i++) {
+    smokeData.push({
+      x: (Math.random() - 0.5) * 26,
+      y: 0.45 + Math.random() * 1.4,
+      z: (Math.random() - 0.5) * 22,
+      speed: 0.7 + Math.random() * 0.9,
+      scale: 0.8 + Math.random() * 0.9,
+    });
+  }
+  scene.add(smokeInst);
+
+  // Blowing snow particles
   const snowGeo = new THREE.BufferGeometry();
-  const snowPos = new Float32Array(snowCount * 3);
-  const snowSeed = new Float32Array(snowCount * 2);
-  for (let i = 0; i < snowCount; i++) {
-    snowPos[i * 3] = (Math.random() - 0.5) * 22;
-    snowPos[i * 3 + 1] = Math.random() * 6.5;
-    snowPos[i * 3 + 2] = (Math.random() - 0.5) * 22;
-    snowSeed[i * 2] = 0.4 + Math.random() * 0.9;
+  const snowCnt = 600;
+  const snowPos = new Float32Array(snowCnt * 3);
+  const snowSeed = new Float32Array(snowCnt * 2);
+  for (let i = 0; i < snowCnt; i++) {
+    snowPos[i * 3] = (Math.random() - 0.5) * 32;
+    snowPos[i * 3 + 1] = Math.random() * 9.0;
+    snowPos[i * 3 + 2] = (Math.random() - 0.5) * 32;
+    snowSeed[i * 2] = 0.5 + Math.random();
     snowSeed[i * 2 + 1] = Math.random() * 6.283;
   }
   snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
   snowGeo.setAttribute('aSeed', new THREE.BufferAttribute(snowSeed, 2));
+  scene.add(
+    new THREE.Points(
+      snowGeo,
+      new THREE.ShaderMaterial({
+        uniforms: { uTime: sharedUniforms.uTime, tSprite: { value: textures.smokeTex } },
+        vertexShader: `
+          attribute vec2 aSeed;
+          uniform float uTime;
+          varying float vAlpha;
+          void main() {
+            vec3 p = position;
+            p.x = mod(p.x + uTime * 2.1 * aSeed.x + 16.0, 32.0) - 16.0;
+            p.y = mod(p.y - uTime * 0.55 * aSeed.x, 9.0);
+            p.z += sin(uTime + aSeed.y) * 0.35;
+            vec4 mv = modelViewMatrix * vec4(p, 1.0);
+            gl_PointSize = clamp((24.0 * aSeed.x) / max(-mv.z, 1.0), 1.5, 5.5);
+            vAlpha = smoothstep(28.0, 6.0, -mv.z) * 0.55;
+            gl_Position = projectionMatrix * mv;
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D tSprite;
+          varying float vAlpha;
+          void main() {
+            vec4 c = texture2D(tSprite, gl_PointCoord);
+            if (c.a < 0.05) discard;
+            gl_FragColor = vec4(vec3(1.0), c.a * vAlpha);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+      })
+    )
+  );
 
-  const snowMat = new THREE.ShaderMaterial({
-    uniforms: {
-      uTime: blockUniforms.uTime,
-      tSprite: { value: textures.particleTex },
-    },
-    vertexShader: `
-      attribute vec2 aSeed;
-      uniform float uTime;
-      varying float vAlpha;
-      void main() {
-        vec3 p = position;
-        p.x = mod(p.x + uTime * (1.35 * aSeed.x) + 11.0, 22.0) - 11.0;
-        p.y = mod(p.y - uTime * (0.38 * aSeed.x) + sin(uTime + aSeed.y) * 0.18, 6.5);
-        p.z += cos(uTime * 0.8 + aSeed.y) * 0.28;
-        vec4 mv = modelViewMatrix * vec4(p, 1.0);
-        gl_PointSize = clamp((16.0 * aSeed.x) / max(-mv.z, 1.0), 1.5, 6.0);
-        vAlpha = smoothstep(16.0, 4.0, -mv.z) * 0.65;
-        gl_Position = projectionMatrix * mv;
+  // ---------------- Camera & Hover Update (Exact F3 Timeline Curve!) ----------------
+  const introPos = new THREE.Vector3(-14, 21, 14);
+  const introTarget = new THREE.Vector3(0, 0.5, 0);
+  const tlPos = new THREE.Vector3();
+  const tlTarget = new THREE.Vector3();
+  const finalCamPos = new THREE.Vector3();
+  const finalTarget = new THREE.Vector3();
+  const hoverTargetPos = new THREE.Vector3(99, 99, 99);
+  let hoverTargetStrength = 0;
+  let lastClink = 0;
+
+  function setPointerRaycast(raycaster, nowSec) {
+    const hits = raycaster.intersectObject(hitCollider, false);
+    if (hits.length > 0) {
+      hoverTargetPos.copy(hits[0].point);
+      hoverTargetStrength = 1.0;
+      if (nowSec - lastClink > 0.16 && onHoverClink) {
+        lastClink = nowSec;
+        onHoverClink();
       }
-    `,
-    fragmentShader: `
-      uniform sampler2D tSprite;
-      varying float vAlpha;
-      void main() {
-        vec4 s = texture2D(tSprite, gl_PointCoord);
-        if (s.a < 0.05) discard;
-        gl_FragColor = vec4(vec3(1.0), s.a * vAlpha);
-      }
-    `,
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  group.add(new THREE.Points(snowGeo, snowMat));
-
-  // ---------------- 5. Interactive Hover Physics & 3D Telemetry Anchors ----------------
-  const hoverWorldPoint = new THREE.Vector3(999, 999, 999);
-  let hoverActive = false;
-  let lastClinkTime = 0;
-
-  // Pick 3 representative blocks on top-left, crown-right, and entrance arch for CAD callout leader lines
-  const anchorIndices = [
-    Math.min(blocks.length - 1, Math.floor(blocks.length * 0.34)),
-    Math.min(blocks.length - 1, Math.floor(blocks.length * 0.58)),
-    Math.min(blocks.length - 1, blocks.length - 10),
-  ];
-  const anchorWorldOut = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
-
-  function setHoverPoint(worldPt, nowSec) {
-    if (worldPt) {
-      hoverWorldPoint.copy(worldPt);
-      hoverActive = true;
-      if (nowSec - lastClinkTime > 0.14 && onBlockHoverSound) {
-        lastClinkTime = nowSec;
-        onBlockHoverSound();
-      }
-    } else {
-      hoverActive = false;
+      return true;
     }
+    hoverTargetStrength = 0.0;
+    return false;
   }
 
-  function update(dt, time, constructProgress) {
-    blockUniforms.uTime.value = time;
-    blockUniforms.uConstruct.value = constructProgress;
-    wireMat.opacity = THREE.MathUtils.lerp(0.62, 0.22, constructProgress);
-    markerMat.uniforms.uOpacity.value = THREE.MathUtils.lerp(0.95, 0.58, constructProgress);
+  function update(dt, time, progress, introWeight, pointerNDC) {
+    sharedUniforms.uTime.value = time;
+    sharedUniforms.uConstruct.value = introWeight;
+    sharedUniforms.uHoverPos.value.lerp(hoverTargetPos, Math.min(1, dt * 12));
+    sharedUniforms.uHoverStrength.value += (hoverTargetStrength - sharedUniforms.uHoverStrength.value) * Math.min(1, dt * 9);
 
-    let matrixDirty = false;
-    for (let i = 0; i < blocks.length; i++) {
-      const b = blocks[i];
-      // Gentle idle polar breathing + interactive radial pointer displacement
-      let targetDisp = Math.sin(time * 1.35 + b.seed * 12.0) * 0.012;
-      if (hoverActive) {
-        const dx = b.basePos.x - hoverWorldPoint.x;
-        const dy = b.basePos.y - hoverWorldPoint.y;
-        const dz = b.basePos.z - hoverWorldPoint.z;
-        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist < 1.45) {
-          const falloff = Math.pow(1 - dist / 1.45, 2.0);
-          targetDisp += falloff * 0.24;
-        }
-      }
-      // Construct assembly float-in offset during first 1.8 seconds
-      if (constructProgress < 0.999) {
-        const cOff = Math.max(0, 1 - constructProgress * 1.15 - b.seed * 0.15);
-        targetDisp += cOff * cOff * 0.55;
-      }
+    iglooBuilt.cageMat.opacity = THREE.MathUtils.lerp(0.55, 0.18, introWeight);
 
-      const force = (targetDisp - b.disp) * 115 - b.vel * 14;
-      b.vel += force * dt;
-      const nextDisp = b.disp + b.vel * dt;
-      if (Math.abs(nextDisp - b.disp) > 0.0002 || constructProgress < 0.999) {
-        b.disp = nextDisp;
-        dummy.position.copy(b.basePos).addScaledVector(b.normal, b.disp);
-        dummy.quaternion.copy(b.quat);
-        dummy.scale.copy(b.scale);
-        dummy.updateMatrix();
-        iglooInst.setMatrixAt(i, dummy.matrix);
-        aGlowBoost[i] = Math.min(1.0, Math.max(0, (b.disp - 0.015) * 4.2));
-        matrixDirty = true;
-      }
+    // Exact F3.createTimeline() keyframe interpolation!
+    // First half [0 -> 0.5]: camera descends from y = 11.5 (target y = 15) down to settled hero (-13.25, 2.5, 13.25) -> (0, 1, 0)
+    // Second half [0.5 -> 1.0]: camera pulls back toward (-15.25, 2.5, 23.25)
+    const p1 = THREE.MathUtils.clamp(progress / 0.5, 0, 1);
+    const easeOut1 = 1 - Math.pow(1 - p1, 2.2);
+    const p2 = THREE.MathUtils.clamp((progress - 0.35) / 0.65, 0, 1);
+    const easeInOut2 = p2 < 0.5 ? 2 * p2 * p2 : 1 - Math.pow(-2 * p2 + 2, 2) / 2;
+
+    tlPos.set(
+      -13.25 - 2.0 * easeInOut2,
+      THREE.MathUtils.lerp(11.5, 2.5, easeOut1),
+      13.25 + 10.0 * easeInOut2
+    );
+    tlTarget.set(0, THREE.MathUtils.lerp(15.0, 1.0, easeOut1), 0);
+
+    finalCamPos.lerpVectors(introPos, tlPos, introWeight);
+    finalTarget.lerpVectors(introTarget, tlTarget, introWeight);
+
+    // Subtle pointer displacement (0.07, 0.025) + polar breeze micro-shake
+    finalCamPos.x += pointerNDC.x * 0.45 + Math.sin(time * 0.7) * 0.04;
+    finalCamPos.y += pointerNDC.y * 0.22 + Math.cos(time * 0.55) * 0.03;
+
+    camera.position.copy(finalCamPos);
+    camera.lookAt(finalTarget);
+
+    // Update ground blizzard smoke ribbons facing camera
+    for (let i = 0; i < smokeCount; i++) {
+      const s = smokeData[i];
+      let x = ((s.x + time * s.speed + 13) % 26) - 13;
+      dummy.position.set(x, s.y, s.z);
+      dummy.quaternion.copy(camera.quaternion);
+      dummy.scale.setScalar(s.scale);
+      dummy.updateMatrix();
+      smokeInst.setMatrixAt(i, dummy.matrix);
     }
+    smokeInst.instanceMatrix.needsUpdate = true;
+  }
 
-    if (matrixDirty) {
-      iglooInst.instanceMatrix.needsUpdate = true;
-      instGlowAttr.needsUpdate = true;
-    }
-
-    skyDomeWire.rotation.y = time * 0.018;
-
-    for (let k = 0; k < 3; k++) {
-      const b = blocks[anchorIndices[k]];
-      anchorWorldOut[k]
-        .copy(b.basePos)
-        .addScaledVector(b.normal, b.disp + 0.16)
-        .applyMatrix4(group.matrixWorld);
-    }
+  function resize(aspect) {
+    camera.aspect = aspect;
+    camera.zoom = Math.min(1, aspect * 1.25);
+    camera.updateProjectionMatrix();
   }
 
   return {
-    group,
-    hitProxy,
-    setHoverPoint,
+    scene,
+    camera,
+    height: 2.35,
+    initialScrollAutocenter: 0.495,
+    finalScrollAutocenter: 0.495,
+    setPointerRaycast,
     update,
-    getAnchors: () => [
-      { pos: anchorWorldOut[0], code: 'BLK_04 // 7.6', sub: 'TEMP -18.4°C' },
-      { pos: anchorWorldOut[1], code: 'CRWN_N // 12.7', sub: 'LUMEN 99.2%' },
-      { pos: anchorWorldOut[2], code: 'ARCH_E // 8.5', sub: 'PORTAL_OPEN' },
-    ],
+    resize,
   };
 }

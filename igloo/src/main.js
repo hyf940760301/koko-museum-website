@@ -1,743 +1,589 @@
-// Igloo Inc. 1:1 Clean-Room Polar WebGL Director
-// - Non-blocking micro-sliced boot (<60ms window.onload, smooth ASCII preloader -> CAD Construct wave)
-// - Continuous spring-damped vertical scroll rig descending from Igloo Surface (y=0) through 3 Subterranean Relic Vaults (y=-13, -26, -39) to Manifesto (s=4)
-// - Real-time 3D-to-2D SVG leader lines & floating CAD telemetry callout boxes
-// - Monospace text-scramble decoding effects, portfolio dossier inspector & procedural polar audio
+// Igloo, Inc. — Clean-Room High-Poly WebGL2 Experience (1:1 Architectural & Interactive Parity)
+// - Non-blocking micro-sliced boot (< 5ms top-level module execution) with ASCII preloader
+// - Infinite modulo 3-scene scroll controller (Scene0: Igloo -> Scene1: Cubes -> Scene2: Entry -> wraps seamlessly back to Scene0!)
+// - Diagonal Voronoi ice-fracture dual-FBO transitions + 1.4s gentle auto-center settle
+// - Interactive click-to-explore frost portal into DetailScene (2D GPU mouseSim fluid particle chamber)
 
 import * as THREE from '../vendor/three.module.js';
-import { buildPolarEnvironment, buildPolarTextures } from './noise_tex.js';
-import { createIglooHeroScene } from './igloo_hero.js';
-import { createRelicChambers } from './relic_chambers.js';
-import { PolarPostPipeline } from './post.js';
-import { PolarAudio } from './audio.js';
+import { buildPolarTextures, buildPolarEnvironments } from './noise_tex.js';
+import { createScene0Igloo } from './igloo_hero.js';
+import { createScene1Cubes, PORTFOLIO_ITEMS } from './scene_cubes.js';
+import { createScene2Entry, SOCIAL_CHANNELS } from './scene_entry.js';
+import { createDetailScene } from './scene_detail.js';
+import { createCompositorPipeline } from './post.js';
+import { createPolarAudio } from './audio.js';
 
-const Q = new URLSearchParams(location.search);
-const CAPTURE = Q.has('capture');
-
-const SECTIONS = [
-  {
-    id: 0,
-    watermark: 'IGLOO_CONSTRUCT',
-    prompt: 'SCROLL TO DESCEND INTO THE IGLOO',
-    camPos: new THREE.Vector3(4.35, 3.55, 6.25),
-    lookAt: new THREE.Vector3(0.15, 0.72, 0.15),
-    fov: 38,
-    fogColor: 0xa0a5b1,
-    fogDensity: 0.048,
-  },
-  {
-    id: 1,
-    code: 'VAULT_01 // LICENSING_INFRA',
-    title: 'OVERPASS IP',
-    tagline: 'MODULAR ONCHAIN INTELLECTUAL PROPERTY LICENSING INFRASTRUCTURE',
-    watermark: 'OVERPASS_IP',
-    prompt: 'CLICK SPEC OR SCROLL FOR ABSTRACT',
-    camPos: new THREE.Vector3(0.0, -12.85, 5.15),
-    lookAt: new THREE.Vector3(0.0, -13.0, 0.0),
-    fov: 38,
-    fogColor: 0x9299a8,
-    fogDensity: 0.062,
-    dossier: {
-      code: 'SPEC_SHEET // 01 · OVERPASS_IP',
-      title: 'OVERPASS IP',
-      lead: 'Verifiable onchain intellectual property licensing built to turn community-held digital characters into global retail franchises.',
-      metrics: [
-        { k: 'ARCHITECTURE', v: 'MODULAR_ONCHAIN' },
-        { k: 'RETAIL_DOORS', v: '10,000+' },
-        { k: 'SETTLEMENT', v: 'REALTIME_ROYALTY' },
-      ],
-      body: 'OverpassIP bridges Web3 native communities and mainstream consumer brands. Holders submit, verify, and license character rights directly through transparent smart-contract registries with automated royalty routing.',
-      linkLabel: 'EXPLORE OVERPASS ECOSYSTEM ↗',
-      url: 'https://www.igloo.inc',
-    },
-  },
-  {
-    id: 2,
-    code: 'VAULT_02 // CONSUMER_L2',
-    title: 'ABSTRACT',
-    tagline: 'THE CONSUMER CRYPTO BLOCKCHAIN POWERED BY ZK CRYPTOGRAPHY & CULTURE',
-    watermark: 'ABSTRACT_L2',
-    prompt: 'SCROLL DOWN TO PUDGY PENGUINS LAB',
-    camPos: new THREE.Vector3(0.0, -25.95, 5.35),
-    lookAt: new THREE.Vector3(0.0, -26.0, -0.35),
-    fov: 40,
-    fogColor: 0x9aa4b5,
-    fogDensity: 0.052,
-    dossier: {
-      code: 'SPEC_SHEET // 02 · ABSTRACT_CHAIN',
-      title: 'ABSTRACT',
-      lead: 'A consumer-first Ethereum Layer-2 engineered from the ground up for seamless onboarding, culture, and mass distribution.',
-      metrics: [
-        { k: 'PROOFS', v: 'ZK_STACK_VALIDITY' },
-        { k: 'WALLET_UX', v: 'NATIVE_AA_PASSKEY' },
-        { k: 'LATENCY', v: 'SUB_SECOND' },
-      ],
-      body: 'Abstract eliminates seed phrases and gas friction via native account abstraction while anchoring security to Ethereum through zero-knowledge validity proofs—powering the next generation of consumer apps.',
-      linkLabel: 'DISCOVER ABSTRACT CHAIN ↗',
-      url: 'https://www.igloo.inc',
-    },
-  },
-  {
-    id: 3,
-    code: 'VAULT_03 // GLOBAL_IP',
-    title: 'PUDGY PENGUINS',
-    tagline: 'THE FACE OF CRYPTO — ONBOARDING MILLIONS THROUGH TOYS, CONTENT & PUDGY WORLD',
-    watermark: 'PUDGY_HUDDLE',
-    prompt: 'USE < > ARROWS TO SPIN POINT-CLOUD · SCROLL FOR MANIFESTO',
-    camPos: new THREE.Vector3(0.0, -38.75, 4.95),
-    lookAt: new THREE.Vector3(0.0, -39.05, 0.0),
-    fov: 38,
-    fogColor: 0x8d95a5,
-    fogDensity: 0.058,
-    dossier: {
-      code: 'SPEC_SHEET // 03 · PUDGY_PENGUINS',
-      title: 'PUDGY PENGUINS',
-      lead: 'Born as 8,888 genesis collectibles and scaled into a household global character brand spanning physical retail, animation, and open-world gaming.',
-      metrics: [
-        { k: 'GENESIS_SUPPLY', v: '8,888_UNITS' },
-        { k: 'SOCIAL_VIEWS', v: '50B+_IMPRESSIONS' },
-        { k: 'TOYS_SOLD', v: '1.5M+_UNITS' },
-      ],
-      body: 'From Walmart and Target shelves worldwide into Pudgy World on Abstract, Pudgy Penguins pioneers a new consumer flywheel where physical joy seamlessly unlocks digital ownership.',
-      linkLabel: 'VISIT PUDGY PENGUINS ↗',
-      url: 'https://www.igloo.inc',
-    },
-  },
-  {
-    id: 4,
-    watermark: 'IGLOO_MANIFESTO',
-    prompt: 'END OF POLAR SHAFT // SCROLL UP TO ASCEND',
-    camPos: new THREE.Vector3(0.0, -42.5, 4.2),
-    lookAt: new THREE.Vector3(0.0, -43.5, 0.0),
-    fov: 40,
-    fogColor: 0x828999,
-    fogDensity: 0.075,
-  },
+const ASCII_FRAMES = [
+  '--===+++==',
+  '---===+++=',
+  '=----===++',
+  '+=----===+',
+  '++=----===',
+  '+++=----==',
+  '==+++=----',
+  '===+++=---',
 ];
 
-// ---------------- DOM Elements ----------------
-const body = document.body;
-const canvas = document.getElementById('stage');
-const elWatermark = document.getElementById('bg-watermark');
-const svgLeader = document.getElementById('leader-svg');
-const elCalloutLayer = document.getElementById('callout-layer');
+const loaderEl = document.getElementById('loader');
+const loaderAsciiEl = document.getElementById('loader-ascii');
+let asciiIdx = 0;
+const asciiTimer = setInterval(() => {
+  asciiIdx = (asciiIdx + 1) % ASCII_FRAMES.length;
+  if (loaderAsciiEl) loaderAsciiEl.textContent = ASCII_FRAMES[asciiIdx];
+}, 85);
 
-const btnLogo = document.getElementById('btn-logo');
-const btnManifesto = document.getElementById('btn-manifesto');
-const btnAudio = document.getElementById('btn-audio');
-const elCipher1 = document.getElementById('cipher-line-1');
-const elCipher2 = document.getElementById('cipher-line-2');
-
-const elChamberIdx = document.getElementById('chamber-index');
-const elChamberTitle = document.getElementById('chamber-title');
-const elChamberTag = document.getElementById('chamber-tagline');
-const btnOpenDossier = document.getElementById('btn-open-dossier');
-const btnPrevChamber = document.getElementById('btn-prev-chamber');
-const btnNextChamber = document.getElementById('btn-next-chamber');
-
-const elDepthReadout = document.getElementById('depth-readout');
-const bitSegs = Array.from(document.querySelectorAll('#bit-segments i'));
-const sectorPills = Array.from(document.querySelectorAll('.sector-pill[data-sec]'));
-const elPromptLabel = document.getElementById('prompt-label');
-
-const elDossierModal = document.getElementById('dossier-modal');
-const btnDossierClose = document.getElementById('btn-dossier-close');
-const elDossierCode = document.getElementById('dossier-code');
-const elDossierTitle = document.getElementById('dossier-title');
-const elDossierLead = document.getElementById('dossier-lead');
-const elDossierMetrics = document.getElementById('dossier-metrics');
-const elDossierBody = document.getElementById('dossier-body');
-const elDossierLink = document.getElementById('dossier-ext-link');
-const elDossierLinkLbl = document.getElementById('dossier-link-label');
-
-const elManifesto = document.getElementById('manifesto-overlay');
-const btnManifestoClose = document.getElementById('btn-manifesto-close');
-
-// ---------------- Text Scramble Utility ----------------
-const SCRAMBLE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_+#=-';
-function scrambleText(el, finalStr, durationMs = 340) {
-  if (!el) return;
-  const start = performance.now();
-  const step = (now) => {
-    const t = Math.min(1, (now - start) / durationMs);
-    const settled = Math.floor(t * finalStr.length);
-    let out = finalStr.slice(0, settled);
-    for (let i = settled; i < finalStr.length; i++) {
-      out += finalStr[i] === ' ' ? ' ' : SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
-    }
-    el.textContent = out;
-    if (t < 1) requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
+function nextTurn() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-// ---------------- Audio & Scroll Timeline State ----------------
-const audio = new PolarAudio();
-let scrollTarget = Math.max(0, Math.min(4, parseFloat(Q.get('sec') || '0') || 0));
-let scrollPos = scrollTarget;
-let scrollVel = 0;
-let activeSection = Math.round(scrollPos);
-let constructProgress = CAPTURE ? 1.0 : 0.0;
+async function bootExperience() {
+  await nextTurn();
 
-function syncSectionHUD(secIdx) {
-  activeSection = secIdx;
-  body.dataset.section = String(secIdx);
-  const meta = SECTIONS[secIdx] || SECTIONS[0];
-
-  elWatermark.textContent = meta.watermark;
-  scrambleText(elPromptLabel, meta.prompt, 320);
-
-  for (const pill of sectorPills) {
-    pill.classList.toggle('is-active', Number(pill.dataset.sec) === secIdx);
-  }
-
-  if (meta.title) {
-    elChamberIdx.textContent = meta.code;
-    scrambleText(elChamberTitle, meta.title, 360);
-    elChamberTag.textContent = meta.tagline;
-  }
-
-  if (secIdx === 4 && !CAPTURE) {
-    elManifesto.hidden = false;
-  } else if (secIdx < 4 && !manualManifestoOpen) {
-    elManifesto.hidden = true;
-  }
-}
-
-let manualManifestoOpen = false;
-
-function jumpToSection(secIdx) {
-  const clamped = Math.max(0, Math.min(4, secIdx));
-  scrollTarget = clamped;
-  manualManifestoOpen = clamped === 4;
-  if (clamped < 4) elManifesto.hidden = true;
-  syncSectionHUD(clamped);
-  audio.unlock();
-  audio.playChamberSonar(clamped);
-}
-
-// ---------------- Event Listeners (Bound at <2ms on startup!) ----------------
-for (const pill of sectorPills) {
-  pill.addEventListener('click', () => jumpToSection(Number(pill.dataset.sec)));
-  pill.addEventListener('pointerenter', () => audio.playDataTick(1.15));
-}
-
-btnLogo.addEventListener('click', () => jumpToSection(0));
-
-btnManifesto.addEventListener('click', () => {
-  audio.unlock();
-  audio.playDataTick(1.2);
-  manualManifestoOpen = !elManifesto.hidden ? false : true;
-  elManifesto.hidden = !manualManifestoOpen;
-});
-
-btnManifestoClose.addEventListener('click', () => {
-  manualManifestoOpen = false;
-  elManifesto.hidden = true;
-  if (scrollTarget > 3.4) scrollTarget = 3.0;
-});
-
-btnAudio.addEventListener('click', () => {
-  audio.unlock();
-  const nextMuted = !audio.muted;
-  audio.setMuted(nextMuted);
-  body.classList.toggle('is-muted', nextMuted);
-});
-
-function openDossierForSection(secIdx) {
-  const meta = SECTIONS[secIdx];
-  if (!meta || !meta.dossier) return;
-  const d = meta.dossier;
-  elDossierCode.textContent = d.code;
-  elDossierTitle.textContent = d.title;
-  elDossierLead.textContent = d.lead;
-  elDossierBody.textContent = d.body;
-  elDossierLink.href = d.url;
-  elDossierLinkLbl.textContent = d.linkLabel;
-  elDossierMetrics.innerHTML = d.metrics
-    .map((m) => `<div class="metric-cell"><span>${m.k}</span><b>${m.v}</b></div>`)
-    .join('');
-  elDossierModal.hidden = false;
-  audio.unlock();
-  audio.playDataTick(0.95);
-}
-
-btnOpenDossier.addEventListener('click', () => openDossierForSection(Math.round(scrollTarget) || activeSection));
-btnDossierClose.addEventListener('click', () => {
-  elDossierModal.hidden = true;
-});
-elDossierModal.addEventListener('click', (e) => {
-  if (e.target === elDossierModal) elDossierModal.hidden = true;
-});
-
-let chambersRef = null;
-btnPrevChamber.addEventListener('click', () => {
-  audio.unlock();
-  if (activeSection === 3 && chambersRef) {
-    chambersRef.triggerPenguinVariant(-1);
-    audio.playIceClink();
-  } else {
-    jumpToSection(Math.max(0, activeSection - 1));
-  }
-});
-
-btnNextChamber.addEventListener('click', () => {
-  audio.unlock();
-  if (activeSection === 3 && chambersRef) {
-    chambersRef.triggerPenguinVariant(1);
-    audio.playIceClink();
-  } else {
-    jumpToSection(Math.min(4, activeSection + 1));
-  }
-});
-
-// Wheel & Touch Vertical Scroll Navigation
-window.addEventListener(
-  'wheel',
-  (e) => {
-    if (!elDossierModal.hidden) return;
-    e.preventDefault();
-    audio.unlock();
-    const delta = Math.max(-160, Math.min(160, e.deltaY));
-    scrollTarget = Math.max(0, Math.min(4, scrollTarget + delta * 0.0026));
-    if (scrollTarget < 3.6 && manualManifestoOpen) {
-      manualManifestoOpen = false;
-      elManifesto.hidden = true;
-    }
-  },
-  { passive: false }
-);
-
-let touchLastY = null;
-window.addEventListener('pointerdown', (e) => {
-  audio.unlock();
-  touchLastY = e.clientY;
-});
-window.addEventListener('pointermove', (e) => {
-  pointerNDC.x = (e.clientX / Math.max(1, window.innerWidth)) * 2 - 1;
-  pointerNDC.y = -(e.clientY / Math.max(1, window.innerHeight)) * 2 + 1;
-  raycastDirty = true;
-
-  if (e.pointerType === 'touch' && touchLastY !== null && elDossierModal.hidden) {
-    const dy = touchLastY - e.clientY;
-    touchLastY = e.clientY;
-    scrollTarget = Math.max(0, Math.min(4, scrollTarget + dy * 0.006));
-  }
-});
-window.addEventListener('pointerup', () => {
-  touchLastY = null;
-});
-
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    elDossierModal.hidden = true;
-    manualManifestoOpen = false;
-    elManifesto.hidden = true;
-  } else if (e.key === 'ArrowDown' || e.key === 'PageDown') {
-    jumpToSection(activeSection + 1);
-  } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
-    jumpToSection(activeSection - 1);
-  }
-});
-
-// ---------------- Dynamic SVG Leader Lines Pool ----------------
-const MAX_CALLOUTS = 4;
-const calloutPool = [];
-for (let i = 0; i < MAX_CALLOUTS; i++) {
-  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  path.setAttribute('class', i % 2 === 1 ? 'leader-path is-dashed' : 'leader-path');
-  svgLeader.appendChild(path);
-
-  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-  dot.setAttribute('class', 'leader-dot');
-  dot.setAttribute('r', '2.4');
-  svgLeader.appendChild(dot);
-
-  const tag = document.createElement('div');
-  tag.className = 'callout-tag';
-  tag.innerHTML = '<b></b><span></span>';
-  elCalloutLayer.appendChild(tag);
-
-  calloutPool.push({
-    path,
-    dot,
-    tag,
-    bEl: tag.querySelector('b'),
-    sEl: tag.querySelector('span'),
+  const canvas = document.getElementById('webgl-canvas');
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: false,
+    powerPreference: 'high-performance',
+    stencil: false,
+    depth: false,
   });
-}
-
-const projVec = new THREE.Vector3();
-function updateScreenCallouts(anchors, camera) {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-
-  for (let i = 0; i < MAX_CALLOUTS; i++) {
-    const slot = calloutPool[i];
-    const a = anchors[i];
-    if (!a || !elManifesto.hidden || !elDossierModal.hidden) {
-      slot.path.style.display = 'none';
-      slot.dot.style.display = 'none';
-      slot.tag.style.opacity = '0';
-      continue;
-    }
-
-    projVec.copy(a.pos).project(camera);
-    if (projVec.z > 1 || projVec.z < -1) {
-      slot.path.style.display = 'none';
-      slot.dot.style.display = 'none';
-      slot.tag.style.opacity = '0';
-      continue;
-    }
-
-    const sx = (projVec.x * 0.5 + 0.5) * w;
-    const sy = (-projVec.y * 0.5 + 0.5) * h;
-    const side = sx >= w * 0.5 ? 1 : -1;
-    const elbowX = sx + side * 38;
-    const elbowY = sy - 26;
-    const endX = elbowX + side * 58;
-
-    slot.path.style.display = '';
-    slot.dot.style.display = '';
-    slot.dot.setAttribute('cx', sx.toFixed(1));
-    slot.dot.setAttribute('cy', sy.toFixed(1));
-    slot.path.setAttribute('d', `M${sx.toFixed(1)},${sy.toFixed(1)} L${elbowX.toFixed(1)},${elbowY.toFixed(1)} L${endX.toFixed(1)},${elbowY.toFixed(1)}`);
-
-    slot.bEl.textContent = a.code;
-    slot.sEl.textContent = a.sub;
-    const tagX = side > 0 ? endX + 6 : endX - 134;
-    slot.tag.style.transform = `translate3d(${Math.round(tagX)}px, ${Math.round(elbowY - 14)}px, 0)`;
-    slot.tag.style.opacity = '1';
-  }
-}
-
-// ---------------- Non-Blocking 3-Step WebGL2 Engine Initialization ----------------
-const scene = new THREE.Scene();
-const fogColor = new THREE.Color(0xa0a5b1);
-scene.background = fogColor;
-scene.fog = new THREE.FogExp2(0xa0a5b1, 0.048);
-
-const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 90);
-const raycaster = new THREE.Raycaster();
-const pointerNDC = new THREE.Vector2(0, 0);
-const pointerSmooth = new THREE.Vector2(0, 0);
-let raycastDirty = false;
-
-let renderer = null;
-let post = null;
-let getEnvMap = null;
-let textures = null;
-let heroScene = null;
-let engineReady = false;
-
-let baseDpr = Math.min(window.devicePixelRatio || 1, 2);
-let resScale = 1.0;
-
-function applyResolution() {
-  if (!renderer || !post) return;
-  const w = Math.max(1, window.innerWidth);
-  const h = Math.max(1, window.innerHeight);
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-
-  const effDpr = baseDpr * resScale;
-  renderer.setPixelRatio(effDpr);
-  renderer.setSize(w, h, false);
-  const rw = Math.max(1, Math.floor(w * effDpr));
-  const rh = Math.max(1, Math.floor(h * effDpr));
-  post.setSize(rw, rh);
-  if (chambersRef) chambersRef.setResolution(rw, rh, effDpr);
-}
-window.addEventListener('resize', applyResolution);
-
-function bootStep1() {
-  try {
-    renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: false,
-      alpha: false,
-      powerPreference: 'high-performance',
-      preserveDrawingBuffer: CAPTURE,
-    });
-  } catch (e) {
-    document.getElementById('nogl').hidden = false;
-    throw e;
-  }
-  if (!renderer.capabilities.isWebGL2) {
-    document.getElementById('nogl').hidden = false;
-    throw new Error('WebGL2 required');
-  }
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
   renderer.toneMapping = THREE.NoToneMapping;
-  post = new PolarPostPipeline(renderer);
-  getEnvMap = buildPolarEnvironment(renderer);
-  applyResolution();
-}
+  renderer.autoClear = false;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 
-function bootStep2() {
-  textures = buildPolarTextures(renderer);
-}
+  const audio = createPolarAudio();
+  const textures = buildPolarTextures(renderer);
+  await nextTurn();
 
-function bootStep3() {
-  const envMap = getEnvMap();
-  heroScene = createIglooHeroScene({
-    envMap,
+  const envs = buildPolarEnvironments(renderer);
+  const surfaceEnv = envs.getSurfaceEnv();
+  const vaultEnv = envs.getVaultEnv();
+  await nextTurn();
+
+  // Build the 3 infinite-loop scroll scenes + 1 interactive DetailScene
+  const scene0 = createScene0Igloo({
+    envMap: surfaceEnv,
     textures,
-    onBlockHoverSound: () => audio.playIceClink(),
+    onHoverClink: () => audio.playIceClink(1.0),
   });
-  scene.add(heroScene.group);
+  await nextTurn();
 
-  chambersRef = createRelicChambers({
-    envMap,
+  const scene1 = createScene1Cubes({
+    renderer,
+    envMap: vaultEnv,
     textures,
-    refractTex: post.refractRT.texture,
   });
-  scene.add(chambersRef.root);
-  applyResolution();
+  await nextTurn();
 
-  syncSectionHUD(Math.round(scrollPos));
-  engineReady = true;
+  const scene2 = createScene2Entry({
+    envMap: vaultEnv,
+    textures,
+  });
+  await nextTurn();
 
-  // Dismiss ASCII loader cleanly and start CAD construct wave!
-  if (window.__asciiTimer) clearInterval(window.__asciiTimer);
-  body.dataset.ready = '1';
+  const detailScene = createDetailScene({
+    renderer,
+    envMap: vaultEnv,
+    textures,
+  });
+  await nextTurn();
 
-  lastTime = performance.now() * 0.001;
-  renderFrame(0.016);
-  if (!CAPTURE) requestAnimationFrame(tick);
-}
+  const compositor = createCompositorPipeline(renderer, {
+    scrollDataTex: textures.scrollDataTex,
+    grainTex: textures.grainTex,
+  });
 
-const camTargetTmp = new THREE.Vector3();
-const lookTargetTmp = new THREE.Vector3();
-const cTmpA = new THREE.Color();
-const cTmpB = new THREE.Color();
-
-let simTime = 0;
-let lastTime = performance.now() * 0.001;
-let emaDt = 0.0166;
-let slowFrames = 0;
-let cipherTimer = 0;
-
-function renderFrame(dt) {
-  if (!engineReady) return;
-  simTime += dt;
-
-  // Advance CAD Construct intro scan wave smoothly over first 2.1 seconds
-  if (constructProgress < 1.0) {
-    constructProgress = Math.min(1.0, constructProgress + dt * 0.52);
+  const scrollScenes = [scene0, scene1, scene2];
+  // Cumulative virtual scroll offsets: Scene0 [0..2.35], Scene1 [2.35..5.45], Scene2 [5.45..10.65] -> wraps to 0!
+  const TRANSITION_SPAN = 0.68;
+  const sceneStarts = [];
+  let totalScrollHeight = 0;
+  for (let i = 0; i < scrollScenes.length; i++) {
+    sceneStarts.push(totalScrollHeight);
+    totalScrollHeight += scrollScenes[i].height;
   }
 
-  // Spring-damped continuous vertical scroll physics
-  const sForce = (scrollTarget - scrollPos) * 28.0 - scrollVel * 9.5;
-  scrollVel += sForce * dt;
-  scrollPos += scrollVel * dt;
-  if (Math.abs(scrollTarget - scrollPos) < 0.0005 && Math.abs(scrollVel) < 0.0005) {
-    scrollPos = scrollTarget;
-    scrollVel = 0;
+  // Start settled at Scene 0's hero autocenter (0.495 * 2.35 = 1.163) so the Igloo & mountains frame identically to igloo.inc!
+  const HERO_HOME_SCROLL = scene0.height * scene0.initialScrollAutocenter;
+
+  const state = {
+    virtualScroll: HERO_HOME_SCROLL,
+    targetScroll: HERO_HOME_SCROLL,
+    scrollVelocity: 0,
+    lastWheelTime: performance.now(),
+    introElapsed: 0,
+    introDuration: 2.3,
+    inDetail: false,
+    detailTarget: 0,
+    detailProgress: 0,
+    pointerNDC: new THREE.Vector2(0, 0),
+    smoothPointer: new THREE.Vector2(0, 0),
+    clientX: window.innerWidth * 0.5,
+    clientY: window.innerHeight * 0.5,
+    pointerMoved: false,
+    qaOverride: false,
+  };
+
+  // ---------------- DOM References ----------------
+  const logoBtn = document.getElementById('logo-btn');
+  const copyrightBlock = document.getElementById('copyright-block');
+  const audioBtn = document.getElementById('audio-btn');
+  const audioLabel = document.getElementById('audio-label');
+  const soundBars = document.getElementById('sound-bars');
+  const detailCloseBtn = document.getElementById('detail-close-btn');
+
+  const scene0Overlay = document.getElementById('scene0-overlay');
+  const manifestoBlock = document.getElementById('manifesto-block');
+  const scrollPrompt = document.getElementById('scroll-prompt');
+
+  const scene1Overlay = document.getElementById('scene1-overlay');
+  const cubePlaques = [0, 1, 2].map((i) => document.getElementById(`cube-label-${i}`));
+  const cubeTemps = [0, 1, 2].map((i) => document.getElementById(`cube-temp-${i}`));
+  const cursorPrompt = document.getElementById('cursor-prompt');
+  const cursorPromptText = document.getElementById('cursor-prompt-text');
+
+  const scene2Overlay = document.getElementById('scene2-overlay');
+  const socialPrevBtn = document.getElementById('social-prev');
+  const socialNextBtn = document.getElementById('social-next');
+  const socialActiveLink = document.getElementById('social-active-link');
+  const socialActiveName = document.getElementById('social-active-name');
+  const socialTabs = Array.from(document.querySelectorAll('.social-tab'));
+
+  const detailOverlay = document.getElementById('detail-overlay');
+  const detailCode = document.getElementById('detail-code');
+  const detailTitle = document.getElementById('detail-title');
+  const detailSummary = document.getElementById('detail-summary');
+  const detailLinks = document.getElementById('detail-links');
+  const detailVisit = document.getElementById('detail-visit');
+  const detailVisitLabel = document.getElementById('detail-visit-label');
+
+  // ---------------- Sizing ----------------
+  let vw = window.innerWidth;
+  let vh = window.innerHeight;
+  function handleResize() {
+    vw = Math.max(1, window.innerWidth);
+    vh = Math.max(1, window.innerHeight);
+    renderer.setSize(vw, vh, false);
+    const dpr = renderer.getPixelRatio();
+    const pw = Math.floor(vw * dpr);
+    const ph = Math.floor(vh * dpr);
+    const aspect = vw / vh;
+    scene0.resize(aspect);
+    scene1.resize(aspect, pw, ph);
+    scene2.resize(aspect);
+    detailScene.resize(aspect);
+    compositor.setSize(pw, ph);
+  }
+  window.addEventListener('resize', handleResize);
+  handleResize();
+
+  // ---------------- DetailScene Open / Close ----------------
+  function openPortfolioDetail(index) {
+    const item = PORTFOLIO_ITEMS[index];
+    if (!item || item.locked) {
+      audio.playUiBeep(320);
+      return;
+    }
+    audio.playPortalWhoosh();
+    detailScene.setProject(item.id);
+    detailCode.textContent = item.code;
+    detailTitle.textContent = item.name;
+    detailSummary.textContent = item.summary;
+    detailLinks.innerHTML = '';
+    item.links.forEach((lnk) => {
+      const a = document.createElement('a');
+      a.className = 'detail-social-chip';
+      a.href = lnk.url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = lnk.label;
+      detailLinks.appendChild(a);
+    });
+    detailVisit.href = item.visitUrl;
+    detailVisitLabel.textContent = item.visitLabel;
+
+    state.inDetail = true;
+    state.detailTarget = 1;
+    cursorPrompt.classList.add('hidden');
+    detailCloseBtn.classList.remove('hidden');
   }
 
-  const nearestSec = Math.max(0, Math.min(4, Math.round(scrollPos)));
-  if (nearestSec !== activeSection) {
-    syncSectionHUD(nearestSec);
+  function closePortfolioDetail() {
+    if (!state.inDetail) return;
+    audio.playPortalWhoosh();
+    state.inDetail = false;
+    state.detailTarget = 0;
+    detailCloseBtn.classList.add('hidden');
+    detailOverlay.classList.add('hidden');
   }
 
-  // Update Bottom-Left Altitude/Depth & 12-Bit Progress Segments
-  const normScroll = Math.max(0, Math.min(1, scrollPos / 4));
-  const altMeters = 4.2 - normScroll * 46.7;
-  elDepthReadout.textContent = `ALT // ${altMeters >= 0 ? '+' : ''}${altMeters.toFixed(1)}M`;
-  const litCount = Math.max(1, Math.round(normScroll * bitSegs.length));
-  for (let i = 0; i < bitSegs.length; i++) {
-    bitSegs[i].classList.toggle('is-lit', i < litCount);
-  }
-  audio.updateScrollDepth(normScroll);
+  detailCloseBtn.addEventListener('click', closePortfolioDetail);
+  cubePlaques.forEach((el, idx) => {
+    el.addEventListener('click', () => openPortfolioDetail(idx));
+  });
 
-  // Periodic encrypted telemetry ticker in top-right box
-  cipherTimer += dt;
-  if (cipherTimer > 0.45 && !CAPTURE) {
-    cipherTimer = 0;
-    const hex = Math.floor((0.1 + Math.abs(Math.sin(simTime * 3.7)) * 0.89) * 0xffff)
-      .toString(16)
-      .toUpperCase()
-      .padStart(4, '0');
-    elCipher1.textContent = `SYS.0${nearestSec} // 0x8F${hex}`;
-    elCipher2.textContent = `SYNC_RATE: ${(99.82 + Math.sin(simTime) * 0.14).toFixed(2)}% [OK]`;
+  // ---------------- Social Switcher (Scene 2 Entry) ----------------
+  function syncSocialUI(idx) {
+    const ch = SOCIAL_CHANNELS[idx];
+    socialActiveName.textContent = ch.name;
+    socialActiveLink.href = ch.url;
+    socialTabs.forEach((btn, i) => btn.classList.toggle('is-active', i === idx));
   }
 
-  pointerSmooth.lerp(pointerNDC, Math.min(1, dt * 8.0));
+  socialPrevBtn.addEventListener('click', () => {
+    audio.playUiBeep(980);
+    scene2.setChannel(scene2.getActiveChannel() - 1);
+    syncSocialUI(scene2.getActiveChannel());
+  });
 
-  // Interpolate Camera Position, LookAt, FOV & Atmospheric Fog between keyframes
-  const idxA = Math.min(3, Math.max(0, Math.floor(scrollPos)));
-  const idxB = idxA + 1;
-  const frac = THREE.MathUtils.smoothstep(scrollPos - idxA, 0, 1);
-  const secA = SECTIONS[idxA];
-  const secB = SECTIONS[idxB];
+  socialNextBtn.addEventListener('click', () => {
+    audio.playUiBeep(1180);
+    scene2.setChannel(scene2.getActiveChannel() + 1);
+    syncSocialUI(scene2.getActiveChannel());
+  });
 
-  camTargetTmp.lerpVectors(secA.camPos, secB.camPos, frac);
-  lookTargetTmp.lerpVectors(secA.lookAt, secB.lookAt, frac);
+  socialTabs.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.dataset.ch) || 0;
+      audio.playUiBeep(1080);
+      scene2.setChannel(idx);
+      syncSocialUI(scene2.getActiveChannel());
+    });
+  });
 
-  // Subtle isometric mouse parallax
-  camTargetTmp.x += pointerSmooth.x * 0.36;
-  camTargetTmp.y += pointerSmooth.y * 0.22;
+  // ---------------- Header & Audio Controls ----------------
+  audioBtn.addEventListener('click', () => {
+    const isMuted = audio.toggleMute();
+    audioBtn.setAttribute('aria-pressed', String(!isMuted));
+    audioLabel.textContent = isMuted ? 'Sound Off' : 'Sound On';
+    soundBars.classList.toggle('is-playing', !isMuted);
+    if (!isMuted) audio.playUiBeep(1320);
+  });
 
-  camera.position.copy(camTargetTmp);
-  camera.lookAt(lookTargetTmp);
+  logoBtn.addEventListener('click', () => {
+    if (state.inDetail) closePortfolioDetail();
+    // Smoothly scroll to nearest modulo multiple of HERO_HOME_SCROLL
+    const loops = Math.round((state.targetScroll - HERO_HOME_SCROLL) / totalScrollHeight);
+    state.targetScroll = loops * totalScrollHeight + HERO_HOME_SCROLL;
+    state.lastWheelTime = performance.now();
+  });
 
-  const nextFov = THREE.MathUtils.lerp(secA.fov, secB.fov, frac);
-  if (Math.abs(camera.fov - nextFov) > 0.02) {
-    camera.fov = nextFov;
-    camera.updateProjectionMatrix();
-  }
+  // ---------------- Wheel, Touch & Keyboard Infinite Scroll ----------------
+  window.addEventListener(
+    'wheel',
+    (e) => {
+      if (state.inDetail) return;
+      e.preventDefault();
+      state.qaOverride = false;
+      const dy = THREE.MathUtils.clamp(e.deltaY, -160, 160);
+      state.targetScroll += dy * 0.0032;
+      state.lastWheelTime = performance.now();
+    },
+    { passive: false }
+  );
 
-  cTmpA.setHex(secA.fogColor);
-  cTmpB.setHex(secB.fogColor);
-  fogColor.copy(cTmpA).lerp(cTmpB, frac);
-  scene.fog.color.copy(fogColor);
-  scene.fog.density = THREE.MathUtils.lerp(secA.fogDensity, secB.fogDensity, frac);
+  let touchY = null;
+  window.addEventListener(
+    'touchstart',
+    (e) => {
+      if (e.touches.length === 1) touchY = e.touches[0].clientY;
+    },
+    { passive: true }
+  );
+  window.addEventListener(
+    'touchmove',
+    (e) => {
+      if (touchY === null || e.touches.length !== 1 || state.inDetail) return;
+      const y = e.touches[0].clientY;
+      const dy = touchY - y;
+      touchY = y;
+      state.qaOverride = false;
+      state.targetScroll += dy * 0.0065;
+      state.lastWheelTime = performance.now();
+    },
+    { passive: true }
+  );
+  window.addEventListener('touchend', () => {
+    touchY = null;
+  });
 
-  // Once-per-frame throttled interactive raycast (Surface Igloo Blocks OR Chamber 3 Penguin Point-Cloud)
-  if (raycastDirty) {
-    raycastDirty = false;
-    camera.updateMatrixWorld();
-    raycaster.setFromCamera(pointerNDC, camera);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && state.inDetail) {
+      closePortfolioDetail();
+      return;
+    }
+    if (state.inDetail) return;
+    if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') {
+      e.preventDefault();
+      state.targetScroll += 0.65;
+      state.lastWheelTime = performance.now();
+    } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+      e.preventDefault();
+      state.targetScroll -= 0.65;
+      state.lastWheelTime = performance.now();
+    }
+  });
 
-    if (scrollPos < 0.65) {
-      const hits = raycaster.intersectObject(heroScene.hitProxy, false);
-      heroScene.setHoverPoint(hits.length > 0 ? hits[0].point : null, simTime);
-      chambersRef.setPenguinHoverWorld(null);
-    } else if (scrollPos > 2.4 && scrollPos < 3.6) {
-      heroScene.setHoverPoint(null, simTime);
-      const pHits = raycaster.intersectObject(chambersRef.penguinProxy, false);
-      chambersRef.setPenguinHoverWorld(pHits.length > 0 ? pHits[0].point : null);
+  // ---------------- Pointer Raycasting & Click ----------------
+  const raycaster = new THREE.Raycaster();
+  window.addEventListener('pointermove', (e) => {
+    state.clientX = e.clientX;
+    state.clientY = e.clientY;
+    state.pointerNDC.x = (e.clientX / vw) * 2 - 1;
+    state.pointerNDC.y = -(e.clientY / vh) * 2 + 1;
+    state.pointerMoved = true;
+  });
+
+  canvas.addEventListener('click', () => {
+    if (state.inDetail || state.detailProgress > 0.1) return;
+    const wrapped = ((state.virtualScroll % totalScrollHeight) + totalScrollHeight) % totalScrollHeight;
+    if (wrapped >= sceneStarts[1] - 0.3 && wrapped < sceneStarts[2] - 0.2) {
+      const hoveredCube = scene1.getHoveredIndex();
+      if (hoveredCube >= 0) {
+        openPortfolioDetail(hoveredCube);
+      }
+    } else if (wrapped >= sceneStarts[2]) {
+      if (scene2.isCloudHovered()) {
+        const ch = SOCIAL_CHANNELS[scene2.getActiveChannel()];
+        window.open(ch.url, '_blank', 'noopener,noreferrer');
+      }
+    }
+  });
+
+  // ---------------- Compute Active Scene A, Incoming Scene B & Split Progress ----------------
+  function resolveScrollState(rawScroll) {
+    const wrapped = ((rawScroll % totalScrollHeight) + totalScrollHeight) % totalScrollHeight;
+    let idxA = 0;
+    for (let i = scrollScenes.length - 1; i >= 0; i--) {
+      if (wrapped >= sceneStarts[i]) {
+        idxA = i;
+        break;
+      }
+    }
+    const idxB = (idxA + 1) % scrollScenes.length;
+    const scA = scrollScenes[idxA];
+    const scB = scrollScenes[idxB];
+    const localPos = wrapped - sceneStarts[idxA]; // [0 .. scA.height]
+    const activeSpan = scA.height - TRANSITION_SPAN;
+
+    let progressA = 0;
+    let progressB = 0;
+    let splitProgress = 0;
+
+    if (localPos <= activeSpan) {
+      // Pure Scene A (normalize localPos over scA.height so camera keeps moving smoothly into transition!)
+      progressA = localPos / scA.height;
+      splitProgress = 0;
     } else {
-      heroScene.setHoverPoint(null, simTime);
-      chambersRef.setPenguinHoverWorld(null);
+      // Diagonal fracture transition zone [activeSpan .. scA.height]
+      progressA = localPos / scA.height;
+      splitProgress = THREE.MathUtils.clamp((localPos - activeSpan) / TRANSITION_SPAN, 0, 1);
+      // Pre-advance Scene B slightly during wipe so it enters with living motion!
+      progressB = splitProgress * 0.12;
+      if (idxB === 0) {
+        // When wrapping from Scene 2 back to Scene 0, land gracefully near Scene 0's hero view!
+        progressB = THREE.MathUtils.lerp(0.18, scB.initialScrollAutocenter, splitProgress);
+      }
+    }
+
+    return { idxA, idxB, scA, scB, progressA, progressB, splitProgress, wrapped, localPos };
+  }
+
+  // Gentle auto-center settle after 1.4s of idle wheel (matches jF.autoCenter!)
+  const SNAP_POINTS = [
+    HERO_HOME_SCROLL,                          // Scene 0 Igloo settled hero
+    sceneStarts[1] + 0.16,                     // Scene 1 Cube 01 (Pudgy Penguins)
+    sceneStarts[1] + 1.24,                     // Scene 1 Cube 02 (Overpass)
+    sceneStarts[1] + 2.30,                     // Scene 1 Cube 03 (Mystery)
+    sceneStarts[2] + scene2.height * 0.74,     // Scene 2 Subterranean Halo Chamber ("/// Follow Us")
+  ];
+
+  function applyIdleAutoCenter(nowMs, dt) {
+    if (state.qaOverride || state.inDetail || nowMs - state.lastWheelTime < 1400) return;
+    const loops = Math.floor(state.targetScroll / totalScrollHeight);
+    const wrapped = state.targetScroll - loops * totalScrollHeight;
+    let bestSnap = wrapped;
+    let minDiff = Infinity;
+    for (let i = 0; i < SNAP_POINTS.length; i++) {
+      const sp = SNAP_POINTS[i];
+      const diff = Math.abs(wrapped - sp);
+      if (diff < minDiff) {
+        minDiff = diff;
+        bestSnap = sp;
+      }
+    }
+    // Only nudge gently if close to a transition seam or cube center
+    if (minDiff < 0.42) {
+      const goal = loops * totalScrollHeight + bestSnap;
+      state.targetScroll += (goal - state.targetScroll) * Math.min(1, dt * 2.2);
     }
   }
 
-  // Cull invisible distant groups so GPU stays locked at 60fps with minimal DrawCalls!
-  heroScene.group.visible = scrollPos < 1.15;
-  chambersRef.root.visible = scrollPos > 0.15;
+  // ---------------- Deterministic QA Inspection Hook ----------------
+  window.__setIglooState = (opts = {}) => {
+    state.qaOverride = true;
+    state.introElapsed = state.introDuration + 1;
+    if (typeof opts.virtualScroll === 'number') {
+      state.virtualScroll = opts.virtualScroll;
+      state.targetScroll = opts.virtualScroll;
+    }
+    if (typeof opts.scene === 'number') {
+      const sIdx = ((opts.scene % 3) + 3) % 3;
+      const p = typeof opts.progress === 'number' ? opts.progress : 0.5;
+      const val = sceneStarts[sIdx] + scrollScenes[sIdx].height * p;
+      state.virtualScroll = val;
+      state.targetScroll = val;
+    }
+    if (typeof opts.socialChannel === 'number') {
+      scene2.setChannel(opts.socialChannel);
+      syncSocialUI(scene2.getActiveChannel());
+    }
+    if (typeof opts.detailProject === 'number') {
+      if (opts.detailProject >= 0) {
+        openPortfolioDetail(opts.detailProject);
+        state.detailProgress = 1.0;
+        state.detailTarget = 1.0;
+      } else {
+        closePortfolioDetail();
+        state.detailProgress = 0.0;
+        state.detailTarget = 0.0;
+      }
+    }
+  };
+  window.__iglooMeta = { sceneStarts, totalScrollHeight, HERO_HOME_SCROLL };
 
-  if (heroScene.group.visible) {
-    heroScene.update(dt, simTime, constructProgress);
+  // Dismiss ASCII preloader smoothly once boot finishes!
+  clearInterval(asciiTimer);
+  if (loaderEl) loaderEl.classList.add('is-done');
+  document.body.dataset.ready = '1';
+
+  // ---------------- Main Render Loop ----------------
+  let prevTime = performance.now();
+
+  function tick(now) {
+    requestAnimationFrame(tick);
+
+    const dt = Math.min(0.05, Math.max(0.001, (now - prevTime) * 0.001));
+    prevTime = now;
+    const elapsed = now * 0.001;
+
+    state.introElapsed += dt;
+    const introRaw = THREE.MathUtils.clamp(state.introElapsed / state.introDuration, 0, 1);
+    const introWeight = 1 - Math.pow(1 - introRaw, 3);
+
+    applyIdleAutoCenter(now, dt);
+
+    const prevScroll = state.virtualScroll;
+    state.virtualScroll += (state.targetScroll - state.virtualScroll) * Math.min(1, dt * 8.0);
+    state.scrollVelocity = (state.virtualScroll - prevScroll) / Math.max(dt, 0.008);
+
+    state.detailProgress += (state.detailTarget - state.detailProgress) * Math.min(1, dt * 5.2);
+    state.smoothPointer.lerp(state.pointerNDC, Math.min(1, dt * 8.5));
+
+    const resolved = resolveScrollState(state.virtualScroll);
+
+    // Raycast against active scene (only when user has moved pointer!)
+    if (!state.inDetail && state.detailProgress < 0.2 && state.pointerMoved) {
+      if (resolved.idxA === 0 && state.pointerMoved) {
+        raycaster.setFromCamera(state.pointerNDC, scene0.camera);
+        const hitIgloo = scene0.setPointerRaycast(raycaster, elapsed);
+        canvas.style.cursor = hitIgloo ? 'pointer' : 'default';
+        cursorPrompt.classList.add('hidden');
+      } else if (resolved.idxA === 1 || (resolved.idxB === 1 && resolved.splitProgress > 0.5)) {
+        raycaster.setFromCamera(state.pointerNDC, scene1.camera);
+        const hIdx = scene1.setPointerRaycast(raycaster);
+        if (hIdx >= 0) {
+          const item = PORTFOLIO_ITEMS[hIdx];
+          canvas.style.cursor = item.locked ? 'not-allowed' : 'pointer';
+          cursorPromptText.textContent = item.locked ? '???????????????' : 'Click to explore';
+          cursorPrompt.classList.remove('hidden');
+          cursorPrompt.style.transform = `translate3d(${Math.round(state.clientX + 18)}px, ${Math.round(state.clientY - 14)}px, 0)`;
+        } else {
+          canvas.style.cursor = 'default';
+          cursorPrompt.classList.add('hidden');
+        }
+      } else if (resolved.idxA === 2) {
+        raycaster.setFromCamera(state.pointerNDC, scene2.camera);
+        const hitCloud = scene2.setPointerRaycast(raycaster);
+        canvas.style.cursor = hitCloud ? 'pointer' : 'default';
+        cursorPrompt.classList.add('hidden');
+      }
+    } else {
+      canvas.style.cursor = 'default';
+      cursorPrompt.classList.add('hidden');
+    }
+
+    // Update visible scenes
+    if (state.detailProgress < 0.999) {
+      if (resolved.idxA === 0) scene0.update(dt, elapsed, resolved.progressA, introWeight, state.smoothPointer);
+      else if (resolved.idxA === 1) scene1.update(dt, elapsed, resolved.progressA, state.smoothPointer);
+      else scene2.update(dt, elapsed, resolved.progressA, state.smoothPointer);
+
+      if (resolved.splitProgress > 0.001) {
+        if (resolved.idxB === 0) scene0.update(dt, elapsed, resolved.progressB, 1.0, state.smoothPointer);
+        else if (resolved.idxB === 1) scene1.update(dt, elapsed, resolved.progressB, state.smoothPointer);
+        else scene2.update(dt, elapsed, resolved.progressB, state.smoothPointer);
+      }
+    }
+
+    if (state.detailProgress > 0.001) {
+      detailScene.updateAndStepSim(dt, elapsed, state.detailProgress, state.smoothPointer);
+    }
+
+    // Update Minimalist UI Overlays cleanly based on active scene & detail state
+    const showWorldUI = state.detailProgress < 0.35;
+    detailOverlay.classList.toggle('hidden', state.detailProgress < 0.55);
+
+    // Scene 0 UI (Manifesto + Copyright + Scroll down prompt)
+    const onScene0 = showWorldUI && ((resolved.idxA === 0 && resolved.splitProgress < 0.45) || (resolved.idxB === 0 && resolved.splitProgress > 0.65));
+    scene0Overlay.classList.toggle('hidden', !onScene0);
+    if (copyrightBlock) copyrightBlock.style.opacity = onScene0 ? '1' : '0';
+    if (onScene0) {
+      const p0 = resolved.idxA === 0 ? resolved.progressA : resolved.progressB;
+      const manifestoVis = THREE.MathUtils.smoothstep(p0, 0.22, 0.45) * (1.0 - THREE.MathUtils.smoothstep(p0, 0.72, 0.90));
+      manifestoBlock.style.opacity = String(manifestoVis.toFixed(3));
+      scrollPrompt.style.opacity = p0 > 0.64 ? '0' : '1';
+    }
+
+    // Scene 1 UI (3D-Anchored Portfolio Plaques & Temperatures)
+    const onScene1 = showWorldUI && ((resolved.idxA === 1 && resolved.splitProgress < 0.55) || (resolved.idxB === 1 && resolved.splitProgress > 0.55));
+    scene1Overlay.classList.toggle('hidden', !onScene1);
+    if (onScene1) {
+      for (let i = 0; i < scene1.blocks.length; i++) {
+        const b = scene1.blocks[i];
+        const px = Math.round(b.screenX * vw);
+        const py = Math.round(b.screenY * vh);
+        const shiftX = i % 2 === 1 ? '-100%' : '0%';
+        cubePlaques[i].style.transform = `translate3d(${px}px, ${py}px, 0) translate(${shiftX}, -50%)`;
+        cubePlaques[i].style.opacity = String(b.visibleFactor.toFixed(3));
+
+        const tx = Math.round(b.tempScreenX * vw);
+        const ty = Math.round(b.tempScreenY * vh);
+        cubeTemps[i].style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
+        cubeTemps[i].style.opacity = String((b.visibleFactor * 0.85).toFixed(3));
+      }
+    }
+
+    // Scene 2 UI ("/// Follow Us" switcher appears once camera levels out inside subterranean chamber!)
+    const onScene2Chamber = showWorldUI && resolved.idxA === 2 && resolved.progressA > 0.54 && resolved.splitProgress < 0.35;
+    scene2Overlay.classList.toggle('hidden', !onScene2Chamber);
+
+    audio.update(resolved.idxA, state.scrollVelocity, state.inDetail);
+
+    // Final Dual-FBO Fracture + Detail Frost + Kawase Bloom Composite
+    compositor.compose({
+      sceneA: resolved.scA,
+      sceneB: resolved.scB,
+      splitProgress: resolved.splitProgress,
+      detailScene,
+      detailProgress: state.detailProgress,
+      scrollVelocity: state.scrollVelocity,
+      time: elapsed,
+    });
   }
-  if (chambersRef.root.visible) {
-    chambersRef.update(dt, simTime, pointerSmooth);
-  }
 
-  // Project 3D Telemetry Anchors onto 2D SVG Leader Lines
-  camera.updateMatrixWorld();
-  const activeAnchors =
-    nearestSec === 0
-      ? heroScene.getAnchors()
-      : chambersRef.getAnchorsForSection(nearestSec);
-  updateScreenCallouts(activeAnchors, camera);
-
-  // Only run refraction capture pass when Chamber 1 (OverpassIP Crystal) is visible!
-  const enableRefract = scrollPos > 0.35 && scrollPos < 1.75;
-  post.render(scene, camera, simTime, {
-    refractMeshes: chambersRef.transmissiveMeshes,
-    enableRefract,
-    bloomThreshold: nearestSec === 0 ? 0.92 : 0.86,
-    bloomStrength: nearestSec === 0 ? 0.58 : 0.62,
-    chromatic: nearestSec === 1 ? 1.35 : 0.95,
-  });
-}
-
-function tick(nowMs) {
-  if (CAPTURE) return;
   requestAnimationFrame(tick);
-  const now = nowMs * 0.001;
-  const rawDt = now - lastTime;
-  lastTime = now;
-  const dt = Math.min(0.05, Math.max(0.001, rawDt));
-
-  // EMA 60fps Adaptive Resolution Guardian
-  if (rawDt > 0.002 && rawDt < 0.12) {
-    emaDt = emaDt * 0.9 + rawDt * 0.1;
-    if (emaDt > 0.0175 && resScale > 0.78) {
-      slowFrames++;
-      if (slowFrames > 28) {
-        resScale = Math.max(0.78, resScale - 0.08);
-        slowFrames = 0;
-        applyResolution();
-      }
-    } else {
-      slowFrames = 0;
-    }
-  }
-
-  renderFrame(dt);
 }
 
-let bootPromise = null;
-function startBoot() {
-  if (bootPromise) return bootPromise;
-  if (CAPTURE) {
-    bootStep1();
-    bootStep2();
-    bootStep3();
-    bootPromise = Promise.resolve();
-    return bootPromise;
-  }
-  bootPromise = new Promise((resolve) => {
-    setTimeout(() => {
-      try {
-        bootStep1();
-        setTimeout(() => {
-          bootStep2();
-          setTimeout(() => {
-            bootStep3();
-            resolve();
-          }, 0);
-        }, 0);
-      } catch (err) {
-        console.error(err);
-      }
-    }, 0);
-  });
-  return bootPromise;
-}
-
-startBoot();
-
-// Deterministic QA & Visual Inspection Hook
-window.__setIglooState = async (cfg = {}) => {
-  await startBoot();
-  if (typeof cfg.construct === 'number') constructProgress = cfg.construct;
-  else constructProgress = 1.0;
-
-  if (typeof cfg.scroll === 'number') {
-    scrollTarget = cfg.scroll;
-    scrollPos = cfg.scroll;
-    scrollVel = 0;
-    syncSectionHUD(Math.round(scrollPos));
-  }
-  if (cfg.dossier) {
-    openDossierForSection(Math.round(scrollPos));
-  } else {
-    elDossierModal.hidden = true;
-  }
-  if (cfg.manifesto) {
-    manualManifestoOpen = true;
-    elManifesto.hidden = false;
-  } else if (Math.round(scrollPos) < 4) {
-    manualManifestoOpen = false;
-    elManifesto.hidden = true;
-  }
-
-  if (cfg.hoverHero) {
-    heroScene.setHoverPoint(new THREE.Vector3(1.1, 1.35, 1.4), 3.0);
-  }
-
-  simTime = cfg.time ?? 4.2;
-  for (let i = 0; i < 4; i++) renderFrame(0.016);
-
-  renderer.info.autoReset = false;
-  renderer.info.reset();
-  renderFrame(0.016);
-  const calls = renderer.info.render.calls;
-  const tris = renderer.info.render.triangles;
-  renderer.info.autoReset = true;
-  return { calls, tris, section: activeSection };
-};
+bootExperience();

@@ -1,11 +1,13 @@
-// Polar High-Key Post-Processing Pipeline for Igloo Inc. Replica:
-// - 4x MSAA HDR Scene RT (with macOS Apple Silicon __useRenderToTexture=false & FBO fallback guard)
-// - Optional 0.5x Refraction Snapshot for Chamber 1 Obsidian-Ice Monolith
-// - Dual-octave Luminous White Bloom + Radial RGB Chromatic Aberration + Subtle Scanlines + Cinematic Film Grain
+// Dual-FBO Glacial Fracture Compositor & Kawase Bloom Pipeline (1:1 architectural match to f3 Compositor):
+// - Renders active Scene A (rtSceneA) and incoming Scene B / DetailScene (rtSceneB)
+// - Diagonal Voronoi ice-fracture wipe with vertical parallax + 5-iteration spectral chromatic aberration (CA_ITERATIONS 5)
+// - Radial frost crystallization transition when entering/exiting DetailScene (uDetailProgress)
+// - Dual-level half/quarter-res Bloom + ACES tone mapping + animated blue-noise film grain
+// - Includes Apple Silicon ANGLE WebGL2 FBO completeness safeguard!
 
 import * as THREE from '../vendor/three.module.js';
 
-const QUAD_VS = /* glsl */`
+const QUAD_VERT = /* glsl */ `
 varying vec2 vUv;
 void main() {
   vUv = uv;
@@ -13,272 +15,347 @@ void main() {
 }
 `;
 
-const BRIGHT_FS = /* glsl */`
-uniform sampler2D tColor;
-uniform vec2 uTexel;
+const THRESH_FRAG = /* glsl */ `
+uniform sampler2D tInput;
 uniform float uThreshold;
 varying vec2 vUv;
-
 void main() {
-  vec3 sum = vec3(0.0);
-  for (int y = 0; y < 2; y++) {
-    for (int x = 0; x < 2; x++) {
-      vec2 off = (vec2(float(x), float(y)) - 0.5) * 2.0 * uTexel;
-      vec3 c = texture2D(tColor, vUv + off).rgb;
-      float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
-      float knee = 0.45;
-      float soft = clamp(lum - uThreshold + knee, 0.0, 2.0 * knee);
-      soft = (soft * soft) / (4.0 * knee + 1e-4);
-      float contrib = max(soft, lum - uThreshold) / max(lum, 1e-4);
-      sum += min(c * contrib, vec3(8.0));
-    }
-  }
-  gl_FragColor = vec4(sum * 0.25, 1.0);
+  vec3 c = texture2D(tInput, vUv).rgb;
+  float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  float soft = clamp((lum - uThreshold + 0.25) / 0.5, 0.0, 1.0);
+  float contrib = max(soft * soft * 0.25, lum - uThreshold) / max(lum, 0.0001);
+  gl_FragColor = vec4(c * clamp(contrib, 0.0, 3.5), 1.0);
 }
 `;
 
-const BLUR_FS = /* glsl */`
-uniform sampler2D tSrc;
-uniform vec2 uDir;
+const BLUR_FRAG = /* glsl */ `
+uniform sampler2D tInput;
+uniform vec2 uTexel;
+uniform float uRadius;
 varying vec2 vUv;
-
 void main() {
-  vec3 c = texture2D(tSrc, vUv).rgb * 0.2270270;
-  c += (texture2D(tSrc, vUv + uDir * 1.3846153).rgb + texture2D(tSrc, vUv - uDir * 1.3846153).rgb) * 0.3162162;
-  c += (texture2D(tSrc, vUv + uDir * 3.2307692).rgb + texture2D(tSrc, vUv - uDir * 3.2307692).rgb) * 0.0702703;
-  gl_FragColor = vec4(c, 1.0);
+  vec2 o = uTexel * uRadius;
+  vec3 sum = texture2D(tInput, vUv).rgb * 0.28;
+  sum += texture2D(tInput, vUv + vec2( o.x,  o.y)).rgb * 0.18;
+  sum += texture2D(tInput, vUv + vec2(-o.x,  o.y)).rgb * 0.18;
+  sum += texture2D(tInput, vUv + vec2( o.x, -o.y)).rgb * 0.18;
+  sum += texture2D(tInput, vUv + vec2(-o.x, -o.y)).rgb * 0.18;
+  gl_FragColor = vec4(sum, 1.0);
 }
 `;
 
-const FINAL_FS = /* glsl */`
-uniform sampler2D tColor;
+const COMPOSITE_FRAG = /* glsl */ `
+uniform sampler2D tSceneA;
+uniform sampler2D tSceneB;
+uniform sampler2D tDetail;
 uniform sampler2D tBloom1;
 uniform sampler2D tBloom2;
-uniform vec2 uRes;
-uniform float uTime;
+uniform sampler2D tScrollData;
+uniform sampler2D tGrain;
+
+uniform float uSplitProgress;   // 0 = pure SceneA, (0..1) = diagonal glacial fracture transition to SceneB!
+uniform float uDetailProgress;  // 0 = scroll world, 1 = DetailScene inspection chamber
 uniform float uBloomStrength;
-uniform float uChromatic;
+uniform float uScrollVelocity;
+uniform float uTime;
+uniform vec2 uGrainScale;
+
 varying vec2 vUv;
 
-float hash12(vec2 p) {
-  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.x + p3.y) * p3.z);
+vec3 acesToneMap(vec3 x) {
+  const float a = 2.51;
+  const float b = 0.03;
+  const float c = 2.43;
+  const float d = 0.59;
+  const float e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
-vec3 filmicCoolTonemap(vec3 x) {
-  // Preserves crisp cool-grey midtones (#a0a5b1) while softly rolling off intense white seam/portal highlights
-  vec3 a = x * (x + 0.032);
-  vec3 b = x * (0.96 * x + 0.42) + 0.09;
-  return pow(clamp(a / b, 0.0, 1.0), vec3(1.0 / 2.2));
+// 5-iteration spectral chromatic aberration sampler along fracture/velocity vector (matches CA_ITERATIONS 5!)
+vec3 sampleSpectralCA(sampler2D tex, vec2 uv, vec2 dir) {
+  vec3 sum = vec3(0.0);
+  vec3 weightSum = vec3(0.0);
+  for (int i = 0; i < 5; i++) {
+    float t = (float(i) / 4.0) - 0.5; // [-0.5, +0.5]
+    vec3 w = vec3(1.0 - smoothstep(-0.5, 0.25, t), 1.0 - abs(t) * 1.6, smoothstep(-0.25, 0.5, t));
+    w = max(w, vec3(0.05));
+    vec2 sUv = clamp(uv + dir * t, 0.002, 0.998);
+    sum += texture2D(tex, sUv).rgb * w;
+    weightSum += w;
+  }
+  return sum / weightSum;
 }
 
 void main() {
-  vec2 centered = vUv - 0.5;
-  float edgeDist = dot(centered, centered);
+  vec3 scrollData = texture2D(tScrollData, vec2(vUv.x * 1.35, vUv.y * 1.35)).rgb;
 
-  // Subtle radial RGB chromatic fringing toward screen corners (signature settled_sec_1.png aesthetic!)
-  vec2 caShift = centered * (0.0028 + edgeDist * 0.009) * uChromatic;
-  float r = texture2D(tColor, clamp(vUv + caShift, 0.001, 0.999)).r;
-  float g = texture2D(tColor, vUv).g;
-  float b = texture2D(tColor, clamp(vUv - caShift, 0.001, 0.999)).b;
-  vec3 hdr = vec3(r, g, b);
+  vec3 worldHdr;
+  if (uSplitProgress <= 0.001) {
+    float velCA = clamp(abs(uScrollVelocity) * 0.012, 0.0, 0.014);
+    if (velCA > 0.001) {
+      worldHdr = sampleSpectralCA(tSceneA, vUv, vec2(0.0, velCA));
+    } else {
+      worldHdr = texture2D(tSceneA, vUv).rgb;
+    }
+  } else {
+    // Diagonal fractured ice-sheet wipe from bottom to top as user scrolls down!
+    // vUv.y = 0 at bottom, 1 at top -> incoming SceneB rises from bottom along jagged inclined ice seam!
+    float slope = (vUv.x - 0.5) * 0.24 + (scrollData.r - 0.5) * 0.16 + (scrollData.b - 0.5) * 0.07;
+    float seamLine = mix(-0.26, 1.26, uSplitProgress);
+    float signedDist = (vUv.y + slope) - seamLine;
 
-  vec3 bloom = texture2D(tBloom1, vUv).rgb * 0.68 + texture2D(tBloom2, vUv).rgb * 0.54;
-  hdr += bloom * uBloomStrength;
+    // Fracture zone near signedDist == 0 gets strong ice refraction + 5-tap spectral CA + glowing ice lip!
+    float crackBand = exp(-pow(signedDist / 0.065, 2.0));
+    float sideMask = 1.0 - smoothstep(-0.018, 0.018, signedDist); // 1.0 below seam (SceneB), 0.0 above seam (SceneA)
 
-  // Soft polar atmospheric vignette
-  float vig = 1.0 - edgeDist * 0.24;
-  hdr *= clamp(vig, 0.78, 1.0);
+    // Vertical parallax displacement on both scenes (matches parallaxY = 0.35!)
+    vec2 uvA = clamp(vUv - vec2(0.0, uSplitProgress * 0.26) + (scrollData.rg - 0.5) * crackBand * 0.045, 0.002, 0.998);
+    vec2 uvB = clamp(vUv + vec2(0.0, (1.0 - uSplitProgress) * 0.26) - (scrollData.rg - 0.5) * crackBand * 0.045, 0.002, 0.998);
 
-  vec3 srgb = filmicCoolTonemap(hdr);
+    vec2 caDir = vec2(0.016, 0.022) * crackBand + vec2(0.0, clamp(abs(uScrollVelocity) * 0.01, 0.0, 0.012));
+    vec3 colA = crackBand > 0.04 ? sampleSpectralCA(tSceneA, uvA, caDir) : texture2D(tSceneA, uvA).rgb;
+    vec3 colB = crackBand > 0.04 ? sampleSpectralCA(tSceneB, uvB, caDir) : texture2D(tSceneB, uvB).rgb;
 
-  // Faint horizontal telemetry scanline + fine tactile 35mm digital grain
-  float scan = sin(gl_FragCoord.y * 1.570796) * 0.0055;
-  float grain = (hash12(gl_FragCoord.xy + fract(uTime * 0.73) * 193.0) - 0.5) * (5.2 / 255.0);
-  srgb = clamp(srgb + scan + grain, 0.0, 1.0);
+    worldHdr = mix(colA, colB, sideMask);
+    // Crisp crystalline frost gleam right on the fracture edge
+    worldHdr += vec3(0.88, 0.95, 1.0) * exp(-pow(signedDist / 0.014, 2.0)) * 0.42;
+  }
 
-  gl_FragColor = vec4(srgb, 1.0);
+  // Optional frost-crystallization portal transition into DetailScene (uDetailProgress 0 -> 1)
+  if (uDetailProgress > 0.001) {
+    vec2 centered = vUv - 0.5;
+    float dist = length(centered * vec2(1.35, 1.0));
+    float frostNoise = (scrollData.r * 0.65 + scrollData.b * 0.35) * 0.28;
+    float portalEdge = mix(-0.15, 1.25, uDetailProgress);
+    float dMask = 1.0 - smoothstep(portalEdge - 0.14, portalEdge + 0.08, dist + frostNoise);
+    float frostRim = exp(-pow((dist + frostNoise - portalEdge) / 0.075, 2.0));
+
+    vec2 detUv = clamp(vUv + centered * (1.0 - uDetailProgress) * 0.12, 0.002, 0.998);
+    vec3 detailHdr = frostRim > 0.05
+      ? sampleSpectralCA(tDetail, detUv, centered * frostRim * 0.04)
+      : texture2D(tDetail, detUv).rgb;
+
+    worldHdr = mix(worldHdr, detailHdr, dMask);
+    worldHdr += vec3(0.75, 0.90, 1.0) * frostRim * 0.65 * sin(uDetailProgress * 3.14159);
+  }
+
+  // Add dual-octave soft Bloom
+  vec3 bloom = texture2D(tBloom1, vUv).rgb * 0.65 + texture2D(tBloom2, vUv).rgb * 0.85;
+  vec3 combined = worldHdr + bloom * uBloomStrength;
+
+  // Subtle natural polar vignette
+  float distSq = dot(vUv - 0.5, vUv - 0.5);
+  combined *= 1.0 - distSq * 0.24;
+
+  vec3 ldr = acesToneMap(combined);
+  ldr = pow(ldr, vec3(1.0 / 2.2));
+
+  // Animated organic film grain
+  vec2 gUv = vUv * uGrainScale + vec2(fract(uTime * 11.73), fract(uTime * 7.31));
+  float grain = texture2D(tGrain, gUv).r - 0.5;
+  ldr += grain * 0.022;
+
+  gl_FragColor = vec4(clamp(ldr, 0.0, 1.0), 1.0);
 }
 `;
 
-export class PolarPostPipeline {
-  constructor(renderer) {
-    this.renderer = renderer;
-    this.w = 1;
-    this.h = 1;
-    this._fboChecked = false;
+export function createCompositorPipeline(renderer, { scrollDataTex, grainTex }) {
+  const rtOpts = {
+    type: THREE.HalfFloatType,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+  };
 
-    const half = THREE.HalfFloatType;
-    const maxSamples = Math.min(4, renderer.capabilities.maxSamples || 0);
+  let msaaSamples = renderer.capabilities.isWebGL2 ? Math.min(4, renderer.capabilities.maxSamples || 0) : 0;
 
-    this.sceneRT = new THREE.WebGLRenderTarget(1, 1, {
-      type: half,
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      depthBuffer: true,
-      stencilBuffer: false,
-      samples: maxSamples,
+  const makeSceneRT = () => {
+    const rt = new THREE.WebGLRenderTarget(1, 1, { ...rtOpts, samples: msaaSamples });
+    renderer.properties.get(rt).__useRenderToTexture = false;
+    return rt;
+  };
+
+  let rtSceneA = makeSceneRT();
+  let rtSceneB = makeSceneRT();
+  let rtDetail = makeSceneRT();
+  let msaaChecked = false;
+
+  const rtHalfA = new THREE.WebGLRenderTarget(1, 1, { ...rtOpts, depthBuffer: false });
+  const rtHalfB = new THREE.WebGLRenderTarget(1, 1, { ...rtOpts, depthBuffer: false });
+  const rtQuarterA = new THREE.WebGLRenderTarget(1, 1, { ...rtOpts, depthBuffer: false });
+  const rtQuarterB = new THREE.WebGLRenderTarget(1, 1, { ...rtOpts, depthBuffer: false });
+
+  const fsGeo = new THREE.PlaneGeometry(2, 2);
+  const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+  const threshMat = new THREE.ShaderMaterial({
+    uniforms: { tInput: { value: null }, uThreshold: { value: 1.08 } },
+    vertexShader: QUAD_VERT,
+    fragmentShader: THRESH_FRAG,
+    depthTest: false,
+    depthWrite: false,
+  });
+
+  const blurMat = new THREE.ShaderMaterial({
+    uniforms: { tInput: { value: null }, uTexel: { value: new THREE.Vector2() }, uRadius: { value: 1.25 } },
+    vertexShader: QUAD_VERT,
+    fragmentShader: BLUR_FRAG,
+    depthTest: false,
+    depthWrite: false,
+  });
+
+  const compMat = new THREE.ShaderMaterial({
+    uniforms: {
+      tSceneA: { value: rtSceneA.texture },
+      tSceneB: { value: rtSceneB.texture },
+      tDetail: { value: rtDetail.texture },
+      tBloom1: { value: rtHalfA.texture },
+      tBloom2: { value: rtQuarterA.texture },
+      tScrollData: { value: scrollDataTex },
+      tGrain: { value: grainTex },
+      uSplitProgress: { value: 0 },
+      uDetailProgress: { value: 0 },
+      uBloomStrength: { value: 0.34 },
+      uScrollVelocity: { value: 0 },
+      uTime: { value: 0 },
+      uGrainScale: { value: new THREE.Vector2(10, 10) },
+    },
+    vertexShader: QUAD_VERT,
+    fragmentShader: COMPOSITE_FRAG,
+    depthTest: false,
+    depthWrite: false,
+  });
+
+  const fsMesh = new THREE.Mesh(fsGeo, threshMat);
+  const fsScene = new THREE.Scene();
+  fsScene.add(fsMesh);
+
+  let width = 1;
+  let height = 1;
+
+  function setSize(pixelW, pixelH) {
+    width = Math.max(2, Math.floor(pixelW));
+    height = Math.max(2, Math.floor(pixelH));
+
+    [rtSceneA, rtSceneB, rtDetail].forEach((rt) => {
+      rt.setSize(width, height);
+      renderer.properties.get(rt).__useRenderToTexture = false;
     });
-    renderer.properties.get(this.sceneRT).__useRenderToTexture = false;
 
-    this.refractRT = new THREE.WebGLRenderTarget(1, 1, {
-      type: half,
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      depthBuffer: true,
-    });
+    const hw = Math.max(2, Math.floor(width * 0.5));
+    const hh = Math.max(2, Math.floor(height * 0.5));
+    rtHalfA.setSize(hw, hh);
+    rtHalfB.setSize(hw, hh);
 
-    const bOpts = {
-      type: half,
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      depthBuffer: false,
-    };
-    this.brightRT = new THREE.WebGLRenderTarget(1, 1, bOpts);
-    this.blur1A = new THREE.WebGLRenderTarget(1, 1, bOpts);
-    this.blur1B = new THREE.WebGLRenderTarget(1, 1, bOpts);
-    this.blur2A = new THREE.WebGLRenderTarget(1, 1, bOpts);
-    this.blur2B = new THREE.WebGLRenderTarget(1, 1, bOpts);
+    const qw = Math.max(2, Math.floor(width * 0.25));
+    const qh = Math.max(2, Math.floor(height * 0.25));
+    rtQuarterA.setSize(qw, qh);
+    rtQuarterB.setSize(qw, qh);
 
-    this.orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    const quadGeo = new THREE.PlaneGeometry(2, 2);
-
-    this.brightMat = new THREE.ShaderMaterial({
-      vertexShader: QUAD_VS,
-      fragmentShader: BRIGHT_FS,
-      uniforms: {
-        tColor: { value: null },
-        uTexel: { value: new THREE.Vector2(1, 1) },
-        uThreshold: { value: 0.92 },
-      },
-      depthTest: false,
-      depthWrite: false,
-    });
-
-    this.blurMat = new THREE.ShaderMaterial({
-      vertexShader: QUAD_VS,
-      fragmentShader: BLUR_FS,
-      uniforms: {
-        tSrc: { value: null },
-        uDir: { value: new THREE.Vector2(1, 1) },
-      },
-      depthTest: false,
-      depthWrite: false,
-    });
-
-    this.finalMat = new THREE.ShaderMaterial({
-      vertexShader: QUAD_VS,
-      fragmentShader: FINAL_FS,
-      uniforms: {
-        tColor: { value: null },
-        tBloom1: { value: null },
-        tBloom2: { value: null },
-        uRes: { value: new THREE.Vector2(1, 1) },
-        uTime: { value: 0 },
-        uBloomStrength: { value: 0.56 },
-        uChromatic: { value: 1.0 },
-      },
-      depthTest: false,
-      depthWrite: false,
-    });
-
-    this.quad = new THREE.Mesh(quadGeo, this.brightMat);
-    this.quad.frustumCulled = false;
-    this.quadScene = new THREE.Scene();
-    this.quadScene.add(this.quad);
+    compMat.uniforms.uGrainScale.value.set(width / 128, height / 128);
   }
 
-  setSize(w, h) {
-    if (w === this.w && h === this.h) return;
-    this.w = w;
-    this.h = h;
-    this.sceneRT.setSize(w, h);
-    this.renderer.properties.get(this.sceneRT).__useRenderToTexture = false;
-    this._fboChecked = false;
-
-    const w2 = Math.max(1, Math.floor(w * 0.5));
-    const h2 = Math.max(1, Math.floor(h * 0.5));
-    const w4 = Math.max(1, Math.floor(w * 0.25));
-    const h4 = Math.max(1, Math.floor(h * 0.25));
-
-    this.refractRT.setSize(w2, h2);
-    this.brightRT.setSize(w2, h2);
-    this.blur1A.setSize(w2, h2);
-    this.blur1B.setSize(w2, h2);
-    this.blur2A.setSize(w4, h4);
-    this.blur2B.setSize(w4, h4);
-    this.finalMat.uniforms.uRes.value.set(w, h);
-  }
-
-  render(scene, camera, time, opts = {}) {
-    const r = this.renderer;
-
-    if (opts.refractMeshes && opts.refractMeshes.length > 0 && opts.enableRefract) {
-      for (const m of opts.refractMeshes) m.visible = false;
-      r.setRenderTarget(this.refractRT);
-      r.clear();
-      r.render(scene, camera);
-      for (const m of opts.refractMeshes) m.visible = true;
+  function renderSceneEntry(entry, targetRT) {
+    if (entry.renderToTarget) {
+      entry.renderToTarget(targetRT);
+    } else {
+      renderer.setRenderTarget(targetRT);
+      renderer.clear();
+      renderer.render(entry.scene, entry.camera);
     }
 
-    r.properties.get(this.sceneRT).__useRenderToTexture = false;
-    r.setRenderTarget(this.sceneRT);
-    if (!this._fboChecked) {
-      this._fboChecked = true;
-      const gl = r.getContext();
-      if (this.sceneRT.samples > 0 && gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
-        this.sceneRT.samples = 0;
-        this.sceneRT.dispose();
-        r.setRenderTarget(this.sceneRT);
+    if (!msaaChecked && msaaSamples > 0) {
+      msaaChecked = true;
+      const gl = renderer.getContext();
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        msaaSamples = 0;
+        [rtSceneA, rtSceneB, rtDetail].forEach((rt) => rt.dispose());
+        rtSceneA = makeSceneRT();
+        rtSceneB = makeSceneRT();
+        rtDetail = makeSceneRT();
+        setSize(width, height);
+        compMat.uniforms.tSceneA.value = rtSceneA.texture;
+        compMat.uniforms.tSceneB.value = rtSceneB.texture;
+        compMat.uniforms.tDetail.value = rtDetail.texture;
+        renderSceneEntry(entry, targetRT === rtSceneA ? rtSceneA : targetRT === rtSceneB ? rtSceneB : rtDetail);
       }
     }
-    r.clear();
-    r.render(scene, camera);
-
-    const w2 = Math.max(1, Math.floor(this.w * 0.5));
-    const h2 = Math.max(1, Math.floor(this.h * 0.5));
-    const w4 = Math.max(1, Math.floor(this.w * 0.25));
-    const h4 = Math.max(1, Math.floor(this.h * 0.25));
-
-    this.quad.material = this.brightMat;
-    this.brightMat.uniforms.tColor.value = this.sceneRT.texture;
-    this.brightMat.uniforms.uTexel.value.set(1 / this.w, 1 / this.h);
-    this.brightMat.uniforms.uThreshold.value = opts.bloomThreshold ?? 0.90;
-    r.setRenderTarget(this.brightRT);
-    r.render(this.quadScene, this.orthoCam);
-
-    this.quad.material = this.blurMat;
-    this.blurMat.uniforms.tSrc.value = this.brightRT.texture;
-    this.blurMat.uniforms.uDir.value.set(1 / w2, 0);
-    r.setRenderTarget(this.blur1A);
-    r.render(this.quadScene, this.orthoCam);
-
-    this.blurMat.uniforms.tSrc.value = this.blur1A.texture;
-    this.blurMat.uniforms.uDir.value.set(0, 1 / h2);
-    r.setRenderTarget(this.blur1B);
-    r.render(this.quadScene, this.orthoCam);
-
-    this.blurMat.uniforms.tSrc.value = this.blur1B.texture;
-    this.blurMat.uniforms.uDir.value.set(1.5 / w4, 0);
-    r.setRenderTarget(this.blur2A);
-    r.render(this.quadScene, this.orthoCam);
-
-    this.blurMat.uniforms.tSrc.value = this.blur2A.texture;
-    this.blurMat.uniforms.uDir.value.set(0, 1.5 / h4);
-    r.setRenderTarget(this.blur2B);
-    r.render(this.quadScene, this.orthoCam);
-
-    this.quad.material = this.finalMat;
-    const u = this.finalMat.uniforms;
-    u.tColor.value = this.sceneRT.texture;
-    u.tBloom1.value = this.blur1B.texture;
-    u.tBloom2.value = this.blur2B.texture;
-    u.uTime.value = time;
-    u.uBloomStrength.value = opts.bloomStrength ?? 0.56;
-    u.uChromatic.value = opts.chromatic ?? 1.0;
-
-    r.setRenderTarget(null);
-    r.render(this.quadScene, this.orthoCam);
   }
+
+  function compose({
+    sceneA,
+    sceneB,
+    splitProgress,
+    detailScene,
+    detailProgress,
+    scrollVelocity,
+    time,
+  }) {
+    // 1. Render primary scroll scene A (unless completely inside DetailScene)
+    if (detailProgress < 0.999) {
+      renderSceneEntry(sceneA, rtSceneA);
+      if (splitProgress > 0.001 && sceneB) {
+        renderSceneEntry(sceneB, rtSceneB);
+      }
+    }
+
+    // 2. Render DetailScene when opening or active
+    if (detailProgress > 0.001 && detailScene) {
+      renderSceneEntry(detailScene, rtDetail);
+    }
+
+    // 3. Extract Bloom from dominant visible buffer
+    const primaryTex = detailProgress > 0.5 ? rtDetail.texture : splitProgress > 0.5 ? rtSceneB.texture : rtSceneA.texture;
+    fsMesh.material = threshMat;
+    threshMat.uniforms.tInput.value = primaryTex;
+    renderer.setRenderTarget(rtHalfA);
+    renderer.render(fsScene, fsCam);
+
+    const hw = Math.max(2, Math.floor(width * 0.5));
+    const hh = Math.max(2, Math.floor(height * 0.5));
+    fsMesh.material = blurMat;
+    blurMat.uniforms.uTexel.value.set(1 / hw, 1 / hh);
+    blurMat.uniforms.uRadius.value = 1.25;
+    blurMat.uniforms.tInput.value = rtHalfA.texture;
+    renderer.setRenderTarget(rtHalfB);
+    renderer.render(fsScene, fsCam);
+
+    blurMat.uniforms.uRadius.value = 2.1;
+    blurMat.uniforms.tInput.value = rtHalfB.texture;
+    renderer.setRenderTarget(rtHalfA);
+    renderer.render(fsScene, fsCam);
+
+    const qw = Math.max(2, Math.floor(width * 0.25));
+    const qh = Math.max(2, Math.floor(height * 0.25));
+    blurMat.uniforms.uTexel.value.set(1 / qw, 1 / qh);
+    blurMat.uniforms.uRadius.value = 1.5;
+    blurMat.uniforms.tInput.value = rtHalfA.texture;
+    renderer.setRenderTarget(rtQuarterA);
+    renderer.render(fsScene, fsCam);
+
+    blurMat.uniforms.uRadius.value = 2.6;
+    blurMat.uniforms.tInput.value = rtQuarterA.texture;
+    renderer.setRenderTarget(rtQuarterB);
+    renderer.render(fsScene, fsCam);
+
+    blurMat.uniforms.uRadius.value = 3.4;
+    blurMat.uniforms.tInput.value = rtQuarterB.texture;
+    renderer.setRenderTarget(rtQuarterA);
+    renderer.render(fsScene, fsCam);
+
+    // 4. Final full-screen glacial fracture & spectral CA composite
+    compMat.uniforms.tSceneA.value = rtSceneA.texture;
+    compMat.uniforms.tSceneB.value = rtSceneB.texture;
+    compMat.uniforms.tDetail.value = rtDetail.texture;
+    compMat.uniforms.uSplitProgress.value = splitProgress;
+    compMat.uniforms.uDetailProgress.value = detailProgress;
+    compMat.uniforms.uScrollVelocity.value = scrollVelocity;
+    compMat.uniforms.uTime.value = time;
+
+    fsMesh.material = compMat;
+    renderer.setRenderTarget(null);
+    renderer.render(fsScene, fsCam);
+  }
+
+  return { setSize, compose };
 }

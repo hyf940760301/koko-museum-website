@@ -29,7 +29,7 @@ const server = http.createServer((req, res) => {
 
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const port = server.address().port;
-const dbg = 9682;
+const dbg = 9684;
 
 const chrome = spawn(
   'google-chrome',
@@ -99,55 +99,58 @@ await cdp('Emulation.setDeviceMetricsOverride', {
   mobile: false,
 });
 
-// 1. Live non-blocking startup & interaction smoke test
 navStart = Date.now();
 await cdp('Page.navigate', { url: `http://127.0.0.1:${port}/igloo/` });
-for (let w = 0; w < 45; w++) {
-  await sleep(350);
+for (let w = 0; w < 50; w++) {
+  await sleep(250);
   const rdy = await cdp('Runtime.evaluate', { expression: 'document.body.dataset.ready', returnByValue: true });
   if (rdy.result.value === '1') break;
 }
 
-const liveCheck = await cdp('Runtime.evaluate', {
+// Verify UI purity (no invented pills, exact Manifesto text, interactive plaque click + social switcher)
+const uiAudit = await cdp('Runtime.evaluate', {
   expression: `(async () => {
-    document.querySelector('.sector-pill[data-sec="1"]').click();
-    await new Promise(r => setTimeout(r, 150));
-    document.getElementById('btn-open-dossier').click();
-    const dossierOpen = !document.getElementById('dossier-modal').hidden;
-    document.getElementById('btn-dossier-close').click();
-    document.getElementById('btn-manifesto').click();
-    const maniOpen = !document.getElementById('manifesto-overlay').hidden;
-    document.getElementById('btn-manifesto-close').click();
-    return { ready: document.body.dataset.ready, dossierOpen, maniOpen };
+    const hasOldPills = !!document.querySelector('.sector-pill');
+    const manifesto = document.querySelector('.manifesto-copy')?.textContent?.trim();
+    document.getElementById('cube-label-0').click();
+    await new Promise(r => setTimeout(r, 120));
+    const detailTitle = document.getElementById('detail-title')?.textContent;
+    document.getElementById('detail-close-btn').click();
+    await new Promise(r => setTimeout(r, 120));
+    return { ready: document.body.dataset.ready, hasOldPills, manifesto, detailTitle };
   })()`,
   awaitPromise: true,
   returnByValue: true,
 });
-console.log('Live Smoke:', liveCheck.result.value, 'loadEventMs:', loadEventMs);
-
-// 2. Deterministic High-Fidelity Visual Captures across all 5 states
-await cdp('Page.navigate', { url: `http://127.0.0.1:${port}/igloo/?capture=1` });
-await sleep(800);
+console.log('UI & Interaction Audit:', uiAudit.result.value, 'loadEventMs:', loadEventMs);
 
 const shots = [
-  { name: 'igloo_01_surface_hero.png', cfg: { scroll: 0, construct: 1.0, hoverHero: true, time: 4.5 } },
-  { name: 'igloo_02_overpass_crystal.png', cfg: { scroll: 1, construct: 1.0, time: 5.2 } },
-  { name: 'igloo_03_abstract_portal.png', cfg: { scroll: 2, construct: 1.0, time: 6.0 } },
-  { name: 'igloo_04_pudgy_pointcloud.png', cfg: { scroll: 3, construct: 1.0, time: 7.4 } },
-  { name: 'igloo_05_manifesto_dossier.png', cfg: { scroll: 1, construct: 1.0, dossier: true, time: 5.2 } },
+  // 1. Scene 0: Settled Polar Surface Igloo + Mountains + Manifesto
+  { name: 'igloo_v2_01_surface_hero.png', cfg: { scene: 0, progress: 0.495, detailProject: -1 } },
+  // 2. Diagonal Glacial Fracture Transition (Scene 0 -> Scene 1)
+  { name: 'igloo_v2_02_fracture_wipe.png', cfg: { scene: 0, progress: 0.86, detailProject: -1 } },
+  // 3. Scene 1: Cube 01 — Pudgy Penguins frozen inside refractive glacial monolith
+  { name: 'igloo_v2_03_cube01_penguin.png', cfg: { scene: 1, progress: 0.06, detailProject: -1 } },
+  // 4. Scene 1: Cube 02 — Overpass frozen inside refractive glacial monolith
+  { name: 'igloo_v2_04_cube02_overpass.png', cfg: { scene: 1, progress: 0.44, detailProject: -1 } },
+  // 5. Scene 2: Vertical Shattered-Ring Dive Tunnel
+  { name: 'igloo_v2_05_ring_dive.png', cfg: { scene: 2, progress: 0.22, detailProject: -1 } },
+  // 6. Scene 2: Subterranean Halo Chamber ("/// Follow Us" 15k Particle Sculpture)
+  { name: 'igloo_v2_06_follow_chamber.png', cfg: { scene: 2, progress: 0.74, socialChannel: 0, detailProject: -1 } },
+  // 7. DetailScene: Cryo-Holographic Inspection Chamber (Pudgy Penguins + GPU mouseSim particles)
+  { name: 'igloo_v2_07_detail_penguin.png', cfg: { detailProject: 0 } },
 ];
 
 for (const s of shots) {
-  const res = await cdp('Runtime.evaluate', {
+  await cdp('Runtime.evaluate', {
     expression: `window.__setIglooState(${JSON.stringify(s.cfg)})`,
-    awaitPromise: true,
     returnByValue: true,
   });
-  await sleep(120);
+  await sleep(260);
   const png = await cdp('Page.captureScreenshot', { format: 'png' });
   const dst = path.join(outDir, s.name);
   fs.writeFileSync(dst, Buffer.from(png.data, 'base64'));
-  console.log('Captured:', s.name, res.result.value);
+  console.log('Captured:', dst);
 }
 
 console.log('Total console/runtime errors:', errors.length, errors);
