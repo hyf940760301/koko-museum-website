@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Igloo, Inc.</title>
+    <meta
+      name="description"
+      content="Our mission is to build the next generation of consumer brands at the intersection of Community, AI, and crypto."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23A0A5B1'/%3E%3Cpath d='M7 22a9 9 0 0 1 18 0Z' fill='none' stroke='%23fff' stroke-width='2.2'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <canvas id="webgl-canvas" aria-label="Igloo 3D Experience"></canvas>
+
+    <!-- Authentic #A0A5B1 ASCII Monospace Preloader -->
+    <div id="loader" role="status" aria-live="polite">
+      <div id="loader-ascii">--===+++==</div>
+    </div>
+
+    <!-- Minimalist Grid UI Overlay (Zero invented pills or fake hashes — 1:1 to igloo.inc) -->
+    <div id="ui-layer">
+      <!-- Top Header Grid -->
+      <header class="grid-header">
+        <div class="brand-column">
+          <button id="logo-btn" class="logo-btn" type="button" aria-label="Igloo Home">
+            <svg class="igloo-wordmark" viewBox="0 0 176 32" fill="none" aria-hidden="true">
+              <!-- Custom geometric rounded brutalist IGLOO wordmark -->
+              <rect x="0" y="3" width="10" height="26" rx="2" fill="currentColor" />
+              <path d="M20 16C20 8.2 25.8 3 34.5 3C41.8 3 46.8 6.8 47.8 12.2H38.6C37.8 10.2 36.4 9.2 34.4 9.2C30.8 9.2 28.8 11.9 28.8 16C28.8 20.2 30.9 22.9 34.6 22.9C37.4 22.9 39.2 21.5 39.6 18.8H34.2V13.8H48.2V29H41.4L40.8 25.6C39.1 28 36.4 29.4 32.8 29.4C25.1 29.4 20 24 20 16Z" fill="currentColor" />
+              <path d="M56 3H65.6V21.6H78.4V29H56V3Z" fill="currentColor" />
+              <path d="M84 16C84 8.1 90.2 2.8 99.2 2.8C108.2 2.8 114.4 8.1 114.4 16C114.4 23.9 108.2 29.2 99.2 29.2C90.2 29.2 84 23.9 84 16ZM104.8 16C104.8 11.7 102.7 9.2 99.2 9.2C95.7 9.2 93.6 11.7 93.6 16C93.6 20.3 95.7 22.8 99.2 22.8C102.7 22.8 104.8 20.3 104.8 16Z" fill="currentColor" />
+              <path d="M120.4 16C120.4 8.1 126.6 2.8 135.6 2.8C144.6 2.8 150.8 8.1 150.8 16C150.8 23.9 144.6 29.2 135.6 29.2C126.6 29.2 120.4 23.9 120.4 16ZM141.2 16C141.2 11.7 139.1 9.2 135.6 9.2C132.1 9.2 130 11.7 130 16C130 20.3 132.1 22.8 135.6 22.8C139.1 22.8 141.2 20.3 141.2 16Z" fill="currentColor" />
+            </svg>
+          </button>
+          <div id="copyright-block" class="copyright-block">
+            <div class="copyright-line">// Copyright © 2026</div>
+            <div class="rights-line">Igloo, Inc.<br />All Rights Reserved.</div>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <button id="audio-btn" class="icon-action-btn" type="button" aria-pressed="false" aria-label="Toggle Sound">
+            <span class="sound-bars" id="sound-bars" aria-hidden="true">
+              <i></i><i></i><i></i><i></i>
+            </span>
+            <span id="audio-label">Sound Off</span>
+          </button>
+
+          <button id="detail-close-btn" class="close-btn hidden" type="button">
+            <span>Close</span>
+            <span class="close-x" aria-hidden="true">×</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Scene 0: Surface Manifesto & Scroll Prompt -->
+      <section id="scene0-overlay" class="scene-overlay">
+        <div id="manifesto-block" class="manifesto-block">
+          <h2 class="section-slash-title">////// Manifesto</h2>
+          <p class="manifesto-copy">
+            Our mission is to build the next generation of consumer brands at the intersection of Community, AI, and crypto.
+          </p>
+        </div>
+        <div id="scroll-prompt" class="scroll-prompt">Scroll down to discover.</div>
+      </section>
+
+      <!-- Scene 1: Cubes Floating 3D-Projected Portfolio Plaques -->
+      <section id="scene1-overlay" class="scene-overlay hidden" aria-label="Portfolio">
+        <div id="cube-label-0" class="cube-plaque" data-index="0">
+          <div class="cube-code">PORTFOLIO_CO_01</div>
+          <div class="cube-name">Pudgy Penguins</div>
+          <div class="cube-date">01/02/2020</div>
+        </div>
+        <div id="cube-temp-0" class="cube-temp">TEMP &nbsp;0°</div>
+
+        <div id="cube-label-1" class="cube-plaque align-right" data-index="1">
+          <div class="cube-code">PORTFOLIO_CO_02</div>
+          <div class="cube-name">Overpass</div>
+          <div class="cube-date">06/01/2023</div>
+        </div>
+        <div id="cube-temp-1" class="cube-temp">TEMP &nbsp;-3°</div>
+
+        <div id="cube-label-2" class="cube-plaque" data-index="2">
+          <div class="cube-code">PORTFOLIO_CO_03</div>
+          <div class="cube-name">???????????????</div>
+          <div class="cube-date">??/??/2026</div>
+        </div>
+        <div id="cube-temp-2" class="cube-temp">TEMP &nbsp;-12°</div>
+      </section>
+
+      <!-- Floating Cursor Prompt ("Click to explore" / "???????????????") -->
+      <div id="cursor-prompt" class="cursor-prompt hidden" aria-hidden="true">
+        <span class="crosshair">+</span>
+        <span id="cursor-prompt-text">Click to explore</span>
+      </div>
+
+      <!-- Scene 2: Subterranean Chamber "/// Follow Us" Particle Switcher -->
+      <section id="scene2-overlay" class="scene-overlay hidden" aria-label="Follow Us">
+        <div class="follow-dock">
+          <div class="follow-slash-title">/// Follow Us</div>
+          <div class="follow-switcher">
+            <button id="social-prev" class="arrow-btn" type="button" aria-label="Previous Social Channel">←</button>
+            <a
+              id="social-active-link"
+              class="social-main-link"
+              href="https://www.linkedin.com/company/igloo-incorporated"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <span id="social-active-name">LinkedIn</span>
+              <span class="ext-arrow" aria-hidden="true">↗</span>
+            </a>
+            <button id="social-next" class="arrow-btn" type="button" aria-label="Next Social Channel">→</button>
+          </div>
+          <div class="social-dots" role="tablist" aria-label="Social Channels">
+            <button class="social-tab is-active" data-ch="0" type="button">LinkedIn</button>
+            <span class="dot-sep">/</span>
+            <button class="social-tab" data-ch="1" type="button">X / Twitter</button>
+            <span class="dot-sep">/</span>
+            <button class="social-tab" data-ch="2" type="button">Medium</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- DetailScene: Right-Side Cryo Inspection Summary Panel -->
+      <aside id="detail-overlay" class="detail-overlay hidden" aria-label="Project Summary">
+        <div class="detail-panel">
+          <div id="detail-code" class="cube-code">PORTFOLIO_CO_01</div>
+          <h1 id="detail-title" class="detail-title">Pudgy Penguins</h1>
+
+          <div class="detail-section">
+            <h2 class="detail-slash">////// Summary</h2>
+            <p id="detail-summary" class="detail-copy"></p>
+          </div>
+
+          <div class="detail-section">
+            <h2 class="detail-slash">/// Discover</h2>
+            <div id="detail-links" class="detail-links"></div>
+          </div>
+
+          <div class="detail-section">
+            <h2 class="detail-slash">/// Visit</h2>
+            <a id="detail-visit" class="detail-visit-btn" href="https://pudgypenguins.com/" target="_blank" rel="noopener noreferrer">
+              <span id="detail-visit-label">pudgypenguins.com</span>
+              <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <script type="module" src="./dist/bundle.js"></script>
+  </body>
+</html>
